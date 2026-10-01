@@ -168,3 +168,39 @@ func TestRepairConfidenceDoesNotInflateDirectRead(t *testing.T) {
 		t.Fatalf("got %s %v; want CSQU3054383 at 0.40 (direct 0.3 + 0.10 for the second side)", r.Number, r.Confidence)
 	}
 }
+
+func TestSinglePhotoRepairNeverAutoAccepts(t *testing.T) {
+	r := Reconcile([]Frame{frame("rear", rc("CSQU3O54383", 0.97))}, 0.1)
+	if r.Decision != DecisionReview || r.Confidence > 0.70 || !strings.HasPrefix(r.Reason, "read as") {
+		t.Fatalf("got %s %v %q; want review capped at 0.70, reason starting \"read as\"", r.Decision, r.Confidence, r.Reason)
+	}
+}
+
+func TestNaNThresholdNeverAutoAccepts(t *testing.T) {
+	r := Reconcile([]Frame{frame("rear", rc("CSQU3054383", 0.95))}, math.NaN())
+	if r.Decision != DecisionReview {
+		t.Fatalf("decision = %s; want review for a NaN threshold", r.Decision)
+	}
+}
+
+func TestDifferentFullNumberIsConflictEvenIfInvalid(t *testing.T) {
+	r := Reconcile([]Frame{
+		frame("left", rc("CSQU3054383", 0.9)),
+		frame("right", rc("CSQU3054383", 0.9)),
+		frame("front", rc("TEXU1234560", 0.9)),
+	}, 0.85)
+	if r.Decision != DecisionReview || r.Reason != "photos disagree" {
+		t.Fatalf("got %s %q; want review, photos disagree", r.Decision, r.Reason)
+	}
+}
+
+func TestOneCharacterMisreadIsNotConflict(t *testing.T) {
+	r := Reconcile([]Frame{
+		frame("left", rc("CSQU3054383", 0.9)),
+		frame("right", rc("CSQU3054383", 0.9)),
+		frame("front", rc("CSQU3054384", 0.9)),
+	}, 0.85)
+	if r.Decision != DecisionAutoAccept {
+		t.Fatalf("got %s %q; want auto_accept (one wrong character is a misread, not a second container)", r.Decision, r.Reason)
+	}
+}

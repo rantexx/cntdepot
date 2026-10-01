@@ -19,11 +19,14 @@ import (
 //
 // The leading number is auto-accepted only when nothing argues against it:
 // it must be a direct read (a repaired guess only ever goes to review), no
-// photo may lead with a different valid number, no photo may show two valid
-// numbers, no photo may have failed, and its confidence must reach the
-// threshold. It must then either be the only photo that read anything or be
-// confirmed by two different sides of the container; two photos with the same
-// role (or a second photo too partial to read) are not a second opinion.
+// photo may lead with a different valid number, no photo may lead with a
+// full-length number that is more than one character away from it (a second
+// container on the same truck, even if that read fails its check digit), no
+// photo may show two valid numbers, no photo may have failed, and its
+// confidence must reach the threshold (a NaN threshold never does). It must
+// then either be the only photo that read anything or be confirmed by two
+// different sides of the container; two photos with the same role (or a
+// second photo too partial to read) are not a second opinion.
 func Reconcile(frames []Frame, autoAccept float64) Result {
 	scores := map[string]float64{}
 	direct := map[string]bool{}
@@ -111,9 +114,15 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 	agreeing := map[string]bool{}
 	conflict, ambiguous := false, false
 	for _, f := range frames {
-		lead, valid := "", 0
+		lead, valid, firstDirect := "", 0, ""
 		for _, c := range f.Candidates {
-			if c.RepairedFrom != "" || !c.CheckDigitValid {
+			if c.RepairedFrom != "" {
+				continue
+			}
+			if firstDirect == "" {
+				firstDirect = c.Number
+			}
+			if !c.CheckDigitValid {
 				continue
 			}
 			if lead == "" {
@@ -126,6 +135,11 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 		case lead == top.Number:
 			agreeing[f.Role] = true
 		default:
+			conflict = true
+		}
+		// A full-length read that is not a one-character misread of the top
+		// number is a different container, even if its check digit fails.
+		if len(firstDirect) == 11 && differsByMoreThanOne(firstDirect, top.Number) {
 			conflict = true
 		}
 		if valid > 1 {
@@ -156,7 +170,7 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 	case failedPhoto != nil:
 		res.Confidence, res.Decision = conf, DecisionReview
 		res.Reason = "a photo could not be read: " + failedPhoto.Error
-	case conf < autoAccept:
+	case !(conf >= autoAccept): // written so a NaN threshold can never auto-accept
 		res.Confidence, res.Decision = conf, DecisionReview
 		res.Reason = fmt.Sprintf("confidence %.2f below auto-accept threshold", conf)
 	case agreeingRoles >= 2 || framesRead <= 1:
@@ -167,6 +181,24 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 		res.Reason = "only one side of the container confirmed the number"
 	}
 	return res
+}
+
+// differsByMoreThanOne reports whether a and b differ in more than one
+// character position. Strings of different length always count as different.
+func differsByMoreThanOne(a, b string) bool {
+	if len(a) != len(b) {
+		return true
+	}
+	diff := 0
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			diff++
+			if diff > 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // majority returns the most common non-empty value; ties go to the value that
