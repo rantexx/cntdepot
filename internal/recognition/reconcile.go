@@ -10,43 +10,53 @@ import (
 
 // Reconcile turns several photos of one truck into one decision.
 //
-// Weighting, in order:
+// Ranking, in order:
 //  1. Check digit. Arithmetic beats confidence, always.
-//  2. Cross-photo agreement. Different sides reading the same valid number
-//     is the strongest evidence short of a person.
-//  3. Engine confidence, as a tie-breaker.
+//  2. A score built from each photo's confidence and the candidate's rank in
+//     that photo, halved for a repaired guess.
+//  3. The number itself, so the result never depends on the order the photos
+//     arrive in.
 //
-// A repaired candidate can lead the ranking but never auto-accepts.
+// The leading number is auto-accepted only when nothing argues against it:
+// it must be a direct read (a repaired guess only ever goes to review), no
+// photo may lead with a different valid number, no photo may show two valid
+// numbers, no photo may have failed, and its confidence must reach the
+// threshold. It must then either be the only photo that read anything or be
+// confirmed by two different sides of the container; two photos with the same
+// role (or a second photo too partial to read) are not a second opinion.
 func Reconcile(frames []Frame, autoAccept float64) Result {
 	scores := map[string]float64{}
-	bestConf := map[string]float64{}
-	roles := map[string]map[string]bool{}
-	repaired := map[string]string{}
-	seen := map[string]bool{}
+	direct := map[string]bool{}
+	directConf := map[string]float64{}
+	repairConf := map[string]float64{}
+	repairFrom := map[string]string{}
 
-	for _, f := range frames {
+	framesRead := 0
+	var failedPhoto *Frame
+	for i, f := range frames {
+		if f.Error != "" && failedPhoto == nil {
+			failedPhoto = &frames[i]
+		}
+		if len(f.Candidates) > 0 {
+			framesRead++
+		}
 		for rank, c := range f.Candidates {
 			score := c.Confidence / float64(1+rank)
-			if c.CheckDigitValid {
-				score *= 3
-			}
 			if c.RepairedFrom != "" {
 				score *= 0.5
+				if c.Confidence > repairConf[c.Number] {
+					repairConf[c.Number] = c.Confidence
+				}
+				if from, ok := repairFrom[c.Number]; !ok || c.RepairedFrom < from {
+					repairFrom[c.Number] = c.RepairedFrom
+				}
+			} else {
+				direct[c.Number] = true
+				if c.Confidence > directConf[c.Number] {
+					directConf[c.Number] = c.Confidence
+				}
 			}
 			scores[c.Number] += score
-			if c.Confidence > bestConf[c.Number] {
-				bestConf[c.Number] = c.Confidence
-			}
-			if !seen[c.Number] {
-				seen[c.Number] = true
-				repaired[c.Number] = c.RepairedFrom
-			}
-			if c.RepairedFrom == "" {
-				if roles[c.Number] == nil {
-					roles[c.Number] = map[string]bool{}
-				}
-				roles[c.Number][f.Role] = true
-			}
 		}
 	}
 
@@ -58,11 +68,8 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 	if len(scores) == 0 {
 		res.Decision = DecisionFailed
 		res.Reason = "no container number legible in any photo"
-		for _, f := range frames {
-			if f.Error != "" {
-				res.Reason = f.Error
-				break
-			}
+		if failedPhoto != nil {
+			res.Reason = failedPhoto.Error
 		}
 		return res
 	}
@@ -88,24 +95,49 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 		numbers = numbers[:5]
 	}
 	for _, n := range numbers {
-		res.Candidates = append(res.Candidates, Candidate{
-			Number: n, Confidence: bestConf[n], CheckDigitValid: iso6346.IsValid(n), RepairedFrom: repaired[n],
-		})
+		c := Candidate{Number: n, CheckDigitValid: iso6346.IsValid(n)}
+		if direct[n] {
+			c.Confidence = directConf[n]
+		} else {
+			c.Confidence, c.RepairedFrom = repairConf[n], repairFrom[n]
+		}
+		res.Candidates = append(res.Candidates, c)
 	}
 
 	top := res.Candidates[0]
-	agreement := len(roles[top.Number])
-	framesRead := 0
+	res.Number, res.CheckDigitValid = top.Number, top.CheckDigitValid
+
+	// What each photo actually read, as opposed to what repairs were guessed.
+	agreeing := map[string]bool{}
+	conflict, ambiguous := false, false
 	for _, f := range frames {
-		if len(f.Candidates) > 0 {
-			framesRead++
+		lead, valid := "", 0
+		for _, c := range f.Candidates {
+			if c.RepairedFrom != "" || !c.CheckDigitValid {
+				continue
+			}
+			if lead == "" {
+				lead = c.Number
+			}
+			valid++
+		}
+		switch {
+		case lead == "":
+		case lead == top.Number:
+			agreeing[f.Role] = true
+		default:
+			conflict = true
+		}
+		if valid > 1 {
+			ambiguous = true
 		}
 	}
-	conf := bestConf[top.Number]
-	if agreement > 1 {
-		conf = math.Min(1, conf+0.10*float64(agreement-1))
+	agreeingRoles := len(agreeing)
+
+	conf := top.Confidence
+	if agreeingRoles > 1 {
+		conf = math.Min(1, conf+0.10*float64(agreeingRoles-1))
 	}
-	res.Number, res.CheckDigitValid = top.Number, top.CheckDigitValid
 
 	switch {
 	case !top.CheckDigitValid:
@@ -115,20 +147,30 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 		res.Confidence, res.Decision = math.Min(conf, 0.70), DecisionReview
 		res.Reason = fmt.Sprintf("read as %s, which fails its check digit; %s is one character away and passes",
 			top.RepairedFrom, top.Number)
-	case conf >= autoAccept && (agreement > 1 || framesRead <= 1):
-		res.Confidence, res.Decision = conf, DecisionAutoAccept
-		res.Reason = fmt.Sprintf("check digit valid, %d photo(s) agree", agreement)
-	case framesRead > 1 && agreement == 1:
+	case conflict:
 		res.Confidence, res.Decision = math.Min(conf, 0.70), DecisionReview
 		res.Reason = "photos disagree"
-	default:
+	case ambiguous:
+		res.Confidence, res.Decision = math.Min(conf, 0.70), DecisionReview
+		res.Reason = "a photo shows more than one valid number"
+	case failedPhoto != nil:
+		res.Confidence, res.Decision = conf, DecisionReview
+		res.Reason = "a photo could not be read: " + failedPhoto.Error
+	case conf < autoAccept:
 		res.Confidence, res.Decision = conf, DecisionReview
 		res.Reason = fmt.Sprintf("confidence %.2f below auto-accept threshold", conf)
+	case agreeingRoles >= 2 || framesRead <= 1:
+		res.Confidence, res.Decision = conf, DecisionAutoAccept
+		res.Reason = fmt.Sprintf("check digit valid, %d side(s) agree", max(agreeingRoles, 1))
+	default:
+		res.Confidence, res.Decision = conf, DecisionReview
+		res.Reason = "only one side of the container confirmed the number"
 	}
 	return res
 }
 
-// majority returns the most common non-empty value; ties go to the first seen.
+// majority returns the most common non-empty value; ties go to the value that
+// reached the winning count first.
 func majority(frames []Frame, pick func(Frame) string) string {
 	counts := map[string]int{}
 	best, bestN := "", 0

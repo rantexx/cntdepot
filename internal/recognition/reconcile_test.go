@@ -94,3 +94,77 @@ func TestTypeCodeAndColorByMajority(t *testing.T) {
 		t.Fatalf("type code, color = %q, %q; want 45G1, blue", r.TypeCode, r.Color)
 	}
 }
+
+func TestDirectReadBeatsRepairAcrossPhotos(t *testing.T) {
+	frames := []Frame{
+		frame("rear", rc("CSQU3O54383", 0.97)),
+		frame("left", rc("CSQU3054383", 0.95)),
+		frame("right", rc("CSQU3054383", 0.95)),
+	}
+	orders := [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
+	for _, o := range orders {
+		in := []Frame{frames[o[0]], frames[o[1]], frames[o[2]]}
+		r := Reconcile(in, 0.85)
+		if r.Number != "CSQU3054383" || r.Candidates[0].RepairedFrom != "" || r.Decision != DecisionAutoAccept {
+			t.Fatalf("order %v: got %s %s repairedFrom=%q; want auto_accept CSQU3054383 as a direct read",
+				o, r.Decision, r.Number, r.Candidates[0].RepairedFrom)
+		}
+	}
+}
+
+func TestRepairNeverAutoAcceptsEvenAtLowThreshold(t *testing.T) {
+	r := Reconcile([]Frame{frame("rear", rc("CSQU3O54383", 0.97)), frame("left", rc("CSQU3O54383", 0.97))}, 0.1)
+	if r.Decision != DecisionReview || r.Confidence > 0.70 {
+		t.Fatalf("got %s %v; want review capped at 0.70", r.Decision, r.Confidence)
+	}
+}
+
+func TestSameSideTwiceIsNotDisagreement(t *testing.T) {
+	r := Reconcile([]Frame{frame("other", rc("CSQU3054383", 0.95)), frame("other", rc("CSQU3054383", 0.95))}, 0.85)
+	if r.Decision != DecisionReview || r.Reason != "only one side of the container confirmed the number" {
+		t.Fatalf("got %s %q", r.Decision, r.Reason)
+	}
+}
+
+func TestPartialSecondPhotoIsNotDisagreement(t *testing.T) {
+	r := Reconcile([]Frame{frame("rear", rc("CSQU3054383", 0.95)), frame("left", rc("CSQU30", 0.5))}, 0.85)
+	if r.Decision != DecisionReview || r.Reason != "only one side of the container confirmed the number" {
+		t.Fatalf("got %s %q", r.Decision, r.Reason)
+	}
+}
+
+func TestOutvotedConflictStillReviews(t *testing.T) {
+	r := Reconcile([]Frame{
+		frame("left", rc("CSQU3054383", 0.9)),
+		frame("right", rc("CSQU3054383", 0.9)),
+		frame("front", rc("TEXU1234569", 0.99)),
+	}, 0.85)
+	if r.Decision != DecisionReview || r.Reason != "photos disagree" {
+		t.Fatalf("got %s %q; want review, photos disagree", r.Decision, r.Reason)
+	}
+}
+
+func TestPhotoWithTwoValidNumbersReviews(t *testing.T) {
+	r := Reconcile([]Frame{frame("rear", rc("CSQU3054383", 0.95), rc("TEXU1234569", 0.94))}, 0.85)
+	if r.Decision != DecisionReview || r.Reason != "a photo shows more than one valid number" {
+		t.Fatalf("got %s %q", r.Decision, r.Reason)
+	}
+}
+
+func TestFailedPhotoBlocksAutoAccept(t *testing.T) {
+	r := Reconcile([]Frame{ErrorFrame("rear", "engine unavailable: HTTP 529"), frame("left", rc("CSQU3054383", 0.95))}, 0.85)
+	if r.Decision != DecisionReview || !strings.HasPrefix(r.Reason, "a photo could not be read") {
+		t.Fatalf("got %s %q", r.Decision, r.Reason)
+	}
+}
+
+func TestRepairConfidenceDoesNotInflateDirectRead(t *testing.T) {
+	r := Reconcile([]Frame{
+		frame("left", rc("CSQU3054383", 0.3)),
+		frame("right", rc("CSQU3054383", 0.3)),
+		frame("front", rc("CSQU3O54383", 1.0)),
+	}, 0.85)
+	if r.Number != "CSQU3054383" || math.Abs(r.Confidence-0.40) > 1e-9 {
+		t.Fatalf("got %s %v; want CSQU3054383 at 0.40 (direct 0.3 + 0.10 for the second side)", r.Number, r.Confidence)
+	}
+}
