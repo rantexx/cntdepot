@@ -155,8 +155,12 @@ export class ApiError extends Error {
   }
 }
 
+// The hub rejects non-GET API requests that do not carry the X-Depot-Client
+// header, so every call sends it.
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: "same-origin", ...init });
+  const headers = new Headers(init?.headers);
+  headers.set("X-Depot-Client", "web");
+  const res = await fetch(path, { credentials: "same-origin", ...init, headers });
   if (!res.ok) {
     let code = "E0000";
     let message = res.statusText;
@@ -172,11 +176,35 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Uploads over a bad mobile link can hang for minutes; give up after this long
+// so the shot is marked failed and the clerk can retry.
+const UPLOAD_TIMEOUT_MS = 90_000;
+
+async function callWithTimeout<T>(path: string, init: RequestInit, ms: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), ms);
+  try {
+    return await call<T>(path, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (controller.signal.aborted) throw new ApiError(0, "E0000", "request timed out");
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function postJSON(body: unknown): RequestInit {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
 export const blobUrl = (digest: string) => `/api/blobs/${digest}`;
+
+// typedNumber normalizes a container number typed on a phone keyboard. A Turkish
+// keyboard produces İ and ı, which are not in the A-Z alphabet of container
+// numbers; both mean I here.
+export function typedNumber(s: string): string {
+  return s.replace(/[İı]/g, "I").toUpperCase();
+}
 
 export const api = {
   health: () => call<Health>("/api/health"),
@@ -192,7 +220,11 @@ export const api = {
     form.append("height", String(height));
     form.append("original", original, "original");
     form.append("ai", ai, "ai.jpg");
-    return call<Photo>(`/api/moves/${encodeURIComponent(id)}/photos`, { method: "POST", body: form });
+    return callWithTimeout<Photo>(
+      `/api/moves/${encodeURIComponent(id)}/photos`,
+      { method: "POST", body: form },
+      UPLOAD_TIMEOUT_MS,
+    );
   },
   resolve: (
     id: string,
@@ -203,6 +235,6 @@ export const api = {
   testRead: (ai: Blob) => {
     const form = new FormData();
     form.append("ai", ai, "ai.jpg");
-    return call<TestReadResult>("/api/test-read", { method: "POST", body: form });
+    return callWithTimeout<TestReadResult>("/api/test-read", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
   },
 };

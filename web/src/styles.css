@@ -57,6 +57,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .shot-button { display: flex; align-items: center; justify-content: center; min-height: 72px; background: var(--accent); color: #fff; border-radius: 10px; font-weight: 600; cursor: pointer; text-align: center; padding: 8px; }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.server-photos { margin-bottom: 12px; }
+.server-photos h4 { margin: 8px 0; }
 .thumb img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
 .thumb.failed { outline: 2px solid var(--bad); }
 .candidates { list-style: none; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; }

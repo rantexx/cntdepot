@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type MoveDetail } from "../api";
+import { api, ApiError, blobUrl, type MoveDetail } from "../api";
 import { CandidateList, StatusChip } from "../components";
 import { useT, type Key } from "../i18n";
 import { preparePhoto, type Quality } from "../image";
 import { useMoveEvents } from "../live";
-import { localId, readLocal, writeLocal } from "../storage";
+import { localId, readLocal, readSession, removeSession, writeLocal, writeSession } from "../storage";
 
 const SHOTS: { role: string; label: Key }[] = [
   { role: "rear", label: "shotRear" },
@@ -14,12 +14,17 @@ const SHOTS: { role: string; label: Key }[] = [
   { role: "other", label: "shotOther" },
 ];
 
+// The truck being photographed, remembered per tab so a reload (or a trip to the
+// queue and back) does not lose it.
+const CURRENT_KEY = "currentMove";
+
 interface Shot {
   key: string;
   role: string;
   file: File;
   preview: string;
   status: "uploading" | "done" | "failed";
+  photoId?: string;
   quality?: Quality;
   error?: string;
 }
@@ -31,18 +36,52 @@ export function Capture() {
   const [move, setMove] = useState<MoveDetail | null>(null);
   const [shots, setShots] = useState<Shot[]>([]);
   const [error, setError] = useState("");
+  const [restoring, setRestoring] = useState(() => readSession(CURRENT_KEY) !== null);
 
   const refresh = useCallback(async (id: string) => {
     try {
-      setMove(await api.getMove(id));
+      const m = await api.getMove(id);
+      if (m.resolved_by !== "" && readSession(CURRENT_KEY) === m.id) removeSession(CURRENT_KEY);
+      setMove(m);
     } catch (e) {
       setError(String(e));
     }
   }, []);
 
-  useMoveEvents((id) => {
-    if (move && id === move.id) void refresh(id);
-  });
+  // Pick the current truck up again after a reload. Local shot files are gone by
+  // then, so the photos already on the hub are shown instead.
+  useEffect(() => {
+    const saved = readSession(CURRENT_KEY);
+    if (!saved) return;
+    let live = true;
+    api
+      .getMove(saved)
+      .then((m) => {
+        if (!live) return;
+        if (m.resolved_by === "") setMove(m);
+        else removeSession(CURRENT_KEY);
+      })
+      .catch((e: unknown) => {
+        if (!live) return;
+        if (e instanceof ApiError && e.status === 404) removeSession(CURRENT_KEY);
+        else setError(String(e));
+      })
+      .finally(() => {
+        if (live) setRestoring(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useMoveEvents(
+    (id) => {
+      if (move && id === move.id) void refresh(id);
+    },
+    () => {
+      if (move) void refresh(move.id);
+    },
+  );
 
   // Safety net if live updates are blocked on this network.
   useEffect(() => {
@@ -51,11 +90,15 @@ export function Capture() {
     return () => window.clearInterval(timer);
   }, [move, refresh]);
 
+  const unfinished = shots.some((s) => s.status !== "done");
+
   async function start() {
+    if (unfinished && !window.confirm(t("leaveUnfinished"))) return;
     setError("");
     try {
       writeLocal("lane", lane);
       const created = await api.createMove(lane, practice);
+      writeSession(CURRENT_KEY, created.id);
       shots.forEach((s) => URL.revokeObjectURL(s.preview));
       setShots([]);
       await refresh(created.id);
@@ -73,8 +116,8 @@ export function Capture() {
     try {
       const prepared = await preparePhoto(shot.file);
       patch(shot.key, { quality: prepared.quality });
-      await api.uploadPhoto(moveId, shot.role, shot.file, prepared.ai, prepared.width, prepared.height);
-      patch(shot.key, { status: "done" });
+      const photo = await api.uploadPhoto(moveId, shot.role, shot.file, prepared.ai, prepared.width, prepared.height);
+      patch(shot.key, { status: "done", photoId: photo.id });
     } catch (e) {
       patch(shot.key, { status: "failed", error: String(e) });
     }
@@ -88,6 +131,15 @@ export function Capture() {
     void upload(move.id, shot);
   }
 
+  const practiceCheck = (
+    <label className="check">
+      <input type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} />
+      {t("practice")}
+    </label>
+  );
+
+  if (restoring) return <p>{t("loading")}</p>;
+
   if (!move) {
     return (
       <section className="card">
@@ -96,10 +148,7 @@ export function Capture() {
           {t("lane")}
           <input value={lane} onChange={(e) => setLane(e.target.value)} inputMode="numeric" />
         </label>
-        <label className="check">
-          <input type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} />
-          {t("practice")}
-        </label>
+        {practiceCheck}
         <button type="button" className="primary big" onClick={() => void start()}>
           {t("startMove")}
         </button>
@@ -109,6 +158,7 @@ export function Capture() {
   }
 
   const open = move.resolved_by === "";
+  const serverPhotos = (move.photos ?? []).filter((p) => !shots.some((s) => s.photoId === p.id));
   const numberClass = move.check_digit_valid ? "ok" : move.number ? "bad" : "";
   return (
     <section>
@@ -131,6 +181,7 @@ export function Capture() {
           <button type="button" onClick={() => void start()}>
             {t("newTruck")}
           </button>
+          {practiceCheck}
         </div>
       </div>
       {open && (
@@ -150,6 +201,19 @@ export function Capture() {
               />
             </label>
           ))}
+        </div>
+      )}
+      {serverPhotos.length > 0 && (
+        <div className="server-photos">
+          <h4>{t("photosOnServer")}</h4>
+          <div className="thumbs">
+            {serverPhotos.map((p) => (
+              <div key={p.id} className="thumb done">
+                <img src={blobUrl(p.ai_sha256)} alt={p.role} loading="lazy" />
+                <small>{p.role}</small>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <div className="thumbs">

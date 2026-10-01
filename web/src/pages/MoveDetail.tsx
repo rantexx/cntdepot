@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, blobUrl, type Attempt, type MoveDetail as Detail } from "../api";
+import { api, blobUrl, typedNumber, type Attempt, type MoveDetail as Detail } from "../api";
 import { CandidateList, CheckDigitMath, PhotoWithBox, StatusChip } from "../components";
 import { useT } from "../i18n";
 import { useMoveEvents } from "../live";
@@ -14,7 +14,9 @@ function latestByPhoto(attempts: Attempt[] | null): Map<string, Attempt> {
 export function MoveDetail({ id }: { id: string }) {
   const { t } = useT();
   const [move, setMove] = useState<Detail | null>(null);
-  const [number, setNumber] = useState("");
+  // What the person typed, tagged with the move it was typed for. Until they
+  // edit the field it follows move.number, so a re-read shows the new number.
+  const [typed, setTyped] = useState<{ id: string; text: string } | null>(null);
   const [by, setBy] = useState(() => readLocal("by") ?? "");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
@@ -24,7 +26,6 @@ export function MoveDetail({ id }: { id: string }) {
     try {
       const m = await api.getMove(id);
       setMove(m);
-      setNumber((current) => current || m.number);
       setError("");
     } catch (e) {
       setError(String(e));
@@ -34,9 +35,12 @@ export function MoveDetail({ id }: { id: string }) {
   useEffect(() => {
     void load();
   }, [load]);
-  useMoveEvents((changed) => {
-    if (changed === id) void load();
-  });
+  useMoveEvents(
+    (changed) => {
+      if (changed === id) void load();
+    },
+    () => void load(),
+  );
   useEffect(() => {
     if (!move || move.status !== "reading") return;
     const timer = window.setInterval(() => void load(), 3000);
@@ -70,6 +74,8 @@ export function MoveDetail({ id }: { id: string }) {
 
   if (!move) return <p>{error || t("loading")}</p>;
 
+  const number = typed && typed.id === id ? typed.text : move.number;
+  const setNumber = (text: string) => setTyped({ id, text });
   const latest = latestByPhoto(move.attempts);
   const resolved = move.resolved_by !== "";
   const edited = number.trim().toUpperCase() !== move.number;
@@ -114,7 +120,7 @@ export function MoveDetail({ id }: { id: string }) {
               <input
                 className="mono big-input"
                 value={number}
-                onChange={(e) => setNumber(e.target.value.toUpperCase())}
+                onChange={(e) => setNumber(typedNumber(e.target.value))}
                 autoFocus
               />
             </label>

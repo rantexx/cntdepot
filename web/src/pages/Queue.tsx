@@ -6,6 +6,7 @@ import { useMoveEvents } from "../live";
 
 const FILTERS: { status: string; label: Key }[] = [
   { status: "needs_review", label: "filterNeedsReview" },
+  { status: "reading", label: "filterReading" },
   { status: "", label: "filterAll" },
   { status: "accepted", label: "filterAccepted" },
   { status: "refused", label: "filterRefused" },
@@ -29,7 +30,10 @@ export function Queue() {
   useEffect(() => {
     void load();
   }, [load]);
-  useMoveEvents(() => void load());
+  useMoveEvents(
+    () => void load(),
+    () => void load(),
+  );
 
   return (
     <section>

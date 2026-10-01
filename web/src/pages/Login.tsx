@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { useT } from "../i18n";
 
 export function Login({ onDone }: { onDone: () => void }) {
@@ -12,8 +12,10 @@ export function Login({ onDone }: { onDone: () => void }) {
     try {
       await api.login(code);
       onDone();
-    } catch {
-      setError(t("wrongCode"));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) setError(t("wrongCode"));
+      else if (err instanceof ApiError && err.status === 429) setError(t("tooManyTries"));
+      else setError(t("networkError"));
     }
   }
 
