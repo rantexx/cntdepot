@@ -1,0 +1,12 @@
+# Go build output
+/bin/
+*.exe
+
+# Local hub data (database and photos) and dataset exports
+/depot-data/
+/dataset-export/
+
+# Web
+/web/node_modules/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
