@@ -75,3 +75,59 @@ func TestDecodeJSONRejectsGarbage(t *testing.T) {
 		t.Fatalf("err = %v; want ErrUnparseable", err)
 	}
 }
+
+func TestBuildFrameKeepsDirectReadOverRepair(t *testing.T) {
+	f := BuildFrame("rear", Reading{Candidates: []RawCandidate{
+		{Number: "CSQU3O54383", Confidence: 0.97},
+		{Number: "CSQU3054383", Confidence: 0.90},
+	}})
+	count := 0
+	for _, c := range f.Candidates {
+		if c.Number != "CSQU3054383" {
+			continue
+		}
+		count++
+		if c.Confidence != 0.90 || !c.CheckDigitValid || c.RepairedFrom != "" {
+			t.Fatalf("direct read = %+v; want confidence 0.90, valid, not a repair", c)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("CSQU3054383 appears %d times in %+v; want exactly once, as the direct read", count, f.Candidates)
+	}
+}
+
+func TestBuildFrameKeepsBestConfidenceForDuplicates(t *testing.T) {
+	f := BuildFrame("rear", Reading{Candidates: []RawCandidate{
+		{Number: "CSQU3054383", Confidence: 0.2},
+		{Number: "csqu 3054383", Confidence: 0.95},
+	}})
+	if len(f.Candidates) != 1 || f.Candidates[0].Number != "CSQU3054383" || f.Candidates[0].Confidence != 0.95 {
+		t.Fatalf("candidates = %+v; want one candidate at 0.95", f.Candidates)
+	}
+}
+
+func TestBuildFrameCapsAfterFiltering(t *testing.T) {
+	want := []string{"CSQU3054383", "TEXU1234569", "ABCU1234560", "ABCU1234160"}
+	raw := []RawCandidate{{Number: "", Confidence: 0.9}, {Number: "", Confidence: 0.9}}
+	for _, n := range want {
+		raw = append(raw, RawCandidate{Number: n, Confidence: 0.8})
+	}
+	f := BuildFrame("rear", Reading{Candidates: raw})
+	if len(f.Candidates) != 4 {
+		t.Fatalf("candidates = %+v; want 4", f.Candidates)
+	}
+	for i, n := range want {
+		if f.Candidates[i].Number != n {
+			t.Fatalf("candidate %d = %q; want %q (all: %+v)", i, f.Candidates[i].Number, n, f.Candidates)
+		}
+	}
+}
+
+func TestBuildFrameNormalizesVisible(t *testing.T) {
+	if f := BuildFrame("rear", Reading{Visible: " Full "}); f.Visible != "full" {
+		t.Fatalf("visible = %q; want full", f.Visible)
+	}
+	if f := BuildFrame("rear", Reading{Visible: "weird"}); f.Visible != "none" {
+		t.Fatalf("visible = %q; want none for an unknown value", f.Visible)
+	}
+}
