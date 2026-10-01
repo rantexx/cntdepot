@@ -1,0 +1,80 @@
+# Local gate test kit: how to run it
+
+One Windows PC runs `depotd hub`. Phones on the same Wi-Fi open it in the browser,
+photograph containers, and an office screen confirms or corrects what was read.
+Everything stays on the PC: database and photos are in the `depot-data` folder.
+
+## One-time setup
+
+1. Install Go 1.27+ (https://go.dev/dl/; `go.mod` requires it) and Node 20+.
+2. Create a Gemini API key in Google AI Studio (https://aistudio.google.com/apikey) on a project
+   **with billing enabled**: on the unpaid tier Google may use submitted photos to improve its
+   products. In **your own** terminal run `setx GEMINI_API_KEY "<key>"`, then open a new terminal.
+   Never paste the key in chat or commit it.
+3. Build, from `C:\Users\OZGUN\depot-platform`:
+
+   ```
+   npm --prefix web install
+   npm --prefix web run build
+   go build -o bin/depotd.exe ./cmd/depotd
+   ```
+
+## Every day
+
+```
+bin/depotd.exe hub -data depot-data -access-code 4821
+```
+
+- The log prints addresses such as `open: http://192.168.0.29:8080`. Open that on the phones.
+- The first time, Windows Firewall asks whether `depotd.exe` may use the network: choose
+  **Private networks** and allow. (Do this yourself; nobody should change firewall settings for you.)
+- `-access-code` is optional; when set, every phone and PC asks for it once.
+- No API key yet, or just practising? Add `-engine fake`: every photo reads as `CSQU3054383`.
+- Stop with Ctrl+C. Photos that were still being read are read again at the next start.
+
+Options: `-model` and `-thinking` choose the Gemini model and thinking level (defaults `gemini-3.8-flash`, `low`;
+try `-model gemini-3.5-flash-lite` with `bench` to see whether the cheaper model is accurate enough),
+`-auto-accept` lets confident, check-digit-valid reads skip the person (off: keep it off while
+collecting training data), `-addr :8080` changes the port.
+
+## Using it
+
+- **Phone, New gate-in:** pick the lane, start a truck, tap **Rear doors** first (number and ISO
+  code are clearest there), then the sides. Tick **Practice** for test trucks: they never enter
+  the training data. A warning under a photo means it looks too dark or blurry: retake it.
+- **Office, Queue:** everything that needs a person. Open a truck, check the photos (the orange
+  box shows where the number was read), fix the number if needed (the check-digit math updates as
+  you type) and press Enter. Your name is remembered on that device.
+- **Test read:** try one photo without creating a record. Shows the raw engine answer, time and tokens.
+
+## Photo tips
+
+Fill the frame with the number, keep the phone level, avoid glare on wet paint, and for flat racks
+and tanks photograph the end frame where the number is. Night photos need a light.
+
+## Training data and accuracy
+
+```
+bin/depotd.exe export-dataset -data depot-data -out dataset-export
+bin/depotd.exe bench -data depot-data -limit 50 -yes
+```
+
+`export-dataset` copies every verified, non-practice photo with labels (see `dataset-export/README.txt`).
+`bench` re-reads verified trucks with the chosen `-model`/`-thinking` and prints accuracy, tokens and
+time: use it to compare settings before changing them. It costs one engine call per photo.
+
+## Backup
+
+Stop the hub and copy the whole `depot-data` folder somewhere safe (external disk or cloud drive).
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Phone can't open the address | Same Wi-Fi as the PC? Guest Wi-Fi often isolates devices. Firewall allowed for private networks? Is the Wi-Fi marked "Public" in Windows? |
+| `GEMINI_API_KEY is not set` | Run `setx ...` in your own terminal and open a new one, or use `-engine fake`. |
+| Reason shows `engine rejected the request` with a model name | The model id is wrong or retired: check the current list in the Gemini docs and pass `-model`. If it mentions thinking, run with `-thinking ""`. |
+| Reason shows `engine rejected the credentials` | The API key is wrong or revoked: create a new one. |
+| Reason shows `engine unavailable` | Internet or Gemini temporarily down (already retried twice): press **Read again** later, or type the number. |
+| `The web app is not built yet` | Run `npm --prefix web run build`, then `go build ...` again. |
+| Camera opens the front camera | Switch cameras in the phone's camera screen; the app asks for the rear one but some phones ignore it. |
