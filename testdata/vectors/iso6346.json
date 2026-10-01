@@ -8,7 +8,9 @@
     {"input": "TEXU1234569", "normalized": "TEXU1234569", "well_formed": true, "valid": true, "expected_check_digit": 9},
     {"input": "CSQX3054383", "normalized": "CSQX3054383", "well_formed": false, "valid": false},
     {"input": "CSQU305438", "normalized": "CSQU305438", "well_formed": false, "valid": false},
-    {"input": "", "normalized": "", "well_formed": false, "valid": false}
+    {"input": "", "normalized": "", "well_formed": false, "valid": false},
+    {"input": "CſQU3054383", "normalized": "CQU3054383", "well_formed": false, "valid": false, "note": "non-ASCII letters are dropped, never folded"},
+    {"input": "ß", "normalized": "", "well_formed": false, "valid": false}
   ],
   "repairs": [
     {"input": "CSQU3O54383", "contains": "CSQU3054383", "note": "letter O read in place of zero"},

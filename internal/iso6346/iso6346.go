@@ -21,17 +21,28 @@ var letterValue = map[byte]int{
 // numberShape: 3-letter owner code, category U/J/Z, 6-digit serial, check digit.
 var numberShape = regexp.MustCompile(`^[A-Z]{3}[UJZ][0-9]{7}$`)
 
-var notAlnum = regexp.MustCompile(`[^A-Z0-9]`)
-
 // confusions are characters engines mix up on weathered paint, in both directions.
 var confusions = map[byte]byte{
 	'0': 'O', 'O': '0', '1': 'I', 'I': '1', '5': 'S', 'S': '5',
 	'8': 'B', 'B': '8', '2': 'Z', 'Z': '2', '6': 'G', 'G': '6',
 }
 
-// Normalize uppercases and strips everything that is not A-Z or 0-9.
+// Normalize uppercases ASCII letters and drops everything that is not A-Z or
+// 0-9. It is deliberately ASCII-only: Unicode case folding would turn
+// look-alikes such as U+017F (long s) into a valid letter.
 func Normalize(raw string) string {
-	return notAlnum.ReplaceAllString(strings.ToUpper(raw), "")
+	var b strings.Builder
+	b.Grow(len(raw))
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			b.WriteByte(c - 'a' + 'A')
+		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // Step is one character's contribution to the check digit sum.

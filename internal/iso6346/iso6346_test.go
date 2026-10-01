@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -49,12 +50,25 @@ func TestNumberVectors(t *testing.T) {
 			t.Errorf("Validate(%q) = normalized %q, well_formed %v, valid %v; want %q, %v, %v",
 				tc.Input, got.Normalized, got.WellFormed, got.Valid, tc.Normalized, tc.WellFormed, tc.Valid)
 		}
+		if !tc.WellFormed && got.ExpectedCheckDigit != nil {
+			t.Errorf("Validate(%q) expected check digit = %s; want nil for a number that is not well formed",
+				tc.Input, digitString(got.ExpectedCheckDigit))
+		}
 		if tc.ExpectedCheckDigit != nil {
 			if got.ExpectedCheckDigit == nil || *got.ExpectedCheckDigit != *tc.ExpectedCheckDigit {
-				t.Errorf("Validate(%q) expected check digit = %v; want %d", tc.Input, got.ExpectedCheckDigit, *tc.ExpectedCheckDigit)
+				t.Errorf("Validate(%q) expected check digit = %s; want %d",
+					tc.Input, digitString(got.ExpectedCheckDigit), *tc.ExpectedCheckDigit)
 			}
 		}
 	}
+}
+
+// digitString prints an optional check digit as its value, or "nil".
+func digitString(d *int) string {
+	if d == nil {
+		return "nil"
+	}
+	return strconv.Itoa(*d)
 }
 
 func TestRepairVectors(t *testing.T) {
