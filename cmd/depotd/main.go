@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"depot/internal/bench"
 	"depot/internal/blob"
+	"depot/internal/dataset"
 	"depot/internal/gate"
 	"depot/internal/httpapi"
 	"depot/internal/recognition"
@@ -35,6 +37,10 @@ func main() {
 		fmt.Println(Version)
 	case "hub":
 		err = runHub(os.Args[2:])
+	case "export-dataset":
+		err = runExport(os.Args[2:])
+	case "bench":
+		err = runBench(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -174,6 +180,66 @@ func runHub(args []string) error {
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 	svc.Wait()
+	return nil
+}
+
+func runExport(args []string) error {
+	fs := flag.NewFlagSet("export-dataset", flag.ExitOnError)
+	var data dataFlags
+	data.register(fs)
+	out := fs.String("out", "dataset-export", "folder to write the dataset into")
+	_ = fs.Parse(args)
+
+	st, bl, err := data.open()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	sum, err := dataset.Export(context.Background(), st, bl, *out)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("exported %d verified moves, %d photos (%d with number boxes) to %s\n", sum.Moves, sum.Photos, sum.Boxes, *out)
+	return nil
+}
+
+func runBench(args []string) error {
+	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	var data dataFlags
+	data.register(fs)
+	var eng engineFlags
+	eng.register(fs)
+	limit := fs.Int("limit", 0, "only the first N verified moves (0: all)")
+	threshold := fs.Float64("threshold", 0.85, "auto-accept threshold used when combining photos")
+	yes := fs.Bool("yes", false, "confirm that every verified photo is sent to the paid engine")
+	_ = fs.Parse(args)
+
+	if eng.engine != "fake" && !*yes {
+		return errors.New("bench sends every verified photo to the engine, which costs money: re-run with -yes")
+	}
+	rec, err := eng.build()
+	if err != nil {
+		return err
+	}
+	st, bl, err := data.open()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	rep, err := bench.Run(context.Background(), st, bl, rec, *threshold, *limit)
+	if err != nil {
+		return err
+	}
+	name, model := rec.Name(), rec.Model()
+	fmt.Printf("engine      %s (%s)\n", name, model)
+	fmt.Printf("moves       %d/%d correct (%.1f%%)\n", rep.MovesCorrect, rep.Moves, 100*rep.MoveAccuracy())
+	fmt.Printf("photos      %d/%d correct (%.1f%%), %d engine errors\n", rep.PhotosCorrect, rep.Photos, 100*rep.PhotoAccuracy(), rep.Errors)
+	fmt.Printf("tokens      %d in / %d out\n", rep.InputTokens, rep.OutputTokens)
+	fmt.Printf("avg latency %d ms per photo\n", rep.AvgLatencyMS())
+	for _, m := range rep.Misses {
+		fmt.Printf("miss        %s want %s got %q (%s)\n", m.MoveID, m.Want, m.Got, m.Reason)
+	}
 	return nil
 }
 
