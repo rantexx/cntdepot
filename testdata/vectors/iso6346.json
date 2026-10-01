@@ -10,7 +10,8 @@
     {"input": "CSQU305438", "normalized": "CSQU305438", "well_formed": false, "valid": false},
     {"input": "", "normalized": "", "well_formed": false, "valid": false},
     {"input": "CſQU3054383", "normalized": "CQU3054383", "well_formed": false, "valid": false, "note": "non-ASCII letters are dropped, never folded"},
-    {"input": "ß", "normalized": "", "well_formed": false, "valid": false}
+    {"input": "ß", "normalized": "", "well_formed": false, "valid": false},
+    {"input": "İı", "normalized": "II", "well_formed": false, "valid": false, "note": "Turkish dotted and dotless i count as I"}
   ],
   "repairs": [
     {"input": "CSQU3O54383", "contains": "CSQU3054383", "note": "letter O read in place of zero"},

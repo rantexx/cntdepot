@@ -28,18 +28,21 @@ var confusions = map[byte]byte{
 }
 
 // Normalize uppercases ASCII letters and drops everything that is not A-Z or
-// 0-9. It is deliberately ASCII-only: Unicode case folding would turn
-// look-alikes such as U+017F (long s) into a valid letter.
+// 0-9. Case folding is deliberately not Unicode-wide, which would turn
+// look-alikes such as U+017F (long s) into a valid letter. The one exception is
+// the Turkish I: a keyboard or an engine set to Turkish writes the letter I as
+// U+0130 (dotted capital) or U+0131 (dotless small), so both count as I.
 func Normalize(raw string) string {
 	var b strings.Builder
 	b.Grow(len(raw))
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
+	for _, c := range raw {
 		switch {
 		case c >= 'a' && c <= 'z':
-			b.WriteByte(c - 'a' + 'A')
+			b.WriteByte(byte(c) - 'a' + 'A')
 		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b.WriteByte(c)
+			b.WriteByte(byte(c))
+		case c == 'İ' || c == 'ı': // U+0130, U+0131
+			b.WriteByte('I')
 		}
 	}
 	return b.String()

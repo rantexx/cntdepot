@@ -47,6 +47,9 @@ yolo/         one YOLO label per photo that has a box: "class cx cy w h", normal
 classes.txt   YOLO class names.
 
 Boxes come from the reading engine, not from a person: check them before training.
+A box is only kept when the engine's number in that photo is the confirmed number or
+differs from it in one character; a box around any other number is left out.
+Only number is confirmed by a person: type_code and color are the engine's reading, not a person's.
 Boxes are relative to the photo as displayed (EXIF orientation applied), so apply EXIF
 orientation when loading images (for example PIL.ImageOps.exif_transpose).
 `
@@ -88,7 +91,9 @@ func Export(ctx context.Context, st *store.Store, bl *blob.Store, outDir string)
 				if len(r.Candidates) > 0 {
 					label.EngineNumber = iso6346.Normalize(r.Candidates[0].Number)
 				}
-				if b := r.Box; b != nil {
+				// A box around another number (a trailer plate, the next
+				// container) must not teach the model the confirmed one.
+				if b := r.Box; b != nil && boxMatches(label.EngineNumber, m.Number) {
 					label.Box = b
 					line := fmt.Sprintf("0 %.6f %.6f %.6f %.6f\n", (b.X0+b.X1)/2, (b.Y0+b.Y1)/2, b.X1-b.X0, b.Y1-b.Y0)
 					if err := os.WriteFile(filepath.Join(outDir, "yolo", p.ID+".txt"), []byte(line), 0o644); err != nil {
@@ -115,6 +120,21 @@ func Export(ctx context.Context, st *store.Store, bl *blob.Store, outDir string)
 		}
 	}
 	return sum, nil
+}
+
+// boxMatches reports whether the engine's number is the confirmed one or a
+// one-character misread of it, so its box surrounds the confirmed number.
+func boxMatches(engine, confirmed string) bool {
+	if engine == "" || len(engine) != len(confirmed) {
+		return false
+	}
+	differ := 0
+	for i := 0; i < len(engine); i++ {
+		if engine[i] != confirmed[i] {
+			differ++
+		}
+	}
+	return differ <= 1
 }
 
 // latestReadings returns each photo's most recent successful reading.

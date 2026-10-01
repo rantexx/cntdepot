@@ -43,6 +43,7 @@ type Service struct {
 	jobs   chan job
 	ctx    context.Context
 	mu     sync.Mutex // serializes recompute and resolve
+	addMu  sync.Mutex // serializes storing photos, so the duplicate check is exact
 	wg     sync.WaitGroup
 }
 
@@ -80,10 +81,42 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	unread := map[string]bool{}
 	for _, p := range pending {
+		unread[p.MoveID] = true
 		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
 	}
-	return nil
+	// A re-read cut short by a shutdown leaves its move saying "reading" with
+	// every photo already read and no job left to finish it. Moves with unread
+	// photos were just re-queued above and settle as those jobs complete.
+	return s.settleStuckReading(ctx, unread)
+}
+
+// settleStuckReading recomputes every open move still marked "reading" from
+// its existing attempts, except those in skip.
+func (s *Service) settleStuckReading(ctx context.Context, skip map[string]bool) error {
+	const page = 200
+	before := ""
+	for {
+		moves, err := s.store.ListMoves(ctx, store.ListFilter{Status: store.StatusReading, Limit: page, Before: before})
+		if err != nil {
+			return err
+		}
+		for _, m := range moves {
+			if skip[m.ID] {
+				continue
+			}
+			if err := s.recompute(ctx, m.ID); err != nil {
+				log.Printf("gate: recompute move %s: %v", m.ID, err)
+				continue
+			}
+			s.notify(m.ID)
+		}
+		if len(moves) < page {
+			return nil
+		}
+		before = moves[len(moves)-1].ID
+	}
 }
 
 // Wait blocks until the workers have stopped.
@@ -105,40 +138,62 @@ type PhotoInput struct {
 	Width, Height       int
 }
 
-// AddPhoto stores a photo and queues it for reading.
+// AddPhoto stores a photo and queues it for reading. Adding the same original
+// again (a phone retrying an upload whose answer it never saw) returns the
+// photo already stored and queues nothing.
 func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, error) {
 	if len(in.Original) == 0 || len(in.AI) == 0 || !engineReadable(in.AIType) {
 		return store.Photo{}, ErrBadPhoto
 	}
+	// The input is good. A phone that disconnects now must not leave a stored
+	// photo that was never queued, so the writes ignore the request's lifetime.
+	ctx = context.WithoutCancel(ctx)
+	p, added, err := s.storePhoto(ctx, in)
+	if err != nil || !added {
+		return p, err
+	}
+	s.notify(p.MoveID)
+	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	return p, nil
+}
+
+// storePhoto saves the photo and marks its move as reading. added is false
+// when the move already holds this original.
+func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo, added bool, err error) {
+	s.addMu.Lock() // so two concurrent uploads of the same photo cannot both insert it
+	defer s.addMu.Unlock()
 	m, err := s.openMove(ctx, in.MoveID)
 	if err != nil {
-		return store.Photo{}, err
+		return store.Photo{}, false, err
 	}
 	origSHA, err := s.blobs.Put(in.Original)
 	if err != nil {
-		return store.Photo{}, err
+		return store.Photo{}, false, err
+	}
+	for _, existing := range m.Photos {
+		if existing.SHA256 == origSHA {
+			return existing, false, nil
+		}
 	}
 	aiSHA, err := s.blobs.Put(in.AI)
 	if err != nil {
-		return store.Photo{}, err
+		return store.Photo{}, false, err
 	}
 	role := strings.TrimSpace(in.Role)
 	if role == "" {
 		role = "other"
 	}
-	p, err := s.store.AddPhoto(ctx, store.Photo{
+	p, err = s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
 		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,
 	}, in.Actor)
 	if err != nil {
-		return store.Photo{}, err
+		return store.Photo{}, false, err
 	}
 	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
-		return store.Photo{}, err
+		return store.Photo{}, false, err
 	}
-	s.notify(m.ID)
-	s.enqueue(job{moveID: m.ID, photoID: p.ID, aiSHA: aiSHA, aiType: in.AIType})
-	return p, nil
+	return p, true, nil
 }
 
 // Reread queues every photo of an open move for another engine run, e.g.

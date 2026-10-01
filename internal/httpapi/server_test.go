@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -24,6 +26,13 @@ import (
 )
 
 func newTestServer(t *testing.T, accessCode string) *httptest.Server {
+	t.Helper()
+	return newTestServerClock(t, accessCode, nil)
+}
+
+// newTestServerClock is newTestServer with the server's clock replaced (nil
+// keeps the real one), so lock-out timing can be tested without sleeping.
+func newTestServerClock(t *testing.T, accessCode string, now func() time.Time) *httptest.Server {
 	t.Helper()
 	dir := testdir.New(t)
 	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
@@ -45,9 +54,13 @@ func newTestServer(t *testing.T, accessCode string) *httptest.Server {
 		t.Fatal(err)
 	}
 	static := fstest.MapFS{"index.html": {Data: []byte("<html><div id=root></div></html>")}}
-	srv := httptest.NewServer(New(Options{
+	api := New(Options{
 		Service: svc, Store: st, Blobs: bl, Static: static, AccessCode: accessCode, Version: "test",
-	}, broker).Handler())
+	}, broker)
+	if now != nil {
+		api.now = now
+	}
+	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(func() {
 		srv.Close()
 		cancel()
@@ -70,6 +83,7 @@ func call(t *testing.T, client *http.Client, method, url, body string) (int, []b
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("X-Depot-Client", "web")
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +108,13 @@ func uploadPhoto(t *testing.T, client *http.Client, base, moveID, original strin
 		_, _ = fw.Write([]byte(content))
 	}
 	mw.Close()
-	resp, err := client.Post(base+"/api/moves/"+moveID+"/photos", mw.FormDataContentType(), &buf)
+	req, err := http.NewRequest("POST", base+"/api/moves/"+moveID+"/photos", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-Depot-Client", "web")
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,9 +282,14 @@ func TestStreamAnnouncesMoveChanges(t *testing.T) {
 		t.Fatalf("content type = %q", ct)
 	}
 	go func() {
-		r, err := srv.Client().Post(srv.URL+"/api/moves", "application/json", strings.NewReader(`{"lane":"1"}`))
-		if err == nil {
-			r.Body.Close()
+		r, err := http.NewRequest("POST", srv.URL+"/api/moves", strings.NewReader(`{"lane":"1"}`))
+		if err != nil {
+			return
+		}
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Depot-Client", "web")
+		if resp, err := srv.Client().Do(r); err == nil {
+			resp.Body.Close()
 		}
 	}()
 	sc := bufio.NewScanner(resp.Body)
@@ -274,4 +299,255 @@ func TestStreamAnnouncesMoveChanges(t *testing.T) {
 		}
 	}
 	t.Fatal("no move event before timeout")
+}
+
+// errorCode extracts the API error code from a response body.
+func errorCode(body []byte) string {
+	var e struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &e)
+	return e.Error.Code
+}
+
+// rawCall sends a request exactly as given: no client header unless the
+// caller names one, and an optional Host override.
+func rawCall(t *testing.T, method, url, host, clientHeader, body string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "" {
+		req.Host = host
+	}
+	if clientHeader != "" {
+		req.Header.Set("X-Depot-Client", clientHeader)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, data
+}
+
+func TestHealthNeedsNoClientHeader(t *testing.T) {
+	srv := newTestServer(t, "")
+	if status, body := rawCall(t, "GET", srv.URL+"/api/health", "", "", ""); status != http.StatusOK {
+		t.Fatalf("GET /api/health = %d %s; want 200", status, body)
+	}
+}
+
+func TestWritesNeedTheClientHeader(t *testing.T) {
+	srv := newTestServer(t, "1234")
+	for _, tc := range []struct{ path, body string }{
+		{"/api/moves", `{"lane":"1"}`},
+		{"/api/login", `{"code":"1234"}`},
+	} {
+		for _, header := range []string{"", "other"} {
+			status, body := rawCall(t, "POST", srv.URL+tc.path, "", header, tc.body)
+			if status != http.StatusForbidden || errorCode(body) != "E5004" {
+				t.Errorf("POST %s with client header %q = %d %s; want 403 E5004", tc.path, header, status, body)
+			}
+		}
+	}
+	if status, body := rawCall(t, "POST", srv.URL+"/api/login", "", "web", `{"code":"1234"}`); status != http.StatusOK {
+		t.Fatalf("login with the client header = %d %s; want 200", status, body)
+	}
+}
+
+func TestUnknownHostIsRefusedOnTheAPIOnly(t *testing.T) {
+	srv := newTestServer(t, "")
+	status, body := rawCall(t, "GET", srv.URL+"/api/health", "evil.example.com", "", "")
+	if status != http.StatusForbidden || errorCode(body) != "E5005" {
+		t.Fatalf("GET /api/health as evil.example.com = %d %s; want 403 E5005", status, body)
+	}
+	if status, _ := rawCall(t, "GET", srv.URL+"/", "evil.example.com", "", ""); status != http.StatusOK {
+		t.Fatalf("the app shell is not host restricted, got %d", status)
+	}
+	hosts := []string{"localhost:8080", "127.0.0.1:8080", "[::1]:8080", "192.168.1.20:8080"}
+	if name, err := os.Hostname(); err == nil && name != "" {
+		hosts = append(hosts, name+":8080", strings.ToUpper(name), name+".local:8080")
+	}
+	for _, host := range hosts {
+		if status, body := rawCall(t, "GET", srv.URL+"/api/health", host, "", ""); status != http.StatusOK {
+			t.Errorf("GET /api/health as %s = %d %s; want 200", host, status, body)
+		}
+	}
+}
+
+func TestAllowedHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost":           true,
+		"LOCALHOST:8080":      true,
+		"127.0.0.1:8080":      true,
+		"192.168.1.20":        true,
+		"[::1]":               true,
+		"[::1]:8080":          true,
+		"depot-pc":            true,
+		"Depot-PC:8080":       true,
+		"DEPOT-PC":            true,
+		"depot-pc.local:8080": true,
+		"depot-pc.lan":        true,
+		"depot-pc.evil.com":   false,
+		"evil.example.com":    false,
+		"evil.example.com:80": false,
+		"localhost.evil.com":  false,
+		"depot-pcx":           false,
+		"notdepot-pc":         false,
+		"10.0.0.1.evil.com":   false,
+		"":                    false,
+		":8080":               false,
+	} {
+		if got := allowedHost(host, "Depot-PC"); got != want {
+			t.Errorf("allowedHost(%q) = %v; want %v", host, got, want)
+		}
+	}
+	// A machine name that already carries its domain also answers to its short name.
+	for host, want := range map[string]bool{"depot-pc": true, "depot-pc.corp.example.com": true, "other": false} {
+		if got := allowedHost(host, "depot-pc.corp.example.com"); got != want {
+			t.Errorf("allowedHost(%q) with a fully qualified machine name = %v; want %v", host, got, want)
+		}
+	}
+}
+
+// fakeClock is a hand-wound clock safe to share with the server's goroutines.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{now: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func login(t *testing.T, base, code string) (int, http.Header, []byte) {
+	t.Helper()
+	req, err := http.NewRequest("POST", base+"/api/login", strings.NewReader(`{"code":"`+code+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Depot-Client", "web")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, data
+}
+
+func TestFiveWrongCodesLockLoginForAMinute(t *testing.T) {
+	clock := newFakeClock()
+	srv := newTestServerClock(t, "1234", clock.Now)
+	for i := 1; i <= 5; i++ {
+		if status, _, _ := login(t, srv.URL, "0000"); status != http.StatusUnauthorized {
+			t.Fatalf("wrong code #%d = %d; want 401", i, status)
+		}
+	}
+	status, header, body := login(t, srv.URL, "1234")
+	if status != http.StatusTooManyRequests || errorCode(body) != "E5003" {
+		t.Fatalf("right code while locked = %d %s; want 429 E5003", status, body)
+	}
+	if header.Get("Retry-After") == "" {
+		t.Error("a locked-out answer should say when to retry")
+	}
+	clock.Advance(59 * time.Second)
+	if status, _, _ := login(t, srv.URL, "1234"); status != http.StatusTooManyRequests {
+		t.Fatalf("after 59 s = %d; want still 429", status)
+	}
+	clock.Advance(2 * time.Second)
+	if status, _, body := login(t, srv.URL, "1234"); status != http.StatusOK {
+		t.Fatalf("after the lock-out = %d %s; want 200", status, body)
+	}
+}
+
+func TestGuessesWhileLockedDoNotExtendTheLock(t *testing.T) {
+	clock := newFakeClock()
+	srv := newTestServerClock(t, "1234", clock.Now)
+	for i := 0; i < 5; i++ {
+		login(t, srv.URL, "0000")
+	}
+	for i := 0; i < 11; i++ {
+		clock.Advance(5 * time.Second)
+		if status, _, _ := login(t, srv.URL, "0000"); status != http.StatusTooManyRequests {
+			t.Fatalf("guess %d s into the lock-out = %d; want 429", 5*(i+1), status)
+		}
+	}
+	// 55 s have passed; the lock lifts 60 s after the fifth miss.
+	clock.Advance(6 * time.Second)
+	if status, _, body := login(t, srv.URL, "1234"); status != http.StatusOK {
+		t.Fatalf("after the lock-out = %d %s; want 200", status, body)
+	}
+}
+
+func TestSuccessfulLoginClearsTheFailureCount(t *testing.T) {
+	clock := newFakeClock()
+	srv := newTestServerClock(t, "1234", clock.Now)
+	for round := 0; round < 3; round++ {
+		for i := 0; i < 4; i++ {
+			if status, _, _ := login(t, srv.URL, "0000"); status != http.StatusUnauthorized {
+				t.Fatalf("round %d wrong code #%d = %d; want 401", round, i+1, status)
+			}
+		}
+		if status, _, body := login(t, srv.URL, "1234"); status != http.StatusOK {
+			t.Fatalf("round %d right code = %d %s; want 200", round, status, body)
+		}
+	}
+}
+
+func TestOldFailuresDoNotCount(t *testing.T) {
+	clock := newFakeClock()
+	srv := newTestServerClock(t, "1234", clock.Now)
+	for i := 0; i < 4; i++ {
+		login(t, srv.URL, "0000")
+	}
+	clock.Advance(11 * time.Minute)
+	if status, _, _ := login(t, srv.URL, "0000"); status != http.StatusUnauthorized {
+		t.Fatalf("fifth miss, but the first four are 11 minutes old = %d; want 401", status)
+	}
+	if status, _, body := login(t, srv.URL, "1234"); status != http.StatusOK {
+		t.Fatalf("right code = %d %s; want 200", status, body)
+	}
+}
+
+func TestParallelGuessesCannotSlipPastTheLimit(t *testing.T) {
+	srv := newTestServerClock(t, "1234", newFakeClock().Now)
+	statuses := make(chan int, 40)
+	var wg sync.WaitGroup
+	for i := 0; i < cap(statuses); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			status, _, _ := login(t, srv.URL, "0000")
+			statuses <- status
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	counted := map[int]int{}
+	for s := range statuses {
+		counted[s]++
+	}
+	if counted[http.StatusUnauthorized] != 5 || counted[http.StatusTooManyRequests] != 35 {
+		t.Fatalf("answers = %v; want exactly 5 wrong-code answers and 35 lock-outs", counted)
+	}
 }

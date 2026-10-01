@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,10 +35,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	client := clientAddr(r)
+	if wait := s.lockout.begin(client, s.now()); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+		writeError(w, http.StatusTooManyRequests, "E5003", "too many wrong codes; wait a minute")
+		return
+	}
 	if subtle.ConstantTimeCompare([]byte(body.Code), []byte(s.opts.AccessCode)) != 1 {
 		writeError(w, http.StatusUnauthorized, "E5002", "wrong access code")
 		return
 	}
+	s.lockout.clear(client)
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.token, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600,

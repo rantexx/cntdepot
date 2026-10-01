@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -161,6 +162,63 @@ func TestResolvedMoveIsClosed(t *testing.T) {
 	}
 }
 
+func TestAddingTheSamePhotoTwiceIsIdempotent(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, true)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	in := PhotoInput{
+		MoveID: m.ID, Role: "rear", Actor: "clerk",
+		Original: []byte("original-a"), OriginalType: "image/jpeg", AI: []byte("a"), AIType: "image/jpeg",
+	}
+	first, err := h.svc.AddPhoto(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+
+	// A phone retrying an upload whose answer it never saw sends the same bytes.
+	again, err := h.svc.AddPhoto(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID {
+		t.Fatalf("retry returned photo %s; want the existing %s", again.ID, first.ID)
+	}
+	got, err := h.store.GetMove(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Photos) != 1 {
+		t.Fatalf("photos = %d; want 1", len(got.Photos))
+	}
+	if got.Status != store.StatusNeedsReview {
+		t.Fatalf("status = %s; a retry must not send the move back to reading", got.Status)
+	}
+	time.Sleep(50 * time.Millisecond) // give a wrongly queued job time to reach the engine
+	if fake.Calls() != 1 {
+		t.Fatalf("engine calls = %d; want 1", fake.Calls())
+	}
+}
+
+func TestAddPhotoStoresAndQueuesEvenIfTheRequestIsCancelled(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, true)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	gone, cancel := context.WithCancel(ctx)
+	cancel() // the phone disconnected
+	_, err := h.svc.AddPhoto(gone, PhotoInput{
+		MoveID: m.ID, Role: "rear", Actor: "clerk",
+		Original: []byte("original-a"), OriginalType: "image/jpeg", AI: []byte("a"), AIType: "image/jpeg",
+	})
+	if err != nil {
+		t.Fatalf("AddPhoto err = %v; a stored photo must always be queued", err)
+	}
+	waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	if fake.Calls() != 1 {
+		t.Fatalf("engine calls = %d; want 1", fake.Calls())
+	}
+}
+
 func TestBadInputsAreRejected(t *testing.T) {
 	h := newHarness(t, &recognition.Fake{}, Config{}, true)
 	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
@@ -195,6 +253,38 @@ func TestStartRereadsPhotosLeftUnread(t *testing.T) {
 	waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
 	if fake.Calls() != 1 {
 		t.Fatalf("engine calls = %d; want 1", fake.Calls())
+	}
+}
+
+func TestStartRecomputesMovesStuckReading(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, false)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	// Simulate a re-read cut short by a shutdown: the photo already has an
+	// attempt, but the move was left saying "reading" and no job remains.
+	ai, _ := h.blobs.Put([]byte("a"))
+	p, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "clerk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(reading("CSQU3054383", 0.9))
+	if _, err := h.store.AddAttempt(ctx, store.Attempt{MoveID: m.ID, PhotoID: p.ID, Engine: "fake", Model: "fake-1", Reading: raw, Raw: string(raw)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.svc.Start(runCtx); err != nil {
+		t.Fatal(err)
+	}
+	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	if got.Number != "CSQU3054383" {
+		t.Fatalf("move = %+v", got)
+	}
+	if fake.Calls() != 0 {
+		t.Fatalf("engine calls = %d; want 0: the photo was already read", fake.Calls())
 	}
 }
 

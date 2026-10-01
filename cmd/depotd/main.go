@@ -140,6 +140,14 @@ func runHub(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// Take the port before anything is read: a busy port must fail fast, not
+	// after photos left over from the last run were sent to the paid engine.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
 	broker := httpapi.NewBroker()
 	svc := gate.New(st, bl, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, broker.Publish)
 	if err := svc.Start(ctx); err != nil {
@@ -161,7 +169,7 @@ func runHub(args []string) error {
 	}
 
 	errc := make(chan error, 1)
-	go func() { errc <- server.ListenAndServe() }()
+	go func() { errc <- server.Serve(ln) }()
 	name, model := svc.Engine()
 	log.Printf("depotd %s · engine %s (%s) · data %s · auto-accept %v", Version, name, model, data.dir, *autoAccept)
 	for _, u := range lanURLs(*addr) {

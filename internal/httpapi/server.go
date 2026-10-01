@@ -9,9 +9,12 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"path"
 	"strings"
+	"time"
 
 	"depot/internal/blob"
 	"depot/internal/gate"
@@ -30,17 +33,29 @@ type Options struct {
 
 // Server is the hub's HTTP front door.
 type Server struct {
-	opts   Options
-	broker *Broker
-	mux    *http.ServeMux
-	token  string // cookie value proving the access code was entered
+	opts    Options
+	broker  *Broker
+	mux     *http.ServeMux
+	token   string           // cookie value proving the access code was entered
+	machine string           // this computer's name; the API answers to it as a Host
+	lockout *lockout         // wrong access codes per client
+	now     func() time.Time // the clock; replaced in tests
 }
 
-const cookieName = "depot_access"
+const (
+	cookieName = "depot_access"
+
+	// Every API request that is not a GET must carry this header. Browsers
+	// only let a page add it to same-origin requests, so another website
+	// cannot make a visitor's browser change gate records.
+	clientHeader = "X-Depot-Client"
+	clientValue  = "web"
+)
 
 // New builds the server. broker must be the one the gate service notifies.
 func New(opts Options, broker *Broker) *Server {
-	s := &Server{opts: opts, broker: broker, mux: http.NewServeMux()}
+	s := &Server{opts: opts, broker: broker, mux: http.NewServeMux(), lockout: newLockout(), now: time.Now}
+	s.machine, _ = os.Hostname()
 	if opts.AccessCode != "" {
 		sum := sha256.Sum256([]byte("depot-kit-v1:" + opts.AccessCode))
 		s.token = hex.EncodeToString(sum[:])
@@ -50,7 +65,7 @@ func New(opts Options, broker *Broker) *Server {
 }
 
 // Handler returns the full HTTP handler.
-func (s *Server) Handler() http.Handler { return s.requireAccess(s.mux) }
+func (s *Server) Handler() http.Handler { return s.guardAPI(s.requireAccess(s.mux)) }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.health)
@@ -70,6 +85,64 @@ func (s *Server) routes() {
 	})
 	s.mux.Handle("/", s.static())
 }
+
+// guardAPI protects the API from other websites open in a visitor's browser:
+// requests must be addressed to this computer (a DNS-rebinding page arrives
+// under its own name) and writes must carry the web app's client header (a
+// cross-site form or fetch cannot add it). The app files are not restricted.
+func (s *Server) guardAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !allowedHost(r.Host, s.machine) {
+			writeError(w, http.StatusForbidden, "E5005", "unknown host")
+			return
+		}
+		if r.Method != http.MethodGet && r.Header.Get(clientHeader) != clientValue {
+			writeError(w, http.StatusForbidden, "E5004", "missing client header")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// allowedHost reports whether a Host header names this computer: localhost,
+// an IP address, or the machine's own name (any case), either exactly as the
+// system reports it or followed by a local-network suffix such as .local.
+// Arbitrary domains after the name are refused: an attacker controls those
+// (DNS rebinding).
+func allowedHost(hostHeader, machine string) bool {
+	host := hostHeader
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || net.ParseIP(host) != nil {
+		return true
+	}
+	full := strings.ToLower(machine)
+	short, _, _ := strings.Cut(full, ".")
+	if short == "" {
+		return false
+	}
+	if host == full || host == short {
+		return true
+	}
+	for _, suffix := range localSuffixes {
+		if host == short+suffix {
+			return true
+		}
+	}
+	return false
+}
+
+// localSuffixes are the names home and office routers give LAN computers.
+var localSuffixes = []string{".local", ".lan", ".home", ".localdomain", ".home.arpa"}
 
 // requireAccess enforces the optional access code on the API. The app shell,
 // health and login stay open so the login screen can load.
