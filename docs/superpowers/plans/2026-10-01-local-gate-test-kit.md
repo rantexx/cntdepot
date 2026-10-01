@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A gate OCR system the owner can run on one Windows PC at their own depot: phones photograph containers over Wi-Fi, Claude reads the container number / ISO type code / color, a person confirms or corrects it, and every verified photo becomes training data.
+**Goal:** A gate OCR system the owner can run on one Windows PC at their own depot: phones photograph containers over Wi-Fi, Gemini reads the container number / ISO type code / color, a person confirms or corrects it, and every verified photo becomes training data.
 
-**Architecture:** One Go program (`depotd`) running in `hub` mode serves a React web app and a JSON API on the LAN. Photos are stored content-addressed on disk, records in an embedded SQLite database (state + append-only events in one transaction). A worker pool sends a downscaled copy of each photo to a `Recognizer` (Claude, or a fake for tests/demos); results from all photos of a truck are combined by the ported prototype logic (check digit first, then cross-photo agreement, then confidence). This is the spec's gate hub (spec §6) with the cloud parts left out; the cloud foundation (M0) follows in a later plan.
+**Architecture:** One Go program (`depotd`) running in `hub` mode serves a React web app and a JSON API on the LAN. Photos are stored content-addressed on disk, records in an embedded SQLite database (state + append-only events in one transaction). A worker pool sends a downscaled copy of each photo to a `Recognizer` (Gemini, or a fake for tests/demos); results from all photos of a truck are combined by the ported prototype logic (check digit first, then cross-photo agreement, then confidence). This is the spec's gate hub (spec §6) with the cloud parts left out; the cloud foundation (M0) follows in a later plan.
 
-**Tech Stack:** Go ≥ 1.24 (net/http routing, `database/sql`), `modernc.org/sqlite` (pure Go, no C compiler needed), `github.com/oklog/ulid/v2`, `github.com/anthropics/anthropic-sdk-go`; React 18+ + TypeScript + Vite; Node ≥ 20.
+**Tech Stack:** Go ≥ 1.24 (net/http routing, `database/sql`), `modernc.org/sqlite` (pure Go, no C compiler needed), `github.com/oklog/ulid/v2`, the Gemini API over plain HTTPS (no SDK, same as the prototype); React 18+ + TypeScript + Vite; Node ≥ 20.
 
 **Spec:** `docs/superpowers/specs/2026-09-30-gate-ocr-phase-0-1-design.md`
 
@@ -17,16 +17,16 @@
 **In this plan (milestone "M1 + local M2" from spec §14, reordered so the owner can test at their own depot first):**
 - ISO 6346 number and size/type-code validation with explained check-digit math and shared test vectors (spec §9.3, §13)
 - Recognition core ported from the prototype: frame building, repair candidates, reconciliation (spec §9)
-- `Recognizer` interface with a Claude engine (structured JSON output) and a fake engine (spec §9.1)
+- `Recognizer` interface with a Gemini engine (structured JSON output, native number boxes) and a fake engine (spec §9.1)
 - Hub storage: SQLite with state + events written together, content-addressed photo store (spec §7.3, §7.4)
 - Gate service: moves, photos, background reading, review and correction, re-read, test read (spec §8, §10.2)
 - LAN web app in Turkish and English: guided capture with on-device quality check, review queue, move detail with check-digit math and photo boxes, test-read tool (spec §8.1, §10.2)
 - Optional access code for the LAN app
 - Training dataset export (images + JSONL labels + YOLO boxes) and an accuracy benchmark over verified moves (spec §9.7, §13 golden set)
 
-**Not in this plan (later plans):** cloud (AWS, Terraform, identity provider, tenants/roles), PIN login and device pairing, pre-advice import, gate policies, push notifications and escalation, slip printing, connectors (Excel/CODECO/webhooks), local offline OCR model, Gemini backup engine, COCO export format, fixed cameras and live video, equipment profiles (still awaiting approval).
+**Not in this plan (later plans):** cloud (AWS, Terraform, identity provider, tenants/roles), PIN login and device pairing, pre-advice import, gate policies, push notifications and escalation, slip printing, connectors (Excel/CODECO/webhooks), local offline OCR model, a second cloud engine as backup, COCO export format, fixed cameras and live video, equipment profiles (still awaiting approval).
 
-**Model choice:** the Claude engine defaults to `claude-opus-5-5` with effort `low`, both overridable (`-model`, `-effort`, or `DEPOT_CLAUDE_MODEL` / `DEPOT_CLAUDE_EFFORT`). Choosing a cheaper model for step 1 of the escalation ladder (spec §9.2) is the owner's decision after running `depotd bench` on real photos.
+**Model choice:** the owner chose Gemini. The engine defaults to `gemini-3.8-flash` (Google's most capable Flash model) with thinking level `low`, both overridable (`-model`, `-thinking`, or `DEPOT_GEMINI_MODEL` / `DEPOT_GEMINI_THINKING`). Trying the cheaper `gemini-3.5-flash-lite` for step 1 of the escalation ladder (spec §9.2) is the owner's decision after running `depotd bench` on real photos.
 
 ## File map
 
@@ -41,11 +41,11 @@ depot-platform/
 │   ├── iso6346/typecode.go                  size/type code validation, equipment family
 │   ├── recognition/types.go                 Reading, Attempt, Candidate, Frame, Result, errors
 │   ├── recognition/frame.go                 BuildFrame, ErrorFrame
-│   ├── recognition/parse.go                 ParseReading (tolerant JSON)
+│   ├── recognition/parse.go                 decodeJSON (tolerant JSON)
 │   ├── recognition/reconcile.go             Reconcile (ported decision logic)
-│   ├── recognition/recognizer.go            Recognizer interface, Image, Prompt, schema
+│   ├── recognition/recognizer.go            Recognizer interface, Image, Prompt
 │   ├── recognition/fake.go                  Fake engine for tests and demos
-│   ├── recognition/claude.go                Claude engine
+│   ├── recognition/gemini.go                Gemini engine
 │   ├── blob/blob.go                         content-addressed photo store
 │   ├── store/schema.sql                     SQLite schema v1
 │   ├── store/store.go                       Open, migrations, transactions, events
@@ -99,12 +99,12 @@ git config user.name "OZGUN"
 git config user.email "cun9182@gmail.com"
 ```
 
-- [ ] **Step 4: API key (owner action, needed only from Task 19)**
+- [ ] **Step 4: Gemini API key (owner action, needed only from Task 17)**
 
-The owner creates an API key in the Claude Console and stores it in **their own** terminal, never in chat or in a file in the repo:
+The owner creates an API key in Google AI Studio (https://aistudio.google.com/apikey) on a Google Cloud project **with billing enabled**: on Google's unpaid tier, submitted content may be used to improve Google's products, which is not acceptable for depot and customer photos (check the current Gemini API terms). The owner stores the key in **their own** terminal, never in chat or in a file in the repo:
 
 ```powershell
-setx ANTHROPIC_API_KEY "<key from the Claude Console>"
+setx GEMINI_API_KEY "<key from Google AI Studio>"
 ```
 
 New terminals then see it. All automated tests use fakes and need no key.
@@ -675,24 +675,25 @@ func TestBuildFrameCleansTypeCodeColorAndConfidence(t *testing.T) {
 	}
 }
 
-func TestParseReadingAcceptsFencesAndProse(t *testing.T) {
+func TestDecodeJSONAcceptsFencesAndProse(t *testing.T) {
 	cases := []string{
 		"```json\n{\"candidates\":[{\"number\":\"CSQU3054383\",\"confidence\":0.9}],\"visible\":\"full\"}\n```",
 		"Here you go: {\"candidates\":[{\"number\":\"CSQU3054383\",\"confidence\":0.9}],\"visible\":\"full\"} done",
 	}
 	for _, text := range cases {
-		r, err := ParseReading(text)
-		if err != nil {
-			t.Fatalf("ParseReading(%q): %v", text, err)
+		var r Reading
+		if err := decodeJSON(text, &r); err != nil {
+			t.Fatalf("decodeJSON(%q): %v", text, err)
 		}
 		if len(r.Candidates) != 1 || r.Candidates[0].Number != "CSQU3054383" || r.Visible != "full" {
-			t.Fatalf("ParseReading(%q) = %+v", text, r)
+			t.Fatalf("decodeJSON(%q) = %+v", text, r)
 		}
 	}
 }
 
-func TestParseReadingRejectsGarbage(t *testing.T) {
-	if _, err := ParseReading("not json at all"); !errors.Is(err, ErrUnparseable) {
+func TestDecodeJSONRejectsGarbage(t *testing.T) {
+	var r Reading
+	if err := decodeJSON("not json at all", &r); !errors.Is(err, ErrUnparseable) {
 		t.Fatalf("err = %v; want ErrUnparseable", err)
 	}
 }
@@ -900,23 +901,21 @@ import (
 
 var fence = regexp.MustCompile("(?i)```(?:json)?")
 
-// ParseReading recovers a Reading from engine text. Structured output makes
-// clean JSON the norm, but some engines fence their JSON or add a word, and a
-// good read should not be thrown away over punctuation.
-func ParseReading(text string) (Reading, error) {
+// decodeJSON recovers one JSON object from engine text into v. Structured
+// output makes clean JSON the norm, but a good read should not be thrown away
+// over a code fence or a stray word around it.
+func decodeJSON(text string, v any) error {
 	cleaned := strings.TrimSpace(fence.ReplaceAllString(text, ""))
-	var r Reading
-	if err := json.Unmarshal([]byte(cleaned), &r); err == nil {
-		return r, nil
+	if err := json.Unmarshal([]byte(cleaned), v); err == nil {
+		return nil
 	}
 	start, end := strings.Index(cleaned, "{"), strings.LastIndex(cleaned, "}")
 	if start >= 0 && end > start {
-		r = Reading{}
-		if err := json.Unmarshal([]byte(cleaned[start:end+1]), &r); err == nil {
-			return r, nil
+		if err := json.Unmarshal([]byte(cleaned[start:end+1]), v); err == nil {
+			return nil
 		}
 	}
-	return Reading{}, fmt.Errorf("%w: %.80q", ErrUnparseable, text)
+	return fmt.Errorf("%w: %.80q", ErrUnparseable, text)
 }
 ```
 
@@ -1215,14 +1214,14 @@ git commit -m "feat: reconcile photos into one decision (ported from prototype)"
 
 ---
 
-### Task 6: Recognizer interface, prompt, schema and fake engine
+### Task 6: Recognizer interface, prompt and fake engine
 
 **Files:**
 - Create: `internal/recognition/recognizer.go`
 - Create: `internal/recognition/fake.go`
 - Test: `internal/recognition/recognizer_test.go`
 
-The JSON schema is sent to Claude as a structured-output format, which requires `"additionalProperties": false` on **every** object; a test enforces that.
+The prompt asks for the number's position as `box_2d` = `[ymin, xmin, ymax, xmax]` normalized to 0–1000, the format Gemini is trained on for object detection. Engines convert it to the engine-neutral `Box` (0–1 corners).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1234,28 +1233,16 @@ package recognition
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strings"
 	"testing"
 )
 
-func TestSchemaObjectsForbidExtraProperties(t *testing.T) {
-	var walk func(path string, node any)
-	walk = func(path string, node any) {
-		switch n := node.(type) {
-		case map[string]any:
-			if n["type"] == "object" && n["additionalProperties"] != false {
-				t.Errorf("%s: object schema without additionalProperties: false", path)
-			}
-			for k, v := range n {
-				walk(path+"."+k, v)
-			}
-		case []any:
-			for i, v := range n {
-				walk(fmt.Sprintf("%s[%d]", path, i), v)
-			}
+func TestPromptAsksForEverythingTheGateNeeds(t *testing.T) {
+	for _, want := range []string{"candidates", "type_code", "color", "box_2d", "visible", "notes", "U, J or Z"} {
+		if !strings.Contains(Prompt, want) {
+			t.Errorf("Prompt does not mention %q", want)
 		}
 	}
-	walk("schema", readingSchema)
 }
 
 func TestFakeReturnsScriptedReadings(t *testing.T) {
@@ -1289,7 +1276,7 @@ func TestFakeReturnsConfiguredError(t *testing.T) {
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `go test ./internal/recognition/`
-Expected: FAIL to compile with `undefined: readingSchema` and `undefined: Fake`.
+Expected: FAIL to compile with `undefined: Prompt` and `undefined: Fake`.
 
 - [ ] **Step 3: Implement `internal/recognition/recognizer.go`**
 
@@ -1298,8 +1285,8 @@ package recognition
 
 import "context"
 
-// PromptVersion changes whenever Prompt or readingSchema change, so stored
-// attempts record exactly which instructions produced them.
+// PromptVersion changes whenever Prompt or an engine's output schema change,
+// so stored attempts record exactly which instructions produced them.
 const PromptVersion = "reading-v1"
 
 // Image is one photo as sent to an engine.
@@ -1308,7 +1295,7 @@ type Image struct {
 	MediaType string // image/jpeg, image/png or image/webp
 }
 
-// Recognizer reads one photo. Engines plug in behind this interface: Claude
+// Recognizer reads one photo. Engines plug in behind this interface: Gemini
 // now, a backup cloud engine and the owner's own model later.
 type Recognizer interface {
 	Name() string
@@ -1321,60 +1308,18 @@ type Recognizer interface {
 // Prompt is the instruction sent with every photo.
 const Prompt = `You are reading a shipping container in a depot gate photograph.
 
-Report:
-1. The ISO 6346 container number: 11 characters made of a 3-letter owner code, the equipment category letter U, J or Z, a 6-digit serial number and a 1-digit check digit (for example CSQU3054383). It is painted on the doors, side panels, end walls or frame, often over rust, dirt, dents or old markings.
-2. The ISO size/type code printed near it (4 characters such as 45G1, 22R1, 42U1, 22T6), or an empty string if it is not visible.
-3. The main paint color of the container as one plain English word (for example blue, red, white, grey, green, orange, brown, yellow), or an empty string if unclear.
-4. Where the container number is in the image, as a box with coordinates from 0 to 1 (x0,y0 top-left, x1,y1 bottom-right), or null if no number is visible.
+Return these fields:
+- candidates: the ISO 6346 container number. It has 11 characters: a 3-letter owner code, the equipment category letter U, J or Z, a 6-digit serial number and a 1-digit check digit (for example CSQU3054383). It is painted on the doors, side panels, end walls or frame, often over rust, dirt, dents or old markings. Give up to 4 candidates, most likely first, each with a confidence from 0 to 1. If no number is legible, return an empty list.
+- type_code: the ISO size/type code printed near the number (4 characters such as 45G1, 22R1, 42U1, 22T6), or an empty string if it is not visible.
+- color: the main paint color of the container as one plain English word (for example blue, red, white, grey, green, orange, brown, yellow), or an empty string if unclear.
+- box_2d: where the container number is in the image, as [ymin, xmin, ymax, xmax] normalized to 0-1000, or null if no number is visible.
+- visible: "full" when the whole number can be read, "partial" when part of it is hidden or damaged, "none" otherwise.
+- notes: a short phrase, or an empty string.
 
 Rules:
 - Read only what is physically painted on the container. Never complete or guess characters you cannot see.
 - Ignore truck and trailer plates, placards, weight tables and chassis markings.
-- Where a character is ambiguous (0/O, 1/I, 5/S, 8/B, 2/Z, 6/G), give each reading as its own candidate instead of picking one.
-- Give up to 4 candidates, most likely first, each with a confidence from 0 to 1. If no number is legible, return an empty candidates list.
-- visible is "full" when the whole number can be read, "partial" when part of it is hidden or damaged, and "none" otherwise.
-- Keep notes to a short phrase, or an empty string.`
-
-// readingSchema is the structured-output schema matching Reading.
-var readingSchema = map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"candidates": map[string]any{
-			"type": "array",
-			"items": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"number":     map[string]any{"type": "string"},
-					"confidence": map[string]any{"type": "number"},
-				},
-				"required":             []string{"number", "confidence"},
-				"additionalProperties": false,
-			},
-		},
-		"type_code": map[string]any{"type": "string"},
-		"color":     map[string]any{"type": "string"},
-		"visible":   map[string]any{"type": "string", "enum": []string{"full", "partial", "none"}},
-		"box": map[string]any{
-			"anyOf": []any{
-				map[string]any{"type": "null"},
-				map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"x0": map[string]any{"type": "number"},
-						"y0": map[string]any{"type": "number"},
-						"x1": map[string]any{"type": "number"},
-						"y1": map[string]any{"type": "number"},
-					},
-					"required":             []string{"x0", "y0", "x1", "y1"},
-					"additionalProperties": false,
-				},
-			},
-		},
-		"notes": map[string]any{"type": "string"},
-	},
-	"required":             []string{"candidates", "type_code", "color", "visible", "box", "notes"},
-	"additionalProperties": false,
-}
+- Where a character is ambiguous (0/O, 1/I, 5/S, 8/B, 2/Z, 6/G), give each reading as its own candidate instead of picking one.`
 ```
 
 - [ ] **Step 4: Implement `internal/recognition/fake.go`**
@@ -1458,56 +1403,60 @@ Expected: PASS for all tests.
 
 ```bash
 git add internal/recognition/recognizer.go internal/recognition/fake.go internal/recognition/recognizer_test.go
-git commit -m "feat: recognizer interface, reading prompt and schema, fake engine" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "feat: recognizer interface, reading prompt and fake engine" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Claude engine
+### Task 7: Gemini engine
 
 **Files:**
-- Create: `internal/recognition/claude.go`
-- Test: `internal/recognition/claude_test.go`
-- Modify: `go.mod`, `go.sum` (dependency)
+- Create: `internal/recognition/gemini.go`
+- Test: `internal/recognition/gemini_test.go`
 
-The engine sends one image + `Prompt` to the Messages API with structured output (`output_config.format` = JSON schema), so the answer matches `readingSchema`. Defaults: model `claude-opus-5-5`, effort `low` (set by the hub flags). It also opts into **server-side refusal fallback** (`fallbacks: "default"` with beta header `server-side-fallback-2026-07-01`): if the model declines, the API re-serves the request on a fallback model in the same call. Tests point the SDK at a local fake server, so no key or network is needed.
+The engine calls the Gemini REST endpoint `POST {base}/v1beta/models/{model}:generateContent` directly with `net/http`, as the prototype did: no SDK, so nothing to keep up to date. The request carries the image as `inlineData` plus `Prompt`, and asks for structured output (`generationConfig.responseMimeType = "application/json"` with a `responseSchema` in Gemini's OpenAPI-style schema: upper-case types, `nullable`, `propertyOrdering`). Thinking level is configurable (`generationConfig.thinkingConfig.thinkingLevel`, default `low` from the hub flags). The key goes in the `x-goog-api-key` header.
 
-SDK identifiers used (from the anthropic-sdk-go docs): `anthropic.NewClient`, `option.WithAPIKey`, `option.WithBaseURL`, `option.WithMaxRetries`, `option.WithRequestTimeout`, `option.WithHeaderAdd`, `option.WithJSONSet`, `anthropic.MessageNewParams`, `anthropic.NewUserMessage`, `anthropic.NewImageBlockBase64`, `anthropic.NewTextBlock`, `anthropic.OutputConfigParam`, `anthropic.JSONOutputFormatParam`, `anthropic.TextBlock`, `anthropic.StopReasonRefusal`, `anthropic.StopReasonMaxTokens`, `*anthropic.Error`. If the installed SDK version names any of these differently, let the compiler point to the right name and keep the behavior identical; do not change the tests' expectations.
+Error mapping (callers act on these):
+- invalid key → `ErrAuth` (Gemini answers **400** with `API_KEY_INVALID` / "API key not valid", not 401); 401/403 → `ErrAuth`
+- 408 / 429 / 5xx / network failure → `ErrUnavailable`, retried `Retries` times with a 1 s, 2 s … pause
+- `promptFeedback.blockReason`, no candidates, or a finish reason other than `STOP` / `MAX_TOKENS` → `ErrRefused`
+- `MAX_TOKENS` → `ErrTruncated`
+- parts marked `"thought": true` are thinking summaries and are skipped; thinking tokens are billed as output, so they are added to `OutputTokens`.
 
-- [ ] **Step 1: Add the SDK**
+Tests run against a local fake server, so no key or network is needed.
 
-Run: `go get github.com/anthropics/anthropic-sdk-go@latest`
-Expected: `go: added github.com/anthropics/anthropic-sdk-go v1.x.y`
+- [ ] **Step 1: Write the failing tests**
 
-- [ ] **Step 2: Write the failing tests**
-
-`internal/recognition/claude_test.go`:
+`internal/recognition/gemini_test.go`:
 
 ```go
 package recognition
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"sync/atomic"
 	"testing"
-
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-const okBody = `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-5",
-"content":[{"type":"text","text":"{\"candidates\":[{\"number\":\"CSQU3054383\",\"confidence\":0.93}],\"type_code\":\"45G1\",\"color\":\"blue\",\"visible\":\"full\",\"box\":{\"x0\":0.1,\"y0\":0.2,\"x1\":0.5,\"y1\":0.3},\"notes\":\"\"}"}],
-"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1200,"output_tokens":80}}`
+const geminiOK = `{"candidates":[{"content":{"role":"model","parts":[
+{"text":"{\"candidates\":[{\"number\":\"CSQU3054383\",\"confidence\":0.93}],\"type_code\":\"45G1\",\"color\":\"blue\",\"box_2d\":[200,100,300,500],\"visible\":\"full\",\"notes\":\"\"}"}]},
+"finishReason":"STOP"}],
+"usageMetadata":{"promptTokenCount":1100,"candidatesTokenCount":60,"thoughtsTokenCount":40,"totalTokenCount":1200}}`
 
-func fakeAPI(t *testing.T, status int, body string, inspect func(r *http.Request, payload map[string]any)) *httptest.Server {
+// fakeGemini answers with the given status and bodies in turn (the last one repeats).
+func fakeGemini(t *testing.T, status []int, bodies []string, inspect func(r *http.Request, payload map[string]any)) (*httptest.Server, *atomic.Int64) {
 	t.Helper()
+	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("path = %s; want /v1/messages", r.URL.Path)
+		n := int(calls.Add(1)) - 1
+		if want := "/v1beta/models/" + DefaultGeminiModel + ":generateContent"; r.URL.Path != want {
+			t.Errorf("path = %s; want %s", r.URL.Path, want)
 		}
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -1516,17 +1465,17 @@ func fakeAPI(t *testing.T, status int, body string, inspect func(r *http.Request
 		if inspect != nil {
 			inspect(r, payload)
 		}
+		i := min(n, len(bodies)-1)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = io.WriteString(w, body)
+		w.WriteHeader(status[min(n, len(status)-1)])
+		_, _ = io.WriteString(w, bodies[i])
 	}))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &calls
 }
 
-func testClaude(srv *httptest.Server) *Claude {
-	return NewClaude(ClaudeConfig{APIKey: "test-key", Effort: "low"},
-		option.WithBaseURL(srv.URL+"/"), option.WithMaxRetries(0))
+func testGemini(srv *httptest.Server, retries int) *Gemini {
+	return NewGemini(GeminiConfig{APIKey: "test-key", ThinkingLevel: "low", BaseURL: srv.URL, Retries: retries})
 }
 
 // dig walks nested JSON maps and arrays: dig(m, "a", 0, "b").
@@ -1552,31 +1501,31 @@ func dig(node any, path ...any) any {
 
 var jpeg = Image{Data: []byte("\xff\xd8\xff\xe0fake-jpeg"), MediaType: "image/jpeg"}
 
-func TestClaudeSendsImageSchemaEffortAndFallback(t *testing.T) {
-	srv := fakeAPI(t, 200, okBody, func(r *http.Request, p map[string]any) {
-		if got := dig(p, "model"); got != DefaultClaudeModel {
-			t.Errorf("model = %v; want %s", got, DefaultClaudeModel)
+func TestGeminiSendsImageSchemaAndThinking(t *testing.T) {
+	srv, _ := fakeGemini(t, []int{200}, []string{geminiOK}, func(r *http.Request, p map[string]any) {
+		if got := r.Header.Get("x-goog-api-key"); got != "test-key" {
+			t.Errorf("x-goog-api-key = %q", got)
 		}
-		if got := dig(p, "messages", 0, "content", 0, "type"); got != "image" {
-			t.Errorf("first content block type = %v; want image", got)
+		if got := dig(p, "contents", 0, "parts", 0, "inlineData", "mimeType"); got != "image/jpeg" {
+			t.Errorf("image mime type = %v", got)
 		}
-		if got := dig(p, "messages", 0, "content", 0, "source", "media_type"); got != "image/jpeg" {
-			t.Errorf("image media type = %v", got)
+		if got := dig(p, "contents", 0, "parts", 0, "inlineData", "data"); got != base64.StdEncoding.EncodeToString(jpeg.Data) {
+			t.Errorf("image data = %v", got)
 		}
-		if got := dig(p, "output_config", "format", "type"); got != "json_schema" {
-			t.Errorf("output format type = %v; want json_schema", got)
+		if got := dig(p, "contents", 0, "parts", 1, "text"); got != Prompt {
+			t.Errorf("second part is not the prompt")
 		}
-		if got := dig(p, "output_config", "effort"); got != "low" {
-			t.Errorf("effort = %v; want low", got)
+		if got := dig(p, "generationConfig", "responseMimeType"); got != "application/json" {
+			t.Errorf("responseMimeType = %v", got)
 		}
-		if got := dig(p, "fallbacks"); got != "default" {
-			t.Errorf("fallbacks = %v; want default", got)
+		if got := dig(p, "generationConfig", "responseSchema", "type"); got != "OBJECT" {
+			t.Errorf("responseSchema.type = %v", got)
 		}
-		if beta := strings.Join(r.Header.Values("anthropic-beta"), ","); !strings.Contains(beta, "server-side-fallback-2026-07-01") {
-			t.Errorf("anthropic-beta = %q; want server-side-fallback-2026-07-01", beta)
+		if got := dig(p, "generationConfig", "thinkingConfig", "thinkingLevel"); got != "low" {
+			t.Errorf("thinkingLevel = %v", got)
 		}
 	})
-	att, err := testClaude(srv).Read(context.Background(), jpeg)
+	att, err := testGemini(srv, 0).Read(context.Background(), jpeg)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -1584,184 +1533,337 @@ func TestClaudeSendsImageSchemaEffortAndFallback(t *testing.T) {
 	if len(r.Candidates) != 1 || r.Candidates[0].Number != "CSQU3054383" || r.TypeCode != "45G1" || r.Color != "blue" {
 		t.Fatalf("reading = %+v", r)
 	}
-	if r.Box == nil || r.Box.X1 != 0.5 {
-		t.Fatalf("box = %+v", r.Box)
+	if r.Box == nil || *r.Box != (Box{X0: 0.1, Y0: 0.2, X1: 0.5, Y1: 0.3}) {
+		t.Fatalf("box = %+v; want x0 0.1 y0 0.2 x1 0.5 y1 0.3", r.Box)
 	}
-	if att.Usage.InputTokens != 1200 || att.Usage.OutputTokens != 80 || att.Engine != "claude" {
+	if att.Usage.InputTokens != 1100 || att.Usage.OutputTokens != 100 || att.Engine != "gemini" || att.Model != DefaultGeminiModel {
 		t.Fatalf("attempt = %+v", att)
 	}
 }
 
-func TestClaudeAuthErrorIsNotRetryable(t *testing.T) {
-	srv := fakeAPI(t, 401, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`, nil)
-	if _, err := testClaude(srv).Read(context.Background(), jpeg); !errors.Is(err, ErrAuth) {
+func TestGeminiSkipsThoughtParts(t *testing.T) {
+	body := `{"candidates":[{"content":{"parts":[{"text":"Looking at the doors...","thought":true},
+{"text":"{\"candidates\":[{\"number\":\"CSQU3054383\",\"confidence\":0.9}],\"type_code\":\"\",\"color\":\"\",\"box_2d\":null,\"visible\":\"full\",\"notes\":\"\"}"}]},"finishReason":"STOP"}]}`
+	srv, _ := fakeGemini(t, []int{200}, []string{body}, nil)
+	att, err := testGemini(srv, 0).Read(context.Background(), jpeg)
+	if err != nil || att.Reading.Candidates[0].Number != "CSQU3054383" || att.Reading.Box != nil {
+		t.Fatalf("Read = %+v, %v", att.Reading, err)
+	}
+}
+
+func TestGeminiInvalidKeyIsAuthError(t *testing.T) {
+	body := `{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}`
+	srv, _ := fakeGemini(t, []int{400}, []string{body}, nil)
+	if _, err := testGemini(srv, 2).Read(context.Background(), jpeg); !errors.Is(err, ErrAuth) {
 		t.Fatalf("err = %v; want ErrAuth", err)
 	}
 }
 
-func TestClaudeOverloadIsUnavailable(t *testing.T) {
-	srv := fakeAPI(t, 529, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`, nil)
-	if _, err := testClaude(srv).Read(context.Background(), jpeg); !errors.Is(err, ErrUnavailable) {
+func TestGeminiOverloadIsUnavailable(t *testing.T) {
+	srv, calls := fakeGemini(t, []int{503}, []string{`{"error":{"code":503,"status":"UNAVAILABLE"}}`}, nil)
+	if _, err := testGemini(srv, 0).Read(context.Background(), jpeg); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v; want ErrUnavailable", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d; want 1 with no retries", calls.Load())
 	}
 }
 
-func TestClaudeRefusalIsReported(t *testing.T) {
-	body := `{"id":"msg_2","type":"message","role":"assistant","model":"claude-opus-5-5","content":[],
-"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"declined"},
-"usage":{"input_tokens":10,"output_tokens":0}}`
-	srv := fakeAPI(t, 200, body, nil)
-	if _, err := testClaude(srv).Read(context.Background(), jpeg); !errors.Is(err, ErrRefused) {
+func TestGeminiRetriesTemporaryFailures(t *testing.T) {
+	srv, calls := fakeGemini(t, []int{503, 200}, []string{`{"error":{"code":503}}`, geminiOK}, nil)
+	att, err := testGemini(srv, 1).Read(context.Background(), jpeg)
+	if err != nil || att.Reading.Candidates[0].Number != "CSQU3054383" {
+		t.Fatalf("Read = %+v, %v", att.Reading, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d; want 2", calls.Load())
+	}
+}
+
+func TestGeminiBlockedIsRefused(t *testing.T) {
+	srv, _ := fakeGemini(t, []int{200}, []string{`{"promptFeedback":{"blockReason":"SAFETY"}}`}, nil)
+	if _, err := testGemini(srv, 0).Read(context.Background(), jpeg); !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v; want ErrRefused", err)
+	}
+}
+
+func TestGeminiMaxTokensIsTruncated(t *testing.T) {
+	body := `{"candidates":[{"content":{"parts":[{"text":"{\"candidates\":["}]},"finishReason":"MAX_TOKENS"}]}`
+	srv, _ := fakeGemini(t, []int{200}, []string{body}, nil)
+	if _, err := testGemini(srv, 0).Read(context.Background(), jpeg); !errors.Is(err, ErrTruncated) {
+		t.Fatalf("err = %v; want ErrTruncated", err)
 	}
 }
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [ ] **Step 2: Run them to verify they fail**
 
 Run: `go test ./internal/recognition/`
-Expected: FAIL to compile with `undefined: NewClaude`.
+Expected: FAIL to compile with `undefined: NewGemini`.
 
-- [ ] **Step 4: Implement `internal/recognition/claude.go`**
+- [ ] **Step 3: Implement `internal/recognition/gemini.go`**
 
 ```go
 package recognition
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
-
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// DefaultClaudeModel is used unless the operator picks another model.
-const DefaultClaudeModel = "claude-opus-5-5"
+// DefaultGeminiModel is used unless the operator picks another model.
+const DefaultGeminiModel = "gemini-3.8-flash"
 
-// ClaudeConfig configures the Claude engine.
-type ClaudeConfig struct {
-	APIKey  string        // empty: the SDK reads ANTHROPIC_API_KEY
-	Model   string        // empty: DefaultClaudeModel
-	Effort  string        // low | medium | high; empty leaves the model default
-	Timeout time.Duration // per request; zero: 60s
+const defaultGeminiURL = "https://generativelanguage.googleapis.com"
+
+// GeminiConfig configures the Gemini engine.
+type GeminiConfig struct {
+	APIKey        string        // required
+	Model         string        // empty: DefaultGeminiModel
+	ThinkingLevel string        // for example low or high; empty leaves the model default
+	BaseURL       string        // empty: the public Gemini API (tests point it at a fake)
+	Timeout       time.Duration // per request; zero: 60s
+	Retries       int           // extra attempts after temporary failures
 }
 
-// Claude reads photos with the Claude Messages API.
-type Claude struct {
-	client anthropic.Client
-	cfg    ClaudeConfig
+// Gemini reads photos with the Gemini API.
+type Gemini struct {
+	cfg    GeminiConfig
+	client *http.Client
 }
 
-// NewClaude builds the engine. extra options are for tests (base URL, retries).
-func NewClaude(cfg ClaudeConfig, extra ...option.RequestOption) *Claude {
+// NewGemini builds the engine.
+func NewGemini(cfg GeminiConfig) *Gemini {
 	if cfg.Model == "" {
-		cfg.Model = DefaultClaudeModel
+		cfg.Model = DefaultGeminiModel
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = defaultGeminiURL
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 60 * time.Second
 	}
-	opts := []option.RequestOption{option.WithRequestTimeout(cfg.Timeout)}
-	if cfg.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(cfg.APIKey))
-	}
-	opts = append(opts, extra...)
-	return &Claude{client: anthropic.NewClient(opts...), cfg: cfg}
+	return &Gemini{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout}}
 }
 
-func (c *Claude) Name() string  { return "claude" }
-func (c *Claude) Model() string { return c.cfg.Model }
+func (g *Gemini) Name() string  { return "gemini" }
+func (g *Gemini) Model() string { return g.cfg.Model }
 
-func (c *Claude) Read(ctx context.Context, img Image) (Attempt, error) {
-	att := Attempt{Engine: c.Name(), Model: c.cfg.Model, PromptVersion: PromptVersion}
+// geminiSchema is the structured-output schema, in Gemini's OpenAPI-style
+// responseSchema format.
+var geminiSchema = map[string]any{
+	"type": "OBJECT",
+	"properties": map[string]any{
+		"candidates": map[string]any{
+			"type": "ARRAY",
+			"items": map[string]any{
+				"type": "OBJECT",
+				"properties": map[string]any{
+					"number":     map[string]any{"type": "STRING"},
+					"confidence": map[string]any{"type": "NUMBER"},
+				},
+				"required": []string{"number", "confidence"},
+			},
+		},
+		"type_code": map[string]any{"type": "STRING"},
+		"color":     map[string]any{"type": "STRING"},
+		"box_2d":    map[string]any{"type": "ARRAY", "items": map[string]any{"type": "INTEGER"}, "nullable": true},
+		"visible":   map[string]any{"type": "STRING", "enum": []string{"full", "partial", "none"}},
+		"notes":     map[string]any{"type": "STRING"},
+	},
+	"required":         []string{"candidates", "type_code", "color", "visible", "notes"},
+	"propertyOrdering": []string{"candidates", "type_code", "color", "box_2d", "visible", "notes"},
+}
+
+// geminiReading is a Reading in the shape Gemini answers with.
+type geminiReading struct {
+	Candidates []RawCandidate `json:"candidates"`
+	TypeCode   string         `json:"type_code"`
+	Color      string         `json:"color"`
+	Box2D      []float64      `json:"box_2d"`
+	Visible    string         `json:"visible"`
+	Notes      string         `json:"notes"`
+}
+
+func (r geminiReading) reading() Reading {
+	out := Reading{Candidates: r.Candidates, TypeCode: r.TypeCode, Color: r.Color, Visible: r.Visible, Notes: r.Notes}
+	if b := r.Box2D; len(b) == 4 && b[0] < b[2] && b[1] < b[3] {
+		// [ymin, xmin, ymax, xmax] on a 0-1000 scale → corners on 0-1.
+		out.Box = &Box{X0: clamp01(b[1] / 1000), Y0: clamp01(b[0] / 1000), X1: clamp01(b[3] / 1000), Y1: clamp01(b[2] / 1000)}
+	}
+	return out
+}
+
+type geminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text    string `json:"text"`
+				Thought bool   `json:"thought"`
+			} `json:"parts"`
+		} `json:"content"`
+		FinishReason string `json:"finishReason"`
+	} `json:"candidates"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
+	UsageMetadata struct {
+		PromptTokenCount     int64 `json:"promptTokenCount"`
+		CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+		ThoughtsTokenCount   int64 `json:"thoughtsTokenCount"`
+	} `json:"usageMetadata"`
+}
+
+func (g *Gemini) Read(ctx context.Context, img Image) (Attempt, error) {
+	att := Attempt{Engine: g.Name(), Model: g.cfg.Model, PromptVersion: PromptVersion}
 	start := time.Now()
-
-	params := anthropic.MessageNewParams{
-		Model: anthropic.Model(c.cfg.Model),
-		// Thinking is always on for this model family; leave room for it.
-		MaxTokens: 8000,
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(
-				anthropic.NewImageBlockBase64(img.MediaType, base64.StdEncoding.EncodeToString(img.Data)),
-				anthropic.NewTextBlock(Prompt),
-			),
-		},
-		OutputConfig: anthropic.OutputConfigParam{
-			Format: anthropic.JSONOutputFormatParam{Schema: readingSchema},
-		},
-	}
-	reqOpts := []option.RequestOption{
-		// Server-side refusal fallback: a declined request is re-served on a
-		// fallback model inside the same call.
-		option.WithHeaderAdd("anthropic-beta", "server-side-fallback-2026-07-01"),
-		option.WithJSONSet("fallbacks", "default"),
-	}
-	if c.cfg.Effort != "" {
-		reqOpts = append(reqOpts, option.WithJSONSet("output_config.effort", c.cfg.Effort))
-	}
-
-	msg, err := c.client.Messages.New(ctx, params, reqOpts...)
-	att.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		return att, classify(err)
-	}
-	att.Usage = Usage{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens}
-
-	var text strings.Builder
-	for _, block := range msg.Content {
-		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
-			text.WriteString(tb.Text)
-		}
-	}
-	att.Raw = text.String()
-
-	switch msg.StopReason {
-	case anthropic.StopReasonRefusal:
-		return att, fmt.Errorf("%w (category %v)", ErrRefused, msg.StopDetails.Category)
-	case anthropic.StopReasonMaxTokens:
-		return att, ErrTruncated
-	}
-	reading, err := ParseReading(att.Raw)
+	body, err := json.Marshal(g.request(img))
 	if err != nil {
 		return att, err
 	}
-	att.Reading = reading
+
+	var resp geminiResponse
+	for try := 0; ; try++ {
+		resp = geminiResponse{}
+		err = g.post(ctx, body, &resp)
+		if err == nil || !errors.Is(err, ErrUnavailable) || try >= g.cfg.Retries {
+			break
+		}
+		select {
+		case <-time.After(time.Duration(try+1) * time.Second):
+		case <-ctx.Done():
+			att.LatencyMS = time.Since(start).Milliseconds()
+			return att, ctx.Err()
+		}
+	}
+	att.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		return att, err
+	}
+
+	// Thinking tokens are billed as output.
+	u := resp.UsageMetadata
+	att.Usage = Usage{InputTokens: u.PromptTokenCount, OutputTokens: u.CandidatesTokenCount + u.ThoughtsTokenCount}
+	if resp.PromptFeedback.BlockReason != "" {
+		return att, fmt.Errorf("%w: blocked (%s)", ErrRefused, resp.PromptFeedback.BlockReason)
+	}
+	if len(resp.Candidates) == 0 {
+		return att, fmt.Errorf("%w: no answer", ErrRefused)
+	}
+	c := resp.Candidates[0]
+	var text strings.Builder
+	for _, p := range c.Content.Parts {
+		if !p.Thought {
+			text.WriteString(p.Text)
+		}
+	}
+	att.Raw = text.String()
+	switch c.FinishReason {
+	case "", "STOP":
+	case "MAX_TOKENS":
+		return att, ErrTruncated
+	default:
+		return att, fmt.Errorf("%w: finish reason %s", ErrRefused, c.FinishReason)
+	}
+
+	var gr geminiReading
+	if err := decodeJSON(att.Raw, &gr); err != nil {
+		return att, err
+	}
+	att.Reading = gr.reading()
 	return att, nil
 }
 
-// classify maps SDK errors onto the engine errors callers act on.
-func classify(err error) error {
-	var apierr *anthropic.Error
-	if errors.As(err, &apierr) {
-		switch code := apierr.StatusCode; {
-		case code == 401 || code == 403:
-			return fmt.Errorf("%w: HTTP %d", ErrAuth, code)
-		case code == 408 || code == 409 || code == 429 || code >= 500:
-			return fmt.Errorf("%w: HTTP %d", ErrUnavailable, code)
-		default:
-			return fmt.Errorf("%w: HTTP %d", ErrBadRequest, code)
-		}
+func (g *Gemini) request(img Image) map[string]any {
+	config := map[string]any{
+		"responseMimeType": "application/json",
+		"responseSchema":   geminiSchema,
 	}
-	if errors.Is(err, context.Canceled) {
+	if g.cfg.ThinkingLevel != "" {
+		config["thinkingConfig"] = map[string]any{"thinkingLevel": g.cfg.ThinkingLevel}
+	}
+	return map[string]any{
+		"contents": []any{map[string]any{
+			"role": "user",
+			"parts": []any{
+				map[string]any{"inlineData": map[string]any{
+					"mimeType": img.MediaType,
+					"data":     base64.StdEncoding.EncodeToString(img.Data),
+				}},
+				map[string]any{"text": Prompt},
+			},
+		}},
+		"generationConfig": config,
+	}
+}
+
+// post sends one request and maps HTTP failures onto engine errors.
+func (g *Gemini) post(ctx context.Context, body []byte, out *geminiResponse) error {
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(g.cfg.BaseURL, "/"), g.cfg.Model)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
 		return err
 	}
-	return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", g.cfg.APIKey)
+	res, err := g.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if res.StatusCode >= 300 {
+		return classifyHTTP(res.StatusCode, data)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnparseable, err)
+	}
+	return nil
+}
+
+// classifyHTTP maps a Gemini error answer onto engine errors. An invalid key
+// comes back as 400 INVALID_ARGUMENT, not 401.
+func classifyHTTP(status int, body []byte) error {
+	text := string(body)
+	detail := strings.TrimSpace(text)
+	if len(detail) > 200 {
+		detail = detail[:200]
+	}
+	switch {
+	case status == 401 || status == 403 || strings.Contains(text, "API_KEY_INVALID") || strings.Contains(text, "API key not valid"):
+		return fmt.Errorf("%w: HTTP %d", ErrAuth, status)
+	case status == 408 || status == 429 || status >= 500:
+		return fmt.Errorf("%w: HTTP %d", ErrUnavailable, status)
+	default:
+		return fmt.Errorf("%w: HTTP %d: %s", ErrBadRequest, status, detail)
+	}
 }
 ```
 
-- [ ] **Step 5: Run the package tests**
+- [ ] **Step 4: Run the package tests**
 
 Run: `go test ./internal/recognition/ -v`
-Expected: PASS for all tests, including the four Claude tests.
+Expected: PASS for all tests, including the seven Gemini tests (the retry test takes about one second).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add go.mod go.sum internal/recognition/claude.go internal/recognition/claude_test.go
-git commit -m "feat: Claude reading engine with structured output and refusal fallback" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git add internal/recognition/gemini.go internal/recognition/gemini_test.go
+git commit -m "feat: Gemini reading engine with structured output and native number boxes" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -4368,26 +4470,29 @@ func (d *dataFlags) open() (*store.Store, *blob.Store, error) {
 }
 
 // engineFlags choose and configure the reading engine.
-type engineFlags struct{ engine, model, effort string }
+type engineFlags struct{ engine, model, thinking string }
 
 func (e *engineFlags) register(fs *flag.FlagSet) {
-	fs.StringVar(&e.engine, "engine", "claude", "reading engine: claude | fake")
-	fs.StringVar(&e.model, "model", envOr("DEPOT_CLAUDE_MODEL", recognition.DefaultClaudeModel), "Claude model id")
-	fs.StringVar(&e.effort, "effort", envOr("DEPOT_CLAUDE_EFFORT", "low"), "Claude effort: low | medium | high")
+	fs.StringVar(&e.engine, "engine", "gemini", "reading engine: gemini | fake")
+	fs.StringVar(&e.model, "model", envOr("DEPOT_GEMINI_MODEL", recognition.DefaultGeminiModel), "Gemini model id")
+	fs.StringVar(&e.thinking, "thinking", envOr("DEPOT_GEMINI_THINKING", "low"), "Gemini thinking level (empty: model default)")
 }
 
 func (e *engineFlags) build() (recognition.Recognizer, error) {
 	switch e.engine {
 	case "fake":
 		return recognition.NewDemoFake(), nil
-	case "claude":
-		if os.Getenv("ANTHROPIC_API_KEY") == "" {
-			return nil, errors.New("ANTHROPIC_API_KEY is not set: set it in your own terminal " +
-				"(setx ANTHROPIC_API_KEY ...), open a new terminal, or run with -engine fake")
+	case "gemini":
+		key := envOr("GEMINI_API_KEY", os.Getenv("GOOGLE_API_KEY"))
+		if key == "" {
+			return nil, errors.New("GEMINI_API_KEY is not set: set it in your own terminal " +
+				"(setx GEMINI_API_KEY ...), open a new terminal, or run with -engine fake")
 		}
-		return recognition.NewClaude(recognition.ClaudeConfig{Model: e.model, Effort: e.effort}), nil
+		return recognition.NewGemini(recognition.GeminiConfig{
+			APIKey: key, Model: e.model, ThinkingLevel: e.thinking, Retries: 2,
+		}), nil
 	default:
-		return nil, fmt.Errorf("unknown engine %q (use claude or fake)", e.engine)
+		return nil, fmt.Errorf("unknown engine %q (use gemini or fake)", e.engine)
 	}
 }
 
@@ -6490,7 +6595,7 @@ git commit -m "feat: export verified photos and labels for model training" -m "C
 - Test: `internal/bench/bench_test.go`
 - Modify: `cmd/depotd/main.go` (add the `bench` command)
 
-`depotd bench` re-reads the engine copy of every verified move's photos with the chosen engine and model, combines them exactly like the gate does, and compares with the number a person confirmed. This is the golden-set measurement from spec §13 and how the owner decides model and effort (spec §9.2). It calls the paid engine once per photo, so it refuses to run against Claude without `-yes`.
+`depotd bench` re-reads the engine copy of every verified move's photos with the chosen engine and model, combines them exactly like the gate does, and compares with the number a person confirmed. This is the golden-set measurement from spec §13 and how the owner decides model and thinking level (spec §9.2). It calls the paid engine once per photo, so it refuses to run against Gemini without `-yes`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6749,8 +6854,10 @@ Everything stays on the PC: database and photos are in the `depot-data` folder.
 ## One-time setup
 
 1. Install Go 1.24+ (https://go.dev/dl/) and Node 20+.
-2. Create an API key in the Claude Console. In **your own** terminal run
-   `setx ANTHROPIC_API_KEY "<key>"`, then open a new terminal. Never paste the key in chat or commit it.
+2. Create a Gemini API key in Google AI Studio (https://aistudio.google.com/apikey) on a project
+   **with billing enabled**: on the unpaid tier Google may use submitted photos to improve its
+   products. In **your own** terminal run `setx GEMINI_API_KEY "<key>"`, then open a new terminal.
+   Never paste the key in chat or commit it.
 3. Build, from `C:\Users\OZGUN\depot-platform`:
 
    ```
@@ -6772,7 +6879,8 @@ bin/depotd.exe hub -data depot-data -access-code 4821
 - No API key yet, or just practising? Add `-engine fake`: every photo reads as `CSQU3054383`.
 - Stop with Ctrl+C. Photos that were still being read are read again at the next start.
 
-Options: `-model` and `-effort` choose the Claude model and effort (defaults `claude-opus-5-5`, `low`),
+Options: `-model` and `-thinking` choose the Gemini model and thinking level (defaults `gemini-3.8-flash`, `low`;
+try `-model gemini-3.5-flash-lite` with `bench` to see whether the cheaper model is accurate enough),
 `-auto-accept` lets confident, check-digit-valid reads skip the person (off: keep it off while
 collecting training data), `-addr :8080` changes the port.
 
@@ -6799,7 +6907,7 @@ bin/depotd.exe bench -data depot-data -limit 50 -yes
 ```
 
 `export-dataset` copies every verified, non-practice photo with labels (see `dataset-export/README.txt`).
-`bench` re-reads verified trucks with the chosen `-model`/`-effort` and prints accuracy, tokens and
+`bench` re-reads verified trucks with the chosen `-model`/`-thinking` and prints accuracy, tokens and
 time: use it to compare settings before changing them. It costs one engine call per photo.
 
 ## Backup
@@ -6811,9 +6919,10 @@ Stop the hub and copy the whole `depot-data` folder somewhere safe (external dis
 | Problem | Fix |
 |---|---|
 | Phone can't open the address | Same Wi-Fi as the PC? Guest Wi-Fi often isolates devices. Firewall allowed for private networks? Is the Wi-Fi marked "Public" in Windows? |
-| `ANTHROPIC_API_KEY is not set` | Run `setx ...` in your own terminal and open a new one, or use `-engine fake`. |
+| `GEMINI_API_KEY is not set` | Run `setx ...` in your own terminal and open a new one, or use `-engine fake`. |
+| Reason shows `engine rejected the request` with a model name | The model id is wrong or retired: check the current list in the Gemini docs and pass `-model`. If it mentions thinking, run with `-thinking ""`. |
 | Reason shows `engine rejected the credentials` | The API key is wrong or revoked: create a new one. |
-| Reason shows `engine unavailable` | Internet or Claude temporarily down: press **Read again** later, or type the number. |
+| Reason shows `engine unavailable` | Internet or Gemini temporarily down (already retried twice): press **Read again** later, or type the number. |
 | `The web app is not built yet` | Run `npm --prefix web run build`, then `go build ...` again. |
 | Camera opens the front camera | Switch cameras in the phone's camera screen; the app asks for the rear one but some phones ignore it. |
 ````
@@ -6832,12 +6941,12 @@ Expected: builds without errors.
 Run: `go build -o bin/depotd.exe ./cmd/depotd`
 Expected: no output.
 
-- [ ] **Step 3: First run with Claude (owner present)**
+- [ ] **Step 3: First run with Gemini (owner present)**
 
-With the owner's `ANTHROPIC_API_KEY` set in their terminal:
+With the owner's `GEMINI_API_KEY` set in their terminal:
 
 Run: `bin/depotd.exe hub -data depot-data`
-Expected log: `engine claude (claude-opus-5-5)`.
+Expected log: `engine gemini (gemini-3.8-flash)`.
 
 On a phone on the same Wi-Fi: open the printed address → **Test read** → photograph a real container door. Expected: the number appears with a green check-digit result, the ISO type code and color are filled, the box sits on the number, and the latency and tokens are shown. Then do one full **New gate-in** with rear + left + right photos and confirm it in the **Queue**.
 

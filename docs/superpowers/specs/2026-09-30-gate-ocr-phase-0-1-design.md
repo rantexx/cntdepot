@@ -84,7 +84,7 @@ While operating, it collects verified photos and labels to **train our own OCR m
 │  • local SQLite              │  HTTPS only     │                                       │
 │  • cached pre-advice         │  (no inbound    │ PostgreSQL · S3                       │
 │  • check digit + policies    │   ports)        │                                       │
-│  • local OCR fallback (ONNX) │                 │ AI OCR (Claude primary, Gemini backup)│
+│  • local OCR fallback (ONNX) │                 │ AI OCR (Gemini; backup engine later)  │
 │  • serves gate + exception   │                 │ Identity · Push · (Phase 2: TURN)     │
 │    screens on the LAN        │                 └───────────────────────────────────────┘
 │  • slip printer, 4G backup   │
@@ -176,7 +176,7 @@ Printed thermal slip with QR code (works offline) → digital receipt with condi
 ## 9. Recognition pipeline
 
 ### 9.1 Engines (one `Recognizer` interface: photos in → candidates, ISO code, color, bounding box, per-character confidence out)
-- **Cloud AI:** Claude primary, Gemini backup (automatic failover).
+- **Cloud AI:** Gemini (owner's choice, 2026-10-01), called over plain HTTPS. A second cloud engine as automatic failover is added in a later plan behind the same interface. Use a billed Google Cloud project: on the unpaid tier, submitted content may be used to improve Google's products.
 - **Local generic OCR:** PaddleOCR detection + recognition models in ONNX on the hub; offline fallback.
 - **Own model:** added version by version; shadow first.
 - Truck plates use the same pipeline with Turkish plate formats.
