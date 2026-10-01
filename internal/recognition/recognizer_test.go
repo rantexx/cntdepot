@@ -20,8 +20,6 @@ func TestFakeReturnsScriptedReadings(t *testing.T) {
 		Reading: Reading{Candidates: []RawCandidate{{Number: "CSQU3054383", Confidence: 0.9}}},
 		ByImage: map[string]Reading{"special": {Candidates: []RawCandidate{{Number: "TEXU1234569", Confidence: 0.8}}}},
 	}
-	var _ Recognizer = f
-
 	a, err := f.Read(context.Background(), Image{Data: []byte("anything"), MediaType: "image/jpeg"})
 	if err != nil || a.Reading.Candidates[0].Number != "CSQU3054383" || a.Engine != "fake" {
 		t.Fatalf("default read = %+v, %v", a, err)
@@ -37,7 +35,24 @@ func TestFakeReturnsScriptedReadings(t *testing.T) {
 
 func TestFakeReturnsConfiguredError(t *testing.T) {
 	f := &Fake{Err: ErrUnavailable}
-	if _, err := f.Read(context.Background(), Image{}); !errors.Is(err, ErrUnavailable) {
+	att, err := f.Read(context.Background(), Image{})
+	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v; want ErrUnavailable", err)
+	}
+	if att.Engine != "fake" || att.Model != "fake-1" || att.PromptVersion != PromptVersion {
+		t.Fatalf("attempt on error = %+v; want engine, model and prompt version populated", att)
+	}
+}
+
+func TestFakeHonoursCancelledContext(t *testing.T) {
+	f := &Fake{Reading: Reading{Candidates: []RawCandidate{{Number: "CSQU3054383", Confidence: 0.9}}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	att, err := f.Read(ctx, Image{Data: []byte("anything"), MediaType: "image/jpeg"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v; want context.Canceled", err)
+	}
+	if att.Engine != "fake" || att.Model != "fake-1" {
+		t.Fatalf("attempt on cancel = %+v; want engine and model populated", att)
 	}
 }

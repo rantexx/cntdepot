@@ -26,7 +26,7 @@ type Recognizer interface {
 const Prompt = `You are reading a shipping container in a depot gate photograph.
 
 Return these fields:
-- candidates: the ISO 6346 container number. It has 11 characters: a 3-letter owner code, the equipment category letter U, J or Z, a 6-digit serial number and a 1-digit check digit (for example CSQU3054383). It is painted on the doors, side panels, end walls or frame, often over rust, dirt, dents or old markings. Give up to 4 candidates, most likely first, each with a confidence from 0 to 1. If no number is legible, return an empty list.
+- candidates: the ISO 6346 container number. It has 11 characters: a 3-letter owner code, the equipment category letter U, J or Z, a 6-digit serial number and a 1-digit check digit (for example CSQU3054383). The first 4 characters are letters and the last 7 are digits. It is painted on the doors, side panels, end walls or frame, often over rust, dirt, dents or old markings. Give up to 4 candidates, most likely first, each with a confidence from 0 to 1. If no number is legible, return an empty list. If only part of it is legible, give only the characters you can read as a shorter candidate; never pad or guess the rest.
 - type_code: the ISO size/type code printed near the number (4 characters such as 45G1, 22R1, 42U1, 22T6), or an empty string if it is not visible.
 - color: the main paint color of the container as one plain English word (for example blue, red, white, grey, green, orange, brown, yellow), or an empty string if unclear.
 - box_2d: where the container number is in the image, as [ymin, xmin, ymax, xmax] normalized to 0-1000, or null if no number is visible.

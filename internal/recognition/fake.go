@@ -9,6 +9,9 @@ import (
 
 // Fake is a scripted engine for tests and for running the hub without an API
 // key (`depotd hub -engine fake`).
+//
+// Configure its fields before first use and do not change them while reads
+// are in flight. Calls counts every Read, including failed and cancelled ones.
 type Fake struct {
 	Reading Reading            // returned for any image not in ByImage
 	ByImage map[string]Reading // keyed by the image bytes as a string
@@ -17,16 +20,23 @@ type Fake struct {
 	calls   atomic.Int64
 }
 
+var _ Recognizer = (*Fake)(nil)
+
 func (f *Fake) Name() string  { return "fake" }
 func (f *Fake) Model() string { return "fake-1" }
 
 // Calls reports how many reads have been made.
 func (f *Fake) Calls() int64 { return f.calls.Load() }
 
-func (f *Fake) Read(ctx context.Context, img Image) (Attempt, error) {
+func (f *Fake) Read(ctx context.Context, img Image) (att Attempt, err error) {
 	f.calls.Add(1)
 	start := time.Now()
-	att := Attempt{Engine: f.Name(), Model: f.Model(), PromptVersion: PromptVersion}
+	att = Attempt{Engine: f.Name(), Model: f.Model(), PromptVersion: PromptVersion}
+	// Latency is recorded on every return path, including failures.
+	defer func() { att.LatencyMS = time.Since(start).Milliseconds() }()
+	if err := ctx.Err(); err != nil {
+		return att, err
+	}
 	if f.Delay > 0 {
 		select {
 		case <-time.After(f.Delay):
@@ -34,7 +44,6 @@ func (f *Fake) Read(ctx context.Context, img Image) (Attempt, error) {
 			return att, ctx.Err()
 		}
 	}
-	att.LatencyMS = time.Since(start).Milliseconds()
 	if f.Err != nil {
 		return att, f.Err
 	}
