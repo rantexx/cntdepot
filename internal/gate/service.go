@@ -1,0 +1,359 @@
+// Package gate runs gate-ins: photos come in, engines read them in the
+// background, and a person confirms, corrects or refuses the result.
+package gate
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"strings"
+	"sync"
+
+	"depot/internal/blob"
+	"depot/internal/iso6346"
+	"depot/internal/recognition"
+	"depot/internal/store"
+)
+
+var (
+	ErrNotFound       = errors.New("move not found")
+	ErrClosed         = errors.New("move already resolved")
+	ErrBadAction      = errors.New("unknown action: use accept, correct or refuse")
+	ErrNumberRequired = errors.New("a container number is required")
+	ErrBadPhoto       = errors.New("photo missing or not a JPEG, PNG or WebP image")
+)
+
+// Config tunes the service.
+type Config struct {
+	// AutoAcceptEnabled lets confident, check-digit-valid reads skip the
+	// person. Off by default: at the owner's depot every read is confirmed.
+	AutoAcceptEnabled   bool
+	AutoAcceptThreshold float64 // default 0.85
+	Workers             int     // parallel engine calls, default 2
+}
+
+// Service orchestrates gate-ins.
+type Service struct {
+	store  *store.Store
+	blobs  *blob.Store
+	rec    recognition.Recognizer
+	cfg    Config
+	notify func(moveID string)
+	jobs   chan job
+	ctx    context.Context
+	mu     sync.Mutex // serializes recompute and resolve
+	wg     sync.WaitGroup
+}
+
+type job struct {
+	moveID, photoID, aiSHA, aiType string
+}
+
+// New builds the service. notify is called whenever a move changes (live
+// screen updates); it may be nil.
+func New(st *store.Store, bl *blob.Store, rec recognition.Recognizer, cfg Config, notify func(string)) *Service {
+	if cfg.Workers <= 0 {
+		cfg.Workers = 2
+	}
+	if cfg.AutoAcceptThreshold <= 0 {
+		cfg.AutoAcceptThreshold = 0.85
+	}
+	if notify == nil {
+		notify = func(string) {}
+	}
+	return &Service{store: st, blobs: bl, rec: rec, cfg: cfg, notify: notify, jobs: make(chan job, 256), ctx: context.Background()}
+}
+
+// Engine names the engine and model in use.
+func (s *Service) Engine() (name, model string) { return s.rec.Name(), s.rec.Model() }
+
+// Start launches the workers and re-queues photos left unread by a previous
+// run. Workers stop when ctx is cancelled; call Wait afterwards.
+func (s *Service) Start(ctx context.Context) error {
+	s.ctx = ctx
+	for i := 0; i < s.cfg.Workers; i++ {
+		s.wg.Add(1)
+		go s.worker()
+	}
+	pending, err := s.store.PhotosWithoutAttempts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range pending {
+		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	}
+	return nil
+}
+
+// Wait blocks until the workers have stopped.
+func (s *Service) Wait() { s.wg.Wait() }
+
+// NewMove starts a gate-in.
+func (s *Service) NewMove(ctx context.Context, lane string, isTest bool, actor string) (store.Move, error) {
+	return s.store.CreateMove(ctx, lane, isTest, actor)
+}
+
+// PhotoInput is one uploaded photo: the original as captured, and a
+// downscaled, correctly oriented copy for engines.
+type PhotoInput struct {
+	MoveID, Role, Actor string
+	Original            []byte
+	OriginalType        string
+	AI                  []byte
+	AIType              string
+	Width, Height       int
+}
+
+// AddPhoto stores a photo and queues it for reading.
+func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, error) {
+	if len(in.Original) == 0 || len(in.AI) == 0 || !engineReadable(in.AIType) {
+		return store.Photo{}, ErrBadPhoto
+	}
+	m, err := s.openMove(ctx, in.MoveID)
+	if err != nil {
+		return store.Photo{}, err
+	}
+	origSHA, err := s.blobs.Put(in.Original)
+	if err != nil {
+		return store.Photo{}, err
+	}
+	aiSHA, err := s.blobs.Put(in.AI)
+	if err != nil {
+		return store.Photo{}, err
+	}
+	role := strings.TrimSpace(in.Role)
+	if role == "" {
+		role = "other"
+	}
+	p, err := s.store.AddPhoto(ctx, store.Photo{
+		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
+		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,
+	}, in.Actor)
+	if err != nil {
+		return store.Photo{}, err
+	}
+	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
+		return store.Photo{}, err
+	}
+	s.notify(m.ID)
+	s.enqueue(job{moveID: m.ID, photoID: p.ID, aiSHA: aiSHA, aiType: in.AIType})
+	return p, nil
+}
+
+// Reread queues every photo of an open move for another engine run, e.g.
+// after an engine outage.
+func (s *Service) Reread(ctx context.Context, moveID string) error {
+	m, err := s.openMove(ctx, moveID)
+	if err != nil {
+		return err
+	}
+	if len(m.Photos) == 0 {
+		return nil
+	}
+	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
+		return err
+	}
+	s.notify(m.ID)
+	for _, p := range m.Photos {
+		s.enqueue(job{moveID: m.ID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	}
+	return nil
+}
+
+// Resolution is a person's decision.
+type Resolution struct {
+	Action string `json:"action"` // accept | correct | refuse
+	Number string `json:"number"` // for correct
+	By     string `json:"by"`
+	Note   string `json:"note"`
+}
+
+// Resolve records a person's decision about an open move.
+func (s *Service) Resolve(ctx context.Context, moveID string, r Resolution) (store.Move, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.openMove(ctx, moveID)
+	if err != nil {
+		return m, err
+	}
+	by := strings.TrimSpace(r.By)
+	if by == "" {
+		by = "operator"
+	}
+	u := store.ResolveUpdate{By: by, Note: strings.TrimSpace(r.Note)}
+	switch r.Action {
+	case "accept":
+		if m.Number == "" {
+			return m, ErrNumberRequired
+		}
+		u.Status, u.Number, u.Verified = store.StatusAccepted, m.Number, iso6346.IsValid(m.Number)
+	case "correct":
+		n := iso6346.Normalize(r.Number)
+		if n == "" {
+			return m, ErrNumberRequired
+		}
+		u.Status, u.Number, u.Verified = store.StatusAccepted, n, iso6346.IsValid(n)
+		if m.Number != "" && m.Number != n {
+			u.CorrectedFrom = m.Number
+		}
+	case "refuse":
+		u.Status, u.Number = store.StatusRefused, m.Number
+	default:
+		return m, ErrBadAction
+	}
+	out, err := s.store.Resolve(ctx, moveID, u)
+	if err == nil {
+		s.notify(moveID)
+	}
+	return out, err
+}
+
+// TestReadResult is the outcome of a one-off engine test.
+type TestReadResult struct {
+	Attempt recognition.Attempt `json:"attempt"`
+	Frame   recognition.Frame   `json:"frame"`
+	Error   string              `json:"error,omitempty"`
+}
+
+// TestRead runs the engine on one photo without storing anything. Engine
+// failures are reported in the result, not as an error.
+func (s *Service) TestRead(ctx context.Context, ai []byte, aiType string) (TestReadResult, error) {
+	if len(ai) == 0 || !engineReadable(aiType) {
+		return TestReadResult{}, ErrBadPhoto
+	}
+	att, err := s.rec.Read(ctx, recognition.Image{Data: ai, MediaType: aiType})
+	res := TestReadResult{Attempt: att}
+	if err != nil {
+		res.Error = err.Error()
+		res.Frame = recognition.ErrorFrame("test", err.Error())
+		return res, nil
+	}
+	res.Frame = recognition.BuildFrame("test", att.Reading)
+	return res, nil
+}
+
+func (s *Service) openMove(ctx context.Context, id string) (store.Move, error) {
+	m, err := s.store.GetMove(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return m, ErrNotFound
+	}
+	if err != nil {
+		return m, err
+	}
+	if m.ResolvedBy != "" {
+		return m, ErrClosed
+	}
+	return m, nil
+}
+
+func (s *Service) enqueue(j job) {
+	select {
+	case s.jobs <- j:
+	case <-s.ctx.Done():
+	}
+}
+
+func (s *Service) worker() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case j := <-s.jobs:
+			s.process(j)
+		}
+	}
+}
+
+func (s *Service) process(j job) {
+	ctx := s.ctx
+	data, err := s.blobs.Get(j.aiSHA)
+	att := recognition.Attempt{Engine: s.rec.Name(), Model: s.rec.Model(), PromptVersion: recognition.PromptVersion}
+	if err == nil {
+		att, err = s.rec.Read(ctx, recognition.Image{Data: data, MediaType: j.aiType})
+	}
+	if ctx.Err() != nil {
+		return // shutting down: the photo stays unread and Start re-queues it
+	}
+	reading, _ := json.Marshal(att.Reading)
+	row := store.Attempt{
+		MoveID: j.moveID, PhotoID: j.photoID, Engine: att.Engine, Model: att.Model, PromptVersion: att.PromptVersion,
+		Reading: reading, Raw: att.Raw, InputTokens: att.Usage.InputTokens, OutputTokens: att.Usage.OutputTokens,
+		LatencyMS: att.LatencyMS,
+	}
+	if err != nil {
+		row.Error = err.Error()
+	}
+	if _, err := s.store.AddAttempt(ctx, row); err != nil {
+		log.Printf("gate: store attempt for photo %s: %v", j.photoID, err)
+		return
+	}
+	if err := s.recompute(ctx, j.moveID); err != nil {
+		log.Printf("gate: recompute move %s: %v", j.moveID, err)
+	}
+	s.notify(j.moveID)
+}
+
+// recompute rebuilds a move's result from the latest attempt of each photo.
+func (s *Service) recompute(ctx context.Context, moveID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.store.GetMove(ctx, moveID)
+	if err != nil {
+		return err
+	}
+	if m.ResolvedBy != "" {
+		return nil
+	}
+	attempts, err := s.store.ListAttempts(ctx, moveID)
+	if err != nil {
+		return err
+	}
+	latest := map[string]store.Attempt{}
+	for _, a := range attempts { // oldest first, so later attempts win
+		latest[a.PhotoID] = a
+	}
+	var frames []recognition.Frame
+	pending := 0
+	for _, p := range m.Photos {
+		a, ok := latest[p.ID]
+		switch {
+		case !ok:
+			pending++
+		case a.Error != "":
+			frames = append(frames, recognition.ErrorFrame(p.Role, a.Error))
+		default:
+			var r recognition.Reading
+			if err := json.Unmarshal(a.Reading, &r); err != nil {
+				frames = append(frames, recognition.ErrorFrame(p.Role, err.Error()))
+				continue
+			}
+			frames = append(frames, recognition.BuildFrame(p.Role, r))
+		}
+	}
+	res := recognition.Reconcile(frames, s.cfg.AutoAcceptThreshold)
+	status := store.StatusNeedsReview
+	switch {
+	case pending > 0:
+		status = store.StatusReading
+	case res.Decision == recognition.DecisionAutoAccept && s.cfg.AutoAcceptEnabled:
+		status = store.StatusAccepted
+	}
+	resultJSON, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+	return s.store.SetResult(ctx, moveID, store.ReadOutcome{
+		Status: status, Number: res.Number, TypeCode: res.TypeCode, Color: res.Color, Confidence: res.Confidence,
+		CheckDigitValid: res.CheckDigitValid, Decision: string(res.Decision), Reason: res.Reason, ResultJSON: resultJSON,
+	})
+}
+
+func engineReadable(mediaType string) bool {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/webp":
+		return true
+	}
+	return false
+}
