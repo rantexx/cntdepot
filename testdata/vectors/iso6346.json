@@ -1,0 +1,27 @@
+{
+  "numbers": [
+    {"input": "CSQU3054383", "normalized": "CSQU3054383", "well_formed": true, "valid": true, "expected_check_digit": 3},
+    {"input": "csqu 305 4383", "normalized": "CSQU3054383", "well_formed": true, "valid": true, "expected_check_digit": 3},
+    {"input": "CSQU3054384", "normalized": "CSQU3054384", "well_formed": true, "valid": false, "expected_check_digit": 3},
+    {"input": "ABCU1234560", "normalized": "ABCU1234560", "well_formed": true, "valid": true, "expected_check_digit": 0},
+    {"input": "ABCU1234160", "normalized": "ABCU1234160", "well_formed": true, "valid": true, "expected_check_digit": 0, "note": "sum 4454, remainder 10 maps to check digit 0"},
+    {"input": "TEXU1234569", "normalized": "TEXU1234569", "well_formed": true, "valid": true, "expected_check_digit": 9},
+    {"input": "CSQX3054383", "normalized": "CSQX3054383", "well_formed": false, "valid": false},
+    {"input": "CSQU305438", "normalized": "CSQU305438", "well_formed": false, "valid": false},
+    {"input": "", "normalized": "", "well_formed": false, "valid": false}
+  ],
+  "repairs": [
+    {"input": "CSQU3O54383", "contains": "CSQU3054383", "note": "letter O read in place of zero"},
+    {"input": "C5QU3054383", "contains": "CSQU3054383", "note": "digit 5 read in place of S"},
+    {"input": "CSQU3054383", "empty": true, "note": "valid numbers need no repair"}
+  ],
+  "type_codes": [
+    {"input": "45G1", "valid": true, "family": "general"},
+    {"input": "22r1", "valid": true, "family": "reefer"},
+    {"input": "42U1", "valid": true, "family": "open_top"},
+    {"input": "42P3", "valid": true, "family": "flat_rack"},
+    {"input": "22T6", "valid": true, "family": "tank"},
+    {"input": "4G1", "valid": false, "family": "unknown"},
+    {"input": "45X1", "valid": false, "family": "unknown"}
+  ]
+}
