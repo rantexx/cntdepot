@@ -22,15 +22,17 @@ Everything stays on the PC: database and photos are in the `depot-data` folder.
 ## Every day
 
 ```
-bin/depotd.exe hub -data depot-data -access-code 4821
+bin/depotd.exe hub -data depot-data -access-code 482915
 ```
 
 - The log prints addresses such as `open: http://192.168.0.29:8080`. Open that on the phones.
 - The first time, Windows Firewall asks whether `depotd.exe` may use the network: choose
   **Private networks** and allow. (Do this yourself; nobody should change firewall settings for you.)
-- `-access-code` is optional; when set, every phone and PC asks for it once.
+- `-access-code` is optional; when set, every phone and PC asks for it once. Use at least 6 characters
+  (drivers often get the depot Wi-Fi). After 5 wrong tries a device must wait a minute.
 - No API key yet, or just practising? Add `-engine fake`: every photo reads as `CSQU3054383`.
-- Stop with Ctrl+C. Photos that were still being read are read again at the next start.
+- Stop with Ctrl+C. Photos that were still being read are read again at the next start, and trucks
+  left half-read are finished from what was already read.
 
 Options: `-model` and `-thinking` choose the Gemini model and thinking level (defaults `gemini-3.8-flash`, `low`;
 try `-model gemini-3.5-flash-lite` with `bench` to see whether the cheaper model is accurate enough),
@@ -44,7 +46,10 @@ collecting training data), `-addr :8080` changes the port.
   the training data. A warning under a photo means it looks too dark or blurry: retake it.
 - **Office, Queue:** everything that needs a person. Open a truck, check the photos (the orange
   box shows where the number was read), fix the number if needed (the check-digit math updates as
-  you type) and press Enter. Your name is remembered on that device.
+  you type) and press Enter. Your name is remembered on that device. The **Reading** tab shows trucks
+  whose photos are still being read; if one stays there, open it and press **Read again**.
+- If the phone reloads the page while the camera is open (common on low-memory phones), the app
+  returns to the same truck and shows the photos already saved.
 - **Test read:** try one photo without creating a record. Shows the raw engine answer, time and tokens.
 
 ## Photo tips
