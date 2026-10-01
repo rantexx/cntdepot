@@ -20,8 +20,9 @@ const (
 	FamilyUnknown    Family = "unknown"
 )
 
-// typeCodeShape: length code, height/width code, type group letter, detail.
-var typeCodeShape = regexp.MustCompile(`^[0-9][0-9A-Z][A-Z][0-9A-Z]$`)
+// typeCodeShape: length code (a digit or a letter, e.g. L for 45 ft),
+// height/width code, type group letter, detail.
+var typeCodeShape = regexp.MustCompile(`^[0-9A-Z][0-9A-Z][A-Z][0-9A-Z]$`)
 
 var familyByGroup = map[byte]Family{
 	'G': FamilyGeneral, 'V': FamilyVentilated, 'B': FamilyBulk, 'S': FamilyNamedCargo,
@@ -30,7 +31,8 @@ var familyByGroup = map[byte]Family{
 }
 
 // ValidTypeCode reports whether code is a well-formed size/type code with a
-// known type group.
+// known type group. The input is normalized first (spaces and punctuation
+// are ignored).
 func ValidTypeCode(code string) bool {
 	n := Normalize(code)
 	if !typeCodeShape.MatchString(n) {
