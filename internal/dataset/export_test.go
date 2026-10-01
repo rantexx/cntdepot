@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"depot/internal/recognition"
+	"depot/internal/testdir"
 	"depot/internal/testkit"
 )
 
@@ -21,7 +22,7 @@ func TestExportWritesImagesLabelsAndYOLO(t *testing.T) {
 	}, false)
 	testkit.SeedVerifiedMove(t, st, bl, "TEXU1234569", "ai-2", recognition.Reading{}, true) // practice: excluded
 
-	out := t.TempDir()
+	out := testdir.New(t)
 	sum, err := Export(context.Background(), st, bl, out)
 	if err != nil {
 		t.Fatal(err)

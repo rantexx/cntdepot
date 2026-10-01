@@ -6,13 +6,15 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"depot/internal/testdir"
 )
 
 var ctx = context.Background()
 
 func openTest(t *testing.T) (*Store, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "depot.db")
+	path := filepath.Join(testdir.New(t), "depot.db")
 	s, err := Open(path, "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)

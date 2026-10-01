@@ -11,12 +11,13 @@ import (
 	"depot/internal/iso6346"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/testdir"
 )
 
 // Open returns a fresh database and photo store in a temporary folder.
 func Open(t *testing.T) (*store.Store, *blob.Store) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testdir.New(t)
 	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)

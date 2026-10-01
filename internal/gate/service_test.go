@@ -11,6 +11,7 @@ import (
 	"depot/internal/blob"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/testdir"
 )
 
 var ctx = context.Background()
@@ -23,7 +24,7 @@ type harness struct {
 
 func newHarness(t *testing.T, rec recognition.Recognizer, cfg Config, start bool) *harness {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testdir.New(t)
 	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)

@@ -20,11 +20,12 @@ import (
 	"depot/internal/gate"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/testdir"
 )
 
 func newTestServer(t *testing.T, accessCode string) *httptest.Server {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testdir.New(t)
 	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)
