@@ -1,0 +1,182 @@
+import { useSyncExternalStore } from "react";
+import { readLocal, writeLocal } from "./storage";
+
+const tr = {
+  appTitle: "Kapı OCR",
+  navCapture: "Yeni giriş",
+  navQueue: "Kuyruk",
+  navTest: "Test okuma",
+  homeCaptureHint: "Telefonla konteyner fotoğrafı çek",
+  homeQueueHint: "Okunan numaraları kontrol et ve onayla",
+  homeTestHint: "Tek fotoğrafla okuma motorunu dene",
+  lane: "Şerit",
+  practice: "Deneme kaydı (eğitim verisine girmez)",
+  startMove: "Yeni kamyon başlat",
+  newTruck: "Yeni kamyon",
+  shotRear: "Arka kapı",
+  shotLeft: "Sol yan",
+  shotRight: "Sağ yan",
+  shotFront: "Ön",
+  shotOther: "Diğer",
+  uploading: "Yükleniyor…",
+  uploaded: "Yüklendi",
+  uploadFailed: "Yükleme başarısız",
+  retry: "Tekrar dene",
+  tooDark: "Fotoğraf çok karanlık",
+  tooBlurry: "Fotoğraf bulanık olabilir",
+  retakeHint: "gerekirse tekrar çek",
+  status_capturing: "Fotoğraf bekleniyor",
+  status_reading: "Okunuyor…",
+  status_needs_review: "Kontrol gerekli",
+  status_accepted: "Onaylandı",
+  status_refused: "Reddedildi",
+  number: "Konteyner no",
+  typeCode: "ISO tip kodu",
+  color: "Renk",
+  confidence: "Güven",
+  reason: "Sebep",
+  candidates: "Adaylar",
+  repairedFrom: "düzeltme önerisi, okunan:",
+  openMove: "Ayrıntıyı aç",
+  photos: "Fotoğraflar",
+  original: "Orijinal",
+  accept: "Onayla",
+  correct: "Düzelt ve onayla",
+  refuse: "Reddet",
+  yourName: "Adınız",
+  note: "Not",
+  validNumber: "Check digit doğru",
+  invalidNumber: "Check digit hatalı",
+  checkDigitMath: "Check digit hesabı",
+  sum: "Toplam",
+  remainder: "Kalan (mod 11)",
+  expected: "Beklenen check digit",
+  reread: "Tekrar oku",
+  verified: "Doğrulandı",
+  unverified: "Doğrulanmadı (check digit hatalı)",
+  correctedFrom: "Düzeltilen okuma:",
+  resolvedBy: "Karar veren:",
+  filterNeedsReview: "Kontrol gereken",
+  filterAll: "Tümü",
+  filterAccepted: "Onaylanan",
+  filterRefused: "Reddedilen",
+  noMoves: "Kayıt yok",
+  choosePhoto: "Fotoğraf çek veya seç",
+  engine: "Motor",
+  latency: "Süre",
+  tokens: "Token (giriş / çıkış)",
+  rawAnswer: "Ham cevap",
+  error: "Hata",
+  accessCode: "Erişim kodu",
+  login: "Giriş",
+  wrongCode: "Kod hatalı",
+  testTag: "deneme",
+  noNumber: "Numara okunamadı",
+  back: "Geri",
+  loading: "Yükleniyor…",
+  quality: "Kalite",
+};
+
+export type Key = keyof typeof tr;
+
+const en: Record<Key, string> = {
+  appTitle: "Gate OCR",
+  navCapture: "New gate-in",
+  navQueue: "Queue",
+  navTest: "Test read",
+  homeCaptureHint: "Photograph a container with the phone",
+  homeQueueHint: "Check and confirm read numbers",
+  homeTestHint: "Try the reading engine on one photo",
+  lane: "Lane",
+  practice: "Practice record (kept out of training data)",
+  startMove: "Start new truck",
+  newTruck: "New truck",
+  shotRear: "Rear doors",
+  shotLeft: "Left side",
+  shotRight: "Right side",
+  shotFront: "Front",
+  shotOther: "Other",
+  uploading: "Uploading…",
+  uploaded: "Uploaded",
+  uploadFailed: "Upload failed",
+  retry: "Retry",
+  tooDark: "Photo is too dark",
+  tooBlurry: "Photo may be blurry",
+  retakeHint: "retake if needed",
+  status_capturing: "Waiting for photos",
+  status_reading: "Reading…",
+  status_needs_review: "Needs review",
+  status_accepted: "Accepted",
+  status_refused: "Refused",
+  number: "Container no",
+  typeCode: "ISO type code",
+  color: "Color",
+  confidence: "Confidence",
+  reason: "Reason",
+  candidates: "Candidates",
+  repairedFrom: "suggested fix, read as:",
+  openMove: "Open details",
+  photos: "Photos",
+  original: "Original",
+  accept: "Accept",
+  correct: "Correct and accept",
+  refuse: "Refuse",
+  yourName: "Your name",
+  note: "Note",
+  validNumber: "Check digit valid",
+  invalidNumber: "Check digit invalid",
+  checkDigitMath: "Check digit math",
+  sum: "Sum",
+  remainder: "Remainder (mod 11)",
+  expected: "Expected check digit",
+  reread: "Read again",
+  verified: "Verified",
+  unverified: "Not verified (check digit fails)",
+  correctedFrom: "Corrected from:",
+  resolvedBy: "Decided by:",
+  filterNeedsReview: "Needs review",
+  filterAll: "All",
+  filterAccepted: "Accepted",
+  filterRefused: "Refused",
+  noMoves: "Nothing here",
+  choosePhoto: "Take or choose a photo",
+  engine: "Engine",
+  latency: "Time",
+  tokens: "Tokens (in / out)",
+  rawAnswer: "Raw answer",
+  error: "Error",
+  accessCode: "Access code",
+  login: "Log in",
+  wrongCode: "Wrong code",
+  testTag: "practice",
+  noNumber: "No number read",
+  back: "Back",
+  loading: "Loading…",
+  quality: "Quality",
+};
+
+export type Lang = "tr" | "en";
+
+const dictionaries: Record<Lang, Record<Key, string>> = { tr, en };
+const listeners = new Set<() => void>();
+let current: Lang = readLocal("lang") === "en" ? "en" : "tr";
+
+function setLang(lang: Lang) {
+  current = lang;
+  writeLocal("lang", lang);
+  document.documentElement.lang = lang;
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function useT() {
+  const lang = useSyncExternalStore(subscribe, () => current);
+  const t = (key: Key) => dictionaries[lang][key];
+  return { t, lang, setLang };
+}
