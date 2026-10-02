@@ -18,6 +18,8 @@ import (
 
 	"depot/internal/blob"
 	"depot/internal/gate"
+	"depot/internal/gatecam"
+	"depot/internal/live"
 	"depot/internal/store"
 )
 
@@ -29,6 +31,8 @@ type Options struct {
 	Static     fs.FS  // built web app; nil serves a "not built" notice
 	AccessCode string // empty: no code required
 	Version    string
+	Camera     *gatecam.Manager // nil: no camera support (camera endpoints answer 503)
+	Live       *live.Supervisor // nil: no live video
 }
 
 // Server is the hub's HTTP front door.
@@ -80,6 +84,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/validate/{number}", s.validate)
 	s.mux.HandleFunc("POST /api/test-read", s.testRead)
 	s.mux.HandleFunc("GET /api/stream", s.stream)
+	s.mux.HandleFunc("GET /api/camera", s.getCamera)
+	s.mux.HandleFunc("PUT /api/camera", s.putCamera)
+	s.mux.HandleFunc("POST /api/camera/test", s.testCamera)
+	s.mux.HandleFunc("POST /api/camera/read", s.readCamera)
+	s.mux.HandleFunc("POST /api/camera/capture", s.captureCamera)
+	s.mux.HandleFunc("GET /api/camera/still", s.cameraStill)
+	s.mux.HandleFunc("GET /api/live/ws", s.liveWS)
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "E4040", "no such API endpoint")
 	})

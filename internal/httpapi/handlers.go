@@ -82,7 +82,9 @@ func (s *Server) createMove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listMoves(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	moves, err := s.opts.Store.ListMoves(r.Context(), store.ListFilter{Status: q.Get("status"), Limit: limit, Before: q.Get("before")})
+	moves, err := s.opts.Store.ListMoves(r.Context(), store.ListFilter{
+		Status: q.Get("status"), Source: q.Get("source"), Limit: limit, Before: q.Get("before"),
+	})
 	if err != nil {
 		writeServiceError(w, err)
 		return
