@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"depot/internal/camera"
+	"depot/internal/gate"
 	"depot/internal/recognition"
 	"depot/internal/store"
 )
@@ -24,7 +25,7 @@ type fakeGate struct {
 	reads   []string
 	settled []string
 	photoN  int
-	closed  bool // AddFrame fails, as for a move a person already resolved
+	addErr  error // AddFrame fails with it; gate.ErrClosed as for a move a person already resolved
 }
 
 func newFakeGate() *fakeGate { return &fakeGate{frames: map[string][]string{}} }
@@ -40,8 +41,8 @@ func (g *fakeGate) NewCameraMove(ctx context.Context, actor string) (store.Move,
 func (g *fakeGate) AddFrame(ctx context.Context, moveID string, jpeg []byte, w, h int) (store.Photo, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed {
-		return store.Photo{}, errors.New("move already resolved")
+	if g.addErr != nil {
+		return store.Photo{}, g.addErr
 	}
 	g.photoN++
 	id := fmt.Sprintf("p%d", g.photoN)
@@ -256,11 +257,258 @@ func TestAResolvedMoveEndsTheVisit(t *testing.T) {
 	w, g, cam := newTestWatcher(t, DefaultConfig())
 	w.step(ctx, at(0), true, cam)
 	g.mu.Lock()
-	g.closed = true
+	g.addErr = fmt.Errorf("store still: %w", gate.ErrClosed)
 	g.mu.Unlock()
 	w.step(ctx, at(1), true, cam)
 	if w.visit != nil {
 		t.Fatal("visit still running after its move was closed")
+	}
+}
+
+func TestAStillThatCannotBeStoredIsSkipped(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	w.step(ctx, at(0), true, cam)
+	g.mu.Lock()
+	g.addErr = errors.New("disk full")
+	g.mu.Unlock()
+	w.step(ctx, at(1), true, cam)
+	if w.visit == nil {
+		t.Fatal("a store failure ended the visit")
+	}
+	g.mu.Lock()
+	g.addErr = nil
+	g.mu.Unlock()
+	w.step(ctx, at(2), true, cam)
+	if _, _, _, frames := g.snapshot(); frames["m1"] != 2 || w.visit == nil {
+		t.Fatalf("frames = %v; want the visit to carry on with 2 stills", frames)
+	}
+}
+
+// clockAt makes the watcher's clock read at(s).
+func clockAt(w *Watcher, s *float64) { w.now = func() time.Time { return at(*s) } }
+
+func TestDetectOutageMidVisitKeepsOneMove(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	var s float64
+	clockAt(w, &s)
+	cam.SetVehicle(true)
+	for s = 0; s <= 1; s += 0.5 {
+		w.poll(ctx)
+	}
+	if w.visit == nil {
+		t.Fatal("no visit started")
+	}
+	cam.SetDetectErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	for s = 1.5; s <= 8; s += 0.5 { // the truck stands still while the camera does not answer
+		w.poll(ctx)
+	}
+	if w.Status().State != StateOffline {
+		t.Fatalf("status = %+v; want offline", w.Status())
+	}
+	cam.SetDetectErr(nil)
+	for s = 8.5; s <= 10; s += 0.5 {
+		w.poll(ctx)
+	}
+	cam.SetVehicle(false)
+	for s = 10.5; s <= 20; s += 0.5 {
+		w.poll(ctx)
+	}
+	moves, _, _, frames := g.snapshot()
+	if len(moves) != 1 || w.visit != nil {
+		t.Fatalf("moves = %v, visit running %v; want one move for the one truck", moves, w.visit != nil)
+	}
+	if frames["m1"] < 10 {
+		t.Fatalf("frames = %v; want stills taken through the outage", frames)
+	}
+}
+
+func TestDetectOutageWithoutAVisitDoesNotRearm(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	var s float64
+	clockAt(w, &s)
+	cam.SetVehicle(true)
+	for s = 0; s <= 30; s += 0.5 { // a truck parked long after its visit ended
+		w.poll(ctx)
+	}
+	if w.visit != nil {
+		t.Fatal("visit still running")
+	}
+	cam.SetDetectErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	for s = 30.5; s <= 40; s += 0.5 {
+		w.poll(ctx)
+	}
+	cam.SetDetectErr(nil) // back, and the same truck is still there
+	for s = 40.5; s <= 42; s += 0.5 {
+		w.poll(ctx)
+	}
+	if moves, _, _, _ := g.snapshot(); len(moves) != 1 {
+		t.Fatalf("moves = %v; an outage must not count as the truck leaving", moves)
+	}
+}
+
+func TestPollWakesUpForTheNextStill(t *testing.T) {
+	w, _, cam := newTestWatcher(t, DefaultConfig())
+	s := 0.0
+	clockAt(w, &s)
+	cam.SetVehicle(true)
+	for _, step := range []struct {
+		s    float64
+		want time.Duration
+	}{
+		{0, 500 * time.Millisecond},    // the first still; the next is due at 1 s
+		{0.75, 250 * time.Millisecond}, // wake up for it, not 500 ms later
+		{1, 500 * time.Millisecond},    // the second still
+		{1.75, 250 * time.Millisecond},
+	} {
+		s = step.s
+		if d := w.poll(ctx); d != step.want {
+			t.Fatalf("poll at %v s waits %v; want %v", s, d, step.want)
+		}
+	}
+	cam.SetDetectErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	s = 1.875
+	if d := w.poll(ctx); d != 125*time.Millisecond {
+		t.Fatalf("wait during an outage mid-visit = %v; want 125ms, for the next still", d)
+	}
+	s = 2
+	w.poll(ctx)
+	if n := len(w.visit.photos); n != 3 {
+		t.Fatalf("stills = %d; want 3, one a second", n)
+	}
+}
+
+func TestInfoIsAskedOnlyAfterTheCameraAnswers(t *testing.T) {
+	w, _, cam := newTestWatcher(t, DefaultConfig())
+	cam.SetDetectErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	counting := &infoCounter{Fake: cam}
+	w.SetCamera(counting)
+	if d := w.poll(ctx); d != w.cfg.Retry || counting.infos != 0 {
+		t.Fatalf("offline poll = %v with %d Info calls; want Retry and none", d, counting.infos)
+	}
+	cam.SetDetectErr(nil)
+	w.poll(ctx)
+	w.poll(ctx)
+	if counting.infos != 1 || w.Status().Info.Model != "Fake camera" {
+		t.Fatalf("Info calls = %d, status %+v; want one, once online", counting.infos, w.Status())
+	}
+}
+
+type infoCounter struct {
+	*camera.Fake
+	infos int
+}
+
+func (c *infoCounter) Info(ctx context.Context) (camera.Info, error) {
+	c.infos++
+	return c.Fake.Info(ctx)
+}
+
+func TestReadsTheVisitDidNotAskForAreIgnored(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	w.step(ctx, at(0), true, cam)
+	w.step(ctx, at(1), true, cam) // p1 and p2 in flight
+	// A person's re-read of the move and a stray read: neither is the visit's.
+	w.handleRead(ctx, readResult{moveID: "m1", photoID: "p7", frame: validRead})
+	w.handleRead(ctx, readResult{moveID: "m1", photoID: "p8", frame: validRead})
+	w.step(ctx, at(2), true, cam)
+	if w.visit == nil || w.visit.stopped || len(w.visit.inFlight) != 2 {
+		t.Fatalf("visit = %+v; untracked reads were counted", w.visit)
+	}
+	w.handleRead(ctx, readResult{moveID: "m1", photoID: "p1", frame: validRead})
+	w.handleRead(ctx, readResult{moveID: "m1", photoID: "p1", frame: validRead}) // the same photo twice counts once
+	if w.visit.stopped {
+		t.Fatal("one photo read twice counted as two agreeing photos")
+	}
+	if _, reads, _, _ := g.snapshot(); strings.Join(reads, ",") != "p1,p2,p3" {
+		t.Fatalf("reads = %v; want p3 sent once p1 finished", reads)
+	}
+}
+
+func TestSetCameraKeepsTheRunningVisit(t *testing.T) {
+	w, _, cam := newTestWatcher(t, DefaultConfig())
+	w.step(ctx, at(0), true, cam)
+	w.SetCamera(camera.NewFake([]byte("still")))
+	if got := w.Status().VisitMove; got != "m1" {
+		t.Fatalf("visit move after SetCamera = %q; want m1", got)
+	}
+}
+
+// swappingCamera replaces itself in the watcher while answering Detect.
+type swappingCamera struct {
+	*camera.Fake
+	swap func()
+}
+
+func (c *swappingCamera) Detect(ctx context.Context) (camera.Detection, error) {
+	d, err := c.Fake.Detect(ctx)
+	c.swap()
+	return d, err
+}
+
+func TestALateAnswerFromAReplacedCameraIsIgnored(t *testing.T) {
+	w, g, _ := newTestWatcher(t, DefaultConfig())
+	old := camera.NewFake([]byte("old"))
+	old.SetVehicle(true)
+	w.SetCamera(&swappingCamera{Fake: old, swap: func() { w.SetCamera(camera.NewFake([]byte("new"))) }})
+	w.poll(ctx)
+	if moves, _, _, _ := g.snapshot(); len(moves) != 0 || w.visit != nil {
+		t.Fatalf("moves = %v; the replaced camera's answer started a visit", moves)
+	}
+	if w.Status().State != StateConnecting {
+		t.Fatalf("status = %+v; want the new camera still connecting", w.Status())
+	}
+}
+
+func TestOnReadNeverBlocks(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	w.step(ctx, at(0), true, cam)
+	w.step(ctx, at(1), true, cam) // p1 and p2 in flight
+	w.SetCamera(nil)              // so Run's polls take no stills
+	s := 1.5
+	clockAt(w, &s)
+
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for i := range 1000 { // far more than any buffer, with Run not started
+			w.OnRead("other", fmt.Sprintf("x%d", i), emptyRead)
+		}
+		w.OnRead("m1", "p1", validRead)
+		w.OnRead("m1", "p2", validRead)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnRead blocked while Run was not running")
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { w.Run(runCtx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, _, settled, _ := g.snapshot(); strings.Join(settled, ",") == "m1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Run did not handle the queued reads")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for range 1000 {
+			w.OnRead("m1", "p1", validRead)
+		}
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnRead blocked after Run stopped")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"depot/internal/camera"
+	"depot/internal/gate"
 	"depot/internal/recognition"
 	"depot/internal/store"
 )
@@ -99,7 +100,9 @@ type Watcher struct {
 	status  Status
 	changed bool // camera replaced since the last poll
 
-	reads    chan readResult
+	readMu   sync.Mutex
+	queued   []readResult  // finished reads waiting for Run
+	notify   chan struct{} // capacity 1: tells Run that queued is not empty
 	captures chan chan captureReply
 	done     chan struct{}
 
@@ -118,9 +121,9 @@ type visit struct {
 	start    time.Time
 	lastSeen time.Time
 	nextShot time.Time
-	photos   []string     // photo IDs in capture order
-	chosen   map[int]bool // indexes of photos sent to the engine
-	inFlight int
+	photos   []string        // photo IDs in capture order
+	chosen   map[int]bool    // indexes of photos sent to the engine
+	inFlight map[string]bool // photos this visit sent to the engine and still waits for
 	reads    int
 	ended    bool // no more stills will be taken
 	stopped  bool // two photos agreed: no more reads
@@ -132,12 +135,13 @@ type visit struct {
 func New(g Gate, cfg Config) *Watcher {
 	return &Watcher{
 		gate: g, cfg: cfg, now: time.Now, status: Status{State: StateUnconfigured},
-		reads: make(chan readResult, 256), captures: make(chan chan captureReply), done: make(chan struct{}),
+		notify: make(chan struct{}, 1), captures: make(chan chan captureReply), done: make(chan struct{}),
 		settling: map[string]*visit{}, armed: true,
 	}
 }
 
-// SetCamera replaces the camera. nil means none is set up.
+// SetCamera replaces the camera. nil means none is set up. A running visit
+// carries on, so its move stays in the status.
 func (w *Watcher) SetCamera(c camera.Camera) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -146,7 +150,7 @@ func (w *Watcher) SetCamera(c camera.Camera) {
 	if c == nil {
 		state = StateUnconfigured
 	}
-	w.status = Status{State: state, Since: w.now(), Auto: w.auto}
+	w.status = Status{State: state, Since: w.now(), Auto: w.auto, VisitMove: w.status.VisitMove}
 }
 
 // SetAuto switches vehicle-triggered visits on or off.
@@ -171,12 +175,30 @@ func (w *Watcher) Camera() camera.Camera {
 }
 
 // OnRead is the gate service's read hook. The gate's engine workers call it,
-// so it only hands the result over to Run.
+// so it only hands the result over to Run, and it never blocks: Run may itself
+// be waiting for a worker to take a job.
 func (w *Watcher) OnRead(moveID, photoID string, f recognition.Frame) {
 	select {
-	case w.reads <- readResult{moveID: moveID, photoID: photoID, frame: f}:
 	case <-w.done:
+		return // Run has stopped: nobody will count the read
+	default:
 	}
+	w.readMu.Lock()
+	w.queued = append(w.queued, readResult{moveID: moveID, photoID: photoID, frame: f})
+	w.readMu.Unlock()
+	select {
+	case w.notify <- struct{}{}:
+	default: // Run has been told already
+	}
+}
+
+// takeReads returns the reads OnRead queued since the last call.
+func (w *Watcher) takeReads() []readResult {
+	w.readMu.Lock()
+	defer w.readMu.Unlock()
+	q := w.queued
+	w.queued = nil
+	return q
 }
 
 // Capture starts a visit by hand and returns its move ID.
@@ -206,8 +228,10 @@ func (w *Watcher) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case r := <-w.reads:
-			w.handleRead(ctx, r)
+		case <-w.notify:
+			for _, r := range w.takeReads() {
+				w.handleRead(ctx, r)
+			}
 		case reply := <-w.captures:
 			id, err := w.startManual(ctx, w.now())
 			reply <- captureReply{moveID: id, err: err}
@@ -229,9 +253,53 @@ func (w *Watcher) poll(ctx context.Context) time.Duration {
 	}
 	if cam == nil || stopped {
 		w.step(ctx, w.now(), false, cam)
-		return w.cfg.Poll
+		return w.cfg.Poll // no still can be taken, so there is no reason to wake sooner
 	}
+	cctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
+	det, err := cam.Detect(cctx)
+	cancel()
+	if w.Camera() != cam {
+		return w.cfg.Poll // a late answer from a camera replaced meanwhile
+	}
+	now := w.now()
+	if err != nil {
+		auth := errors.Is(err, camera.ErrAuth)
+		state := StateOffline
+		if auth {
+			state = StateAuth
+		}
+		w.update(cam, func(s *Status) {
+			if s.State != state {
+				s.Since = now
+			}
+			s.State, s.Error, s.Vehicle = state, err.Error(), false
+		})
+		if w.visit != nil {
+			// Unknown is not "gone": a camera that stops answering mid-visit
+			// must not split one truck into two moves, so the visit carries
+			// on, still capped at MaxVisit. A wrong password ends it as usual.
+			w.step(ctx, now, !auth, cam)
+			if w.visit != nil {
+				return w.wait()
+			}
+		}
+		// Without a visit an outage says nothing about the lane: it neither
+		// starts a visit nor counts towards re-arming.
+		if auth {
+			return w.cfg.Poll
+		}
+		return w.cfg.Retry
+	}
+	w.update(cam, func(s *Status) {
+		if s.State != StateOnline {
+			s.Since = now
+		}
+		s.State, s.Error, s.Vehicle, s.Detection = StateOnline, "", det.Present, det.Kind
+	})
+	w.step(ctx, now, det.Present, cam)
 	if !w.infoOK {
+		// Asked only once the camera answers, so an offline camera is retried
+		// every Retry rather than every Retry plus two timeouts.
 		cctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 		info, err := cam.Info(cctx)
 		cancel()
@@ -245,35 +313,17 @@ func (w *Watcher) poll(ctx context.Context) time.Duration {
 			})
 		}
 	}
-	cctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
-	det, err := cam.Detect(cctx)
-	cancel()
-	now := w.now()
-	if err != nil {
-		state := StateOffline
-		if errors.Is(err, camera.ErrAuth) {
-			state = StateAuth
-		}
-		w.update(cam, func(s *Status) {
-			if s.State != state {
-				s.Since = now
-			}
-			s.State, s.Error, s.Vehicle = state, err.Error(), false
-		})
-		w.step(ctx, now, false, cam)
-		if state == StateAuth {
-			return w.cfg.Poll
-		}
-		return w.cfg.Retry
+	return w.wait()
+}
+
+// wait is how long to wait before the next poll: Poll, or less while a visit
+// runs, so that its next still (stills are only taken by poll) is on time.
+func (w *Watcher) wait() time.Duration {
+	v := w.visit
+	if v == nil {
+		return w.cfg.Poll
 	}
-	w.update(cam, func(s *Status) {
-		if s.State != StateOnline {
-			s.Since = now
-		}
-		s.State, s.Error, s.Vehicle, s.Detection = StateOnline, "", det.Present, det.Kind
-	})
-	w.step(ctx, now, det.Present, cam)
-	return w.cfg.Poll
+	return min(w.cfg.Poll, max(0, v.nextShot.Sub(w.now())))
 }
 
 // update changes the status, unless cam has been replaced since the poll
@@ -362,7 +412,7 @@ func (w *Watcher) startVisit(ctx context.Context, now time.Time, manual bool, ca
 		return "", err
 	}
 	v := &visit{moveID: m.ID, manual: manual, start: now, lastSeen: now, nextShot: now,
-		chosen: map[int]bool{}, votes: map[string]int{}}
+		chosen: map[int]bool{}, inFlight: map[string]bool{}, votes: map[string]int{}}
 	w.visit, w.armed, w.offSince = v, false, time.Time{}
 	w.setVisitMove(m.ID)
 	w.shoot(ctx, now, cam)
@@ -370,9 +420,9 @@ func (w *Watcher) startVisit(ctx context.Context, now time.Time, manual bool, ca
 	return m.ID, nil
 }
 
-// shoot takes one still and stores it with the visit's move. A failed still
-// is skipped. A failure to store it means the move was closed (a person
-// already resolved it), and that ends the visit.
+// shoot takes one still and stores it with the visit's move. A still that
+// could not be taken or stored is skipped. Only a move that is closed (a
+// person already resolved it) or gone ends the visit.
 func (w *Watcher) shoot(ctx context.Context, now time.Time, cam camera.Camera) {
 	v := w.visit
 	v.nextShot = now.Add(w.cfg.Interval)
@@ -385,9 +435,13 @@ func (w *Watcher) shoot(ctx context.Context, now time.Time, cam camera.Camera) {
 	}
 	width, height := jpegSize(data)
 	p, err := w.gate.AddFrame(ctx, v.moveID, data, width, height)
+	if errors.Is(err, gate.ErrClosed) || errors.Is(err, gate.ErrNotFound) {
+		log.Printf("gatecam: store still for move %s: %v; visit ended", v.moveID, err)
+		w.endVisit(ctx, now, true)
+		return
+	}
 	if err != nil {
 		log.Printf("gatecam: store still for move %s: %v", v.moveID, err)
-		w.endVisit(ctx, now, true)
 		return
 	}
 	v.photos = append(v.photos, p.ID)
@@ -410,16 +464,17 @@ func (w *Watcher) endVisit(ctx context.Context, now time.Time, vehicle bool) {
 }
 
 // handleRead counts a finished read for its visit, stops reading once two
-// photos agree, and chooses the next photo.
+// photos agree, and chooses the next photo. Only reads the visit asked for
+// count.
 func (w *Watcher) handleRead(ctx context.Context, r readResult) {
 	v := w.visit
 	if v == nil || v.moveID != r.moveID {
 		v = w.settling[r.moveID]
 	}
-	if v == nil || v.inFlight == 0 {
+	if v == nil || !v.inFlight[r.photoID] {
 		return // a phone photo, a person's re-read, or a read from before a restart
 	}
-	v.inFlight--
+	delete(v.inFlight, r.photoID)
 	if n := leadNumber(r.frame); n != "" {
 		v.votes[n]++
 		if v.votes[n] >= 2 {
@@ -432,7 +487,7 @@ func (w *Watcher) handleRead(ctx context.Context, r readResult) {
 // pump sends photos to the engine until the limits are reached, and settles
 // the visit when nothing more will be read.
 func (w *Watcher) pump(ctx context.Context, v *visit) {
-	for !v.stopped && v.inFlight < w.cfg.Parallel && v.reads < w.cfg.MaxReads {
+	for !v.stopped && len(v.inFlight) < w.cfg.Parallel && v.reads < w.cfg.MaxReads {
 		i := v.pick()
 		if i < 0 {
 			break
@@ -443,11 +498,11 @@ func (w *Watcher) pump(ctx context.Context, v *visit) {
 			v.stopped = true // the move was closed, or the store failed
 			break
 		}
-		v.inFlight++
+		v.inFlight[v.photos[i]] = true
 		v.reads++
 	}
 	finished := v.stopped || v.reads >= w.cfg.MaxReads || (v.ended && v.pick() < 0)
-	if finished && v.inFlight == 0 && !v.settled {
+	if finished && len(v.inFlight) == 0 && !v.settled {
 		v.settled = true
 		if err := w.gate.SettleCamera(ctx, v.moveID); err != nil {
 			log.Printf("gatecam: settle move %s: %v", v.moveID, err)
