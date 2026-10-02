@@ -46,7 +46,9 @@ func ratio(a, b int) float64 {
 	return float64(a) / float64(b)
 }
 
-// Run re-reads up to limit verified moves (0: all) with rec.
+// Run re-reads up to limit verified moves (0: all) with rec. It reads what
+// the live hub reads: deferred camera stills, which nobody chose for reading,
+// are skipped, and camera stills are read in ultra-high detail.
 func Run(ctx context.Context, st *store.Store, bl *blob.Store, rec recognition.Recognizer, threshold float64, limit int) (Report, error) {
 	var rep Report
 	moves, err := st.VerifiedMoves(ctx)
@@ -57,13 +59,20 @@ func Run(ctx context.Context, st *store.Store, bl *blob.Store, rec recognition.R
 		moves = moves[:limit]
 	}
 	for _, m := range moves {
+		detail := ""
+		if m.Source == store.SourceCamera {
+			detail = recognition.DetailUltraHigh
+		}
 		var frames []recognition.Frame
 		for _, p := range m.Photos {
+			if p.Deferred {
+				continue
+			}
 			data, err := bl.Get(p.AISHA256)
 			if err != nil {
 				return rep, err
 			}
-			att, err := rec.Read(ctx, recognition.Image{Data: data, MediaType: p.AIMediaType})
+			att, err := rec.Read(ctx, recognition.Image{Data: data, MediaType: p.AIMediaType, Detail: detail})
 			rep.Photos++
 			rep.InputTokens += att.Usage.InputTokens
 			rep.OutputTokens += att.Usage.OutputTokens
