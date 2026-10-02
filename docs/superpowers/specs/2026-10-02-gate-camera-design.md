@@ -67,12 +67,12 @@ A **visit** is one vehicle pass. Defaults (constants, tunable later):
 | Early stop | two read photos agree on the same check-digit-valid number |
 
 1. Vehicle state turns on (and automatic photos are on, and no visit is running, and the previous visit's vehicle has cleared) → create a move with `source = camera`, status `capturing`, and take the first still immediately.
-2. Every still is stored as a photo with role `rear` and `want_read = 0`.
-3. **Choosing what to read:** whenever fewer than two reads are in flight, fewer than 8 have been made and no early stop happened, pick a photo: while the visit runs, the **newest** unread photo; after it ended, unread photos spread **evenly** over the visit. The chosen photo gets `want_read = 1` and goes to the engine.
+2. Every still is stored as a photo with role `rear`, marked `deferred` (stored, not read).
+3. **Choosing what to read:** whenever fewer than two reads are in flight, fewer than 8 have been made and no early stop happened, pick a photo: while the visit runs, the **newest** unread photo; after it ended, unread photos spread **evenly** over the visit. The chosen photo stops being deferred and goes to the engine.
 4. Camera photos go to the engine **at full resolution** with Gemini's per-part `mediaResolution` set to `MEDIA_RESOLUTION_ULTRA_HIGH` (small marks at distance). Phone photos keep the existing 1568 px copy and default resolution.
 5. **Settling** (after the visit ended and every chosen read finished): if no read found any container number → status `no_container`. Otherwise the normal reconcile result, with status `needs_review` (never auto-accept).
 6. A vehicle still present after the 30 s cap does not start a new visit until the state has been off for 3 s.
-7. **Restart:** a visit cut short by a hub restart ends at the restart. Photos already chosen (`want_read = 1`) but unread are queued as today; unchosen photos are never read automatically. The move then settles as in step 5.
+7. **Restart:** a visit cut short by a hub restart ends at the restart. Photos already chosen (not deferred) but unread are queued as today; unchosen photos are never read automatically. The move then settles as in step 5.
 8. **Take photos now** runs steps 1–5 without waiting for the vehicle state; the visit ends after 10 photos.
 
 Unread photos are kept: they are training data for the owner's own model.
@@ -115,12 +115,12 @@ type Camera interface {
 ### 4.3 `internal/gate` changes
 
 - `NewCameraMove(ctx, actor)` → move with `source = camera`.
-- `AddFrame(ctx, moveID, jpeg, width, height)` → stores a photo with `want_read = 0`; the original doubles as the engine copy.
-- `ReadFrame(ctx, photoID)` → sets `want_read = 1` and queues it; the visit learns about finished reads through a callback the service calls after storing each attempt.
-- `FinishVisit(ctx, moveID)` → marks capturing done so `recompute` may settle the move.
-- `recompute`: photos with `want_read = 0` are neither pending nor frames. Camera moves: never auto-accept; settle to `no_container` when no read found a number; stay `capturing`/`reading` until the visit is finished.
-- `Start`: re-queue only `want_read = 1` photos without attempts; finish camera moves still `capturing`.
-- `Reread`: re-reads only `want_read = 1` photos.
+- `AddFrame(ctx, moveID, jpeg, width, height)` → stores a deferred photo; the original doubles as the engine copy.
+- `ReadFrame(ctx, photoID)` → clears `deferred` and queues it. The service calls a read hook (`SetReadHook`) after storing each attempt, which tells the visit how each read went.
+- `SettleCamera(ctx, moveID)` → no more reads will be requested for this move, so `recompute` may settle it (photos may still be added).
+- `recompute`: deferred photos are neither pending nor frames. Camera moves: never auto-accept; settle to `no_container` when no read found a number; stay `capturing`/`reading` until `SettleCamera`.
+- `Start`: re-queue only non-deferred photos without attempts; settle camera moves still `capturing` (visits do not survive a restart).
+- `Reread`: re-reads only non-deferred photos.
 
 ### 4.4 `internal/recognition` change
 
@@ -129,7 +129,7 @@ type Camera interface {
 ### 4.5 Store (migration v2, appended)
 
 - `gate_moves.source TEXT NOT NULL DEFAULT 'phone'`
-- `photos.want_read INTEGER NOT NULL DEFAULT 1`
+- `photos.deferred INTEGER NOT NULL DEFAULT 0` (1 = stored but not chosen for reading)
 - new status value `no_container`
 - `settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)` holding the camera host, user, password and the automatic-photos switch
 - `ListFilter.Source` for `GET /api/moves?source=camera`
@@ -140,7 +140,7 @@ type Camera interface {
   - `api: listen: "127.0.0.1:<free port>"`;
   - `rtsp: listen` and `webrtc: listen` on `127.0.0.1:0`, so nothing listens on the network;
   - one stream named `gate` = the camera's `LiveSource()`.
-  It restarts go2rtc on exit with backoff (1 s doubling to 30 s), restarts it when camera settings change, and stops it with the hub. If v1.9.14 supports restricting API paths, only `/api/ws` is allowed.
+  It restarts go2rtc on exit with backoff (1 s doubling to 30 s), restarts it when camera settings change, and stops it with the hub. go2rtc's API requires a user name and password generated at every start (`api.username`, `api.password`, `local_auth: true`), so a web page open on the PC cannot use it either; the proxy adds them.
 - **Proxy:** `GET /api/live/ws` is reverse-proxied to go2rtc `ws://127.0.0.1:<port>/api/ws?src=gate`. The stream name is fixed on the server, and **no other go2rtc path is exposed**. Host and Origin are rewritten to go2rtc's address. The existing host guard and access code apply.
 - **Browser player** (`web/src/live/`): small MSE player for go2rtc's protocol:
   1. send `{"type":"mse","value":"<supported codecs>"}`;
@@ -161,6 +161,7 @@ type Camera interface {
 | `GET /api/camera/still` | current still (fallback live view) |
 | `GET /api/live/ws` | live video WebSocket (proxied) |
 | `GET /api/moves?source=camera` | camera moves |
+| `GET /api/blobs/{digest}?w=320` | small JPEG preview (widths 160, 320, 640, 1280), so phones do not download 4K stills for thumbnails |
 
 **Letter height:** box height in pixels (box × image size) when the box is at least as wide as it is tall (one line). Otherwise box height ÷ 11 (number written vertically).
 
@@ -180,7 +181,7 @@ type Camera interface {
 ## 6. Security
 
 - The camera password is stored only in the hub's local database and `go2rtc.yaml` inside the data folder. It is never sent to a browser, never logged, and redacted from raw answers and errors.
-- go2rtc listens on 127.0.0.1 only (no firewall prompt, not reachable from the LAN). Only the single fixed WebSocket path is proxied.
+- go2rtc listens on 127.0.0.1 only (no firewall prompt, not reachable from the LAN) and requires a per-start password even locally. Only the single fixed WebSocket path is proxied. go2rtc output is logged with credentials in RTSP addresses removed.
 - Hub ↔ camera uses HTTP on the LAN in this kit. HTTPS with the camera certificate pinned on first use comes later.
 - The runbook tells the owner to keep the camera off the internet (no port forwarding, UPnP off) and to use a strong camera password.
 
@@ -192,7 +193,7 @@ type Camera interface {
   - frame choice (newest, then evenly spread);
   - early stop on two agreeing valid reads;
   - `no_container` settling, the manual 10-photo visit, and restart recovery.
-- **Gate service:** `want_read` rules in recompute, Start and Reread; camera moves never auto-accept.
+- **Gate service:** `deferred` rules in recompute, Start and Reread; camera moves never auto-accept.
 - **Store:** migration v2 on a v1 database; settings round trip; source filter.
 - **Live:** proxy to a fake go2rtc WebSocket server (fixed `src`, Origin rewrite, other paths refused); supervisor restart and backoff with a fake process.
 - **Gemini:** request carries `mediaResolution` only when `Detail` is set.
