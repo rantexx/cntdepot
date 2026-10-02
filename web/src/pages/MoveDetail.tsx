@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, blobUrl, typedNumber, type Attempt, type MoveDetail as Detail } from "../api";
+import { api, blobUrl, typedNumber, type Attempt, type MoveDetail as Detail, type Photo } from "../api";
+import { LiveVideo } from "../camera/LiveVideo";
 import { CandidateList, CheckDigitMath, PhotoWithBox, StatusChip } from "../components";
 import { useT } from "../i18n";
 import { useMoveEvents } from "../live";
@@ -21,6 +22,8 @@ export function MoveDetail({ id }: { id: string }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // null: live view hidden; otherwise whether live video is running on the hub
+  const [live, setLive] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -42,7 +45,7 @@ export function MoveDetail({ id }: { id: string }) {
     () => void load(),
   );
   useEffect(() => {
-    if (!move || move.status !== "reading") return;
+    if (!move || (move.status !== "reading" && move.status !== "capturing")) return;
     const timer = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(timer);
   }, [move, load]);
@@ -72,12 +75,29 @@ export function MoveDetail({ id }: { id: string }) {
     }
   }
 
+  async function toggleLive() {
+    if (live !== null) {
+      setLive(null);
+      return;
+    }
+    try {
+      const v = await api.camera();
+      setLive(v.live.state === "running");
+    } catch {
+      setLive(false);
+    }
+  }
+
   if (!move) return <p>{error || t("loading")}</p>;
 
   const number = typed && typed.id === id ? typed.text : move.number;
   const setNumber = (text: string) => setTyped({ id, text });
   const latest = latestByPhoto(move.attempts);
   const resolved = move.resolved_by !== "";
+  const photos = move.photos ?? [];
+  const isCamera = move.source === "camera";
+  const readPhotos = photos.filter((p) => !p.deferred);
+  const otherPhotos = photos.filter((p) => p.deferred);
   const edited = number.trim().toUpperCase() !== move.number;
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -88,7 +108,14 @@ export function MoveDetail({ id }: { id: string }) {
     <section>
       <a href="#/queue">← {t("back")}</a>
       <div className="card">
-        <StatusChip status={move.status} /> {move.is_test && <span className="chip">{t("testTag")}</span>}
+        <StatusChip status={move.status} /> {isCamera && <span className="chip">{t("cameraTag")}</span>}{" "}
+        {move.is_test && <span className="chip">{t("testTag")}</span>}{" "}
+        {isCamera && (
+          <button type="button" onClick={() => void toggleLive()}>
+            {t("camLive")}
+          </button>
+        )}
+        {live !== null && <LiveVideo videoAvailable={live} />}
         <div className={`big-number mono ${move.check_digit_valid ? "ok" : "bad"}`}>{move.number || t("noNumber")}</div>
         <p>
           {t("typeCode")}: <b>{move.type_code || "–"}</b> · {t("color")}: <b>{move.color || "–"}</b> ·{" "}
@@ -150,36 +177,52 @@ export function MoveDetail({ id }: { id: string }) {
       </div>
       <h3>{t("photos")}</h3>
       <div className="photo-grid">
-        {(move.photos ?? []).map((p) => {
-          const a = latest.get(p.id);
-          const reading = a?.reading;
-          return (
-            <figure key={p.id} className="card">
-              <PhotoWithBox src={blobUrl(p.ai_sha256)} box={reading?.box} alt={p.role} />
-              <figcaption>
-                <b>{p.role}</b>
-                {a?.error && (
-                  <p className="error">
-                    {t("error")}: {a.error}
-                  </p>
-                )}
-                {a && !a.error && (
-                  <p className="small">
-                    {(reading?.candidates ?? []).map((c) => `${c.number} ${Math.round(c.confidence * 100)}%`).join(", ") ||
-                      t("noNumber")}
-                    {reading?.type_code && ` · ${reading.type_code}`}
-                    {reading?.color && ` · ${reading.color}`}
-                    {` · ${a.engine}/${a.model} · ${a.latency_ms} ms`}
-                  </p>
-                )}
-                <a href={blobUrl(p.sha256)} target="_blank" rel="noreferrer" className="small">
-                  {t("original")}
-                </a>
-              </figcaption>
-            </figure>
-          );
-        })}
+        {readPhotos.map((p) => (
+          <PhotoCard key={p.id} photo={p} attempt={latest.get(p.id)} chosen={isCamera} />
+        ))}
       </div>
+      {otherPhotos.length > 0 && (
+        <details>
+          <summary>
+            {t("otherPhotos")} ({otherPhotos.length})
+          </summary>
+          <div className="photo-grid">
+            {otherPhotos.map((p) => (
+              <PhotoCard key={p.id} photo={p} attempt={undefined} chosen={false} />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
+  );
+}
+
+function PhotoCard({ photo, attempt, chosen }: { photo: Photo; attempt: Attempt | undefined; chosen: boolean }) {
+  const { t } = useT();
+  const reading = attempt?.reading;
+  return (
+    <figure className="card">
+      <PhotoWithBox src={blobUrl(photo.ai_sha256, 640)} box={reading?.box} alt={photo.role} />
+      <figcaption>
+        <b>{photo.role}</b> {chosen && <span className="chip">{t("readTag")}</span>}
+        {attempt?.error && (
+          <p className="error">
+            {t("error")}: {attempt.error}
+          </p>
+        )}
+        {attempt && !attempt.error && (
+          <p className="small">
+            {(reading?.candidates ?? []).map((c) => `${c.number} ${Math.round(c.confidence * 100)}%`).join(", ") ||
+              t("noNumber")}
+            {reading?.type_code && ` · ${reading.type_code}`}
+            {reading?.color && ` · ${reading.color}`}
+            {` · ${attempt.engine}/${attempt.model} · ${attempt.latency_ms} ms`}
+          </p>
+        )}
+        <a href={blobUrl(photo.sha256)} target="_blank" rel="noreferrer" className="small">
+          {t("original")}
+        </a>
+      </figcaption>
+    </figure>
   );
 }

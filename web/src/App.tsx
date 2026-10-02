@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api";
 import { useT } from "./i18n";
+import { Camera } from "./pages/Camera";
 import { Capture } from "./pages/Capture";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
@@ -36,6 +37,7 @@ export function App() {
   else if (route === "queue") page = <Queue />;
   else if (route === "moves") page = <MoveDetail key={id} id={id} />;
   else if (route === "test") page = <TestRead />;
+  else if (route === "camera") page = <Camera />;
   else page = <Home />;
 
   return (
@@ -48,6 +50,7 @@ export function App() {
           <a href="#/capture">{t("navCapture")}</a>
           <a href="#/queue">{t("navQueue")}</a>
           <a href="#/test">{t("navTest")}</a>
+          <a href="#/camera">{t("navCamera")}</a>
         </nav>
         <button type="button" onClick={() => setLang(lang === "tr" ? "en" : "tr")}>
           {lang === "tr" ? "EN" : "TR"}

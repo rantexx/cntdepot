@@ -53,14 +53,15 @@ export function Queue() {
       {moves.length === 0 && <p className="muted">{t("noMoves")}</p>}
       <ul className="queue">
         {moves.map((m) => {
-          const first = m.photos?.[0];
+          const first = m.photos?.find((p) => !p.deferred) ?? m.photos?.[0];
           return (
             <li key={m.id}>
               <a href={`#/moves/${m.id}`} className="queue-row">
-                {first ? <img src={blobUrl(first.ai_sha256)} alt="" loading="lazy" /> : <div className="noimg" />}
+                {first ? <img src={blobUrl(first.ai_sha256, 320)} alt="" loading="lazy" /> : <div className="noimg" />}
                 <div>
                   <div className="mono strong">{m.number || t("noNumber")}</div>
-                  <StatusChip status={m.status} /> {m.is_test && <span className="chip">{t("testTag")}</span>}
+                  <StatusChip status={m.status} /> {m.source === "camera" && <span className="chip">{t("cameraTag")}</span>}{" "}
+                  {m.is_test && <span className="chip">{t("testTag")}</span>}
                   <div className="muted small">
                     {new Date(m.created_at).toLocaleString()} · {m.reason}
                   </div>

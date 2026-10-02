@@ -12,6 +12,10 @@ export function Home() {
         <b>{t("navQueue")}</b>
         <span>{t("homeQueueHint")}</span>
       </a>
+      <a className="tile" href="#/camera">
+        <b>{t("navCamera")}</b>
+        <span>{t("homeCameraHint")}</span>
+      </a>
       <a className="tile" href="#/test">
         <b>{t("navTest")}</b>
         <span>{t("homeTestHint")}</span>
