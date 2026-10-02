@@ -138,10 +138,10 @@ type Camera interface {
 
 - **Supervisor** starts `go2rtc` (pinned **v1.9.14**, MIT) when a camera is configured and the binary exists (`bin\go2rtc.exe` next to `depotd.exe`, overridable with `-go2rtc`). It writes `go2rtc.yaml` into the data folder:
   - `api: listen: "127.0.0.1:<free port>"`;
-  - `rtsp: listen` and `webrtc: listen` on `127.0.0.1:0`, so nothing listens on the network;
+  - only the modules the hub uses (`app.modules`: `api`, `ws`, `rtsp`, `mp4`), so WebRTC, HomeKit and the rest never load; the RTSP server is off (`rtsp.listen: ""`), only its client is used;
   - one stream named `gate` = the camera's `LiveSource()`.
-  It restarts go2rtc on exit with backoff (1 s doubling to 30 s), restarts it when camera settings change, and stops it with the hub. go2rtc's API requires a user name and password generated at every start (`api.username`, `api.password`, `local_auth: true`), so a web page open on the PC cannot use it either; the proxy adds them.
-- **Proxy:** `GET /api/live/ws` is reverse-proxied to go2rtc `ws://127.0.0.1:<port>/api/ws?src=gate`. The stream name is fixed on the server, and **no other go2rtc path is exposed**. Host and Origin are rewritten to go2rtc's address. The existing host guard and access code apply.
+  go2rtc is started with an inline, secret-free safe config first (API off) and the file second, so if the file cannot be read it fails closed. The hub reports it running only after a readiness probe (401 without, 200 with the password). It restarts go2rtc on exit with backoff (1 s doubling to 30 s), restarts it when camera settings change, and stops it with the hub; on Windows a kill-on-close Job Object also ends it if depotd is killed. go2rtc's API requires a user name and password generated at every start (`api.username`, `api.password`, `local_auth: true`), so a web page open on the PC cannot use it either; the proxy adds them. `go2rtc.yaml` is deleted when go2rtc stops.
+- **Proxy:** `GET /api/live/ws` is reverse-proxied to go2rtc `ws://127.0.0.1:<port>/api/ws?src=gate`. The stream name is fixed on the server, and **no other go2rtc path is exposed**. The hub first refuses cross-site requests (an `Origin` whose host differs from `Host` gets 403 E5006: browsers apply no CORS to WebSockets), then rewrites Host and Origin to go2rtc's address. The existing host guard and access code apply.
 - **Browser player** (`web/src/live/`): small MSE player for go2rtc's protocol:
   1. send `{"type":"mse","value":"<supported codecs>"}`;
   2. receive `{"type":"mse","value":"<mime>"}`;
@@ -181,7 +181,7 @@ type Camera interface {
 ## 6. Security
 
 - The camera password is stored only in the hub's local database and `go2rtc.yaml` inside the data folder. It is never sent to a browser, never logged, and redacted from raw answers and errors.
-- go2rtc listens on 127.0.0.1 only (no firewall prompt, not reachable from the LAN) and requires a per-start password even locally. Only the single fixed WebSocket path is proxied. go2rtc output is logged with credentials in RTSP addresses removed.
+- go2rtc listens on 127.0.0.1 only, with one TCP listener and no UDP (no firewall prompt, not reachable from the LAN), and requires a per-start password even locally. Only the single fixed WebSocket path is proxied, and only for same-origin pages. go2rtc output is logged with credentials in any URL removed.
 - Hub ↔ camera uses HTTP on the LAN in this kit. HTTPS with the camera certificate pinned on first use comes later.
 - The runbook tells the owner to keep the camera off the internet (no port forwarding, UPnP off) and to use a strong camera password.
 
