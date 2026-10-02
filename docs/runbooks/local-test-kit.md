@@ -118,7 +118,7 @@ Stop the hub and copy the whole `depot-data` folder somewhere safe (external dis
 
 ### Live video (go2rtc, once)
 
-Live video needs go2rtc next to `depotd.exe` (already done on the depot PC: `bingo2rtc.exe`). To set it up on another PC, build it from source with Go:
+Live video needs go2rtc next to `depotd.exe` (already done on the depot PC: `bin\go2rtc.exe`). To set it up on another PC, build it from source with Go:
 
 ```
 go install github.com/AlexxIT/go2rtc@v1.9.14
