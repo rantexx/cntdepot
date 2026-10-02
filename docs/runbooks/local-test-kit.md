@@ -71,6 +71,8 @@ time: use it to compare settings before changing them. It costs one engine call 
 ## Backup
 
 Stop the hub and copy the whole `depot-data` folder somewhere safe (external disk or cloud drive).
+Once a camera is set up, `depot-data` also holds the **camera password** (in the database), so
+keep backups private: an encrypted disk, or a cloud folder only you can open.
 
 ## Troubleshooting
 
@@ -91,7 +93,7 @@ Stop the hub and copy the whole `depot-data` folder somewhere safe (external dis
 1. Power the camera (12 V adapter) and add it to the depot network. A **network cable to the
    router** is more reliable than Wi-Fi; on Wi-Fi use the 5 GHz network.
 2. Update the firmware.
-3. Settings → Network Information → Advanced → **Port Settings**: switch on **HTTP** and
+3. Settings → Network → Advanced → **Port Settings** (in some app versions: Network Information → Advanced): switch on **HTTP** and
    **RTSP**. New firmware ships with both off.
 4. In the router, give the camera a **fixed address** (DHCP reservation). Write it down.
 5. Use a strong camera password. Do **not** forward any router port to the camera, and switch
@@ -122,8 +124,10 @@ Live video needs go2rtc next to `depotd.exe` (already done on the depot PC: `bin
 
 ```
 go install github.com/AlexxIT/go2rtc@v1.9.14
-copy %USERPROFILE%\go\bin\go2rtc.exe bin\go2rtc.exe
+Copy-Item $env:USERPROFILE\go\bin\go2rtc.exe bin\go2rtc.exe
 ```
+
+(PowerShell, from `C:\Users\OZGUN\depot-platform`, like the other commands here.)
 
 The hub starts go2rtc by itself, bound to 127.0.0.1 with a password generated at every start. It
 asks for no firewall permission and nothing else can use it. Without go2rtc the Camera page
@@ -146,16 +150,18 @@ Visits where no photo showed a container number (a car, a forklift) are filed as
 ### Try it without a camera
 
 ```
-bin/depotd.exe hub -engine fake -fake-camera
+bin/depotd.exe hub -engine fake -fake-camera -data demo-data -addr :8090
 ```
 
-A simulated camera "sees" a vehicle for 20 s out of every 40.
+A simulated camera "sees" a vehicle for 20 s out of every 40. The demo uses its own `demo-data`
+folder and port 8090 (open `http://localhost:8090`), so it never mixes fake trucks or settings into
+the real `depot-data`, and it can run next to the real hub.
 
 ### Camera troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| "Kameraya ulaşma" red | Wrong address, camera unpowered or on another network, or HTTP off in Port Settings |
+| "Kameraya erişim" red | Wrong address, camera unpowered or on another network, or HTTP off in Port Settings |
 | "Giriş" red / status "Kullanıcı adı veya şifre yanlış" | Re-enter the password. The hub stops trying after a wrong one; the camera locks logins after several wrong tries |
 | "Canlı video portu (RTSP)" red | Switch RTSP on in Port Settings |
 | Live area shows photos, not video | `bin\go2rtc.exe` missing (the Camera page says so) or the stream failing; the hub log shows `go2rtc:` lines |

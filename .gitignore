@@ -2,8 +2,9 @@
 /bin/
 *.exe
 
-# Local hub data (database and photos) and dataset exports
+# Local hub data (database and photos), the demo hub's data and dataset exports
 /depot-data/
+/demo-data/
 /dataset-export/
 
 # Web

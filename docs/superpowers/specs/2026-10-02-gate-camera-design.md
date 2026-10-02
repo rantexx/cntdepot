@@ -94,6 +94,8 @@ type Camera interface {
     Snapshot(ctx) ([]byte, error)        // full-resolution JPEG
     Detect(ctx) (Detection, error)       // vehicle present now (or motion when vehicle detection is unsupported)
     LiveSource() string                  // RTSP URL of the sub stream, credentials included
+    Test(ctx) Report                     // step-by-step connection test for the setup page
+    Close()                              // log out (cameras limit sessions)
 }
 ```
 
