@@ -29,8 +29,12 @@ func (s *Store) Settings(ctx context.Context, prefix string) (map[string]string,
 }
 
 // SetSettings stores values in one transaction. The event names the keys but
-// never the values, because settings include passwords.
+// never the values, because settings include passwords. Saving nothing writes
+// nothing, not even an event.
 func (s *Store) SetSettings(ctx context.Context, values map[string]string, actor string) error {
+	if len(values) == 0 {
+		return nil
+	}
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)

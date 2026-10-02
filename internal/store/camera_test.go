@@ -66,6 +66,67 @@ func TestDeferredPhotosWaitUntilChosen(t *testing.T) {
 	}
 }
 
+// countEvents returns how many events of a kind the store has written.
+func countEvents(t *testing.T, s *Store, kind string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE kind = ?`, kind).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestChoosingAPhotoTwiceWritesOneEvent(t *testing.T) {
+	s, _ := openTest(t)
+	m, _ := s.CreateMoveWithSource(ctx, "camera", SourceCamera, false, "camera")
+	p, err := s.AddPhoto(ctx, Photo{MoveID: m.ID, Role: "rear", SHA256: "a", AISHA256: "a", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.MarkForReading(ctx, p.ID, "camera"); err != nil {
+			t.Fatalf("MarkForReading #%d = %v; want nil", i+1, err)
+		}
+	}
+	if n := countEvents(t, s, "photo.chosen"); n != 1 {
+		t.Fatalf("photo.chosen events = %d; want 1 for two calls", n)
+	}
+	got, err := s.GetPhoto(ctx, p.ID)
+	if err != nil || got.Deferred {
+		t.Fatalf("GetPhoto = %+v, %v; want deferred false", got, err)
+	}
+
+	// A phone photo was never deferred: nothing to choose, so no event.
+	phone, _ := s.CreateMove(ctx, "1", false, "clerk")
+	if err := s.MarkForReading(ctx, addPhoto(t, s, phone.ID).ID, "clerk"); err != nil {
+		t.Fatalf("MarkForReading(phone photo) = %v; want nil", err)
+	}
+	if n := countEvents(t, s, "photo.chosen"); n != 1 {
+		t.Fatalf("photo.chosen events = %d after a phone photo; want still 1", n)
+	}
+}
+
+func TestSavingNoSettingsWritesNothing(t *testing.T) {
+	s, _ := openTest(t)
+	for _, empty := range []map[string]string{nil, {}} {
+		if err := s.SetSettings(ctx, empty, "admin"); err != nil {
+			t.Fatalf("SetSettings(%v) = %v; want nil", empty, err)
+		}
+	}
+	if n := countEvents(t, s, "settings.changed"); n != 0 {
+		t.Fatalf("settings.changed events = %d; want none for empty saves", n)
+	}
+	if got, err := s.Settings(ctx, ""); err != nil || len(got) != 0 {
+		t.Fatalf("settings = %v, %v; want none", got, err)
+	}
+	if err := s.SetSettings(ctx, map[string]string{"camera.host": "h"}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if n := countEvents(t, s, "settings.changed"); n != 1 {
+		t.Fatalf("settings.changed events = %d; want 1 for a real save", n)
+	}
+}
+
 func TestSettingsRoundTripWithoutLeakingValues(t *testing.T) {
 	s, _ := openTest(t)
 	if err := s.SetSettings(ctx, map[string]string{"camera.host": "192.168.1.50", "camera.password": "pw-secret"}, "admin"); err != nil {
@@ -124,20 +185,66 @@ func TestMigratesAVersion1Database(t *testing.T) {
 	}
 	mustExec(`CREATE TABLE schema_version (version INTEGER NOT NULL)`)
 	mustExec(`INSERT INTO schema_version (version) VALUES (1)`)
-	mustExec(`INSERT INTO gate_moves (id, tenant_id, depot_id, status, created_at, updated_at) VALUES ('m1', 'local', 'own-depot', 'needs_review', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`)
+	// An open move whose phone photo was never read: the hub stopped mid-read.
+	mustExec(`INSERT INTO gate_moves (id, tenant_id, depot_id, status, created_at, updated_at) VALUES ('m1', 'local', 'own-depot', 'reading', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`)
 	mustExec(`INSERT INTO photos (id, tenant_id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, captured_at) VALUES ('p1', 'local', 'm1', 'rear', 'a', 'a', 'image/jpeg', 'image/jpeg', 1, '2026-10-01T00:00:00Z')`)
 	db.Close()
+
+	// schemaVersion reads the highest applied version and how many rows
+	// schema_version has, straight from the file.
+	schemaVersion := func(s *Store) (version, rows int) {
+		t.Helper()
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0), COUNT(*) FROM schema_version`).Scan(&version, &rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return version, rows
+	}
+	// checkMigrated holds after every open: old data intact, new data available.
+	checkMigrated := func(s *Store) {
+		t.Helper()
+		if v, rows := schemaVersion(s); v != 2 || rows != 2 {
+			t.Fatalf("schema_version = %d in %d rows; want version 2 recorded once on top of 1", v, rows)
+		}
+		m, err := s.GetMove(ctx, "m1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Source != SourcePhone || len(m.Photos) != 1 || m.Photos[0].Deferred {
+			t.Fatalf("migrated move = %+v", m)
+		}
+		// Backward compatibility: restart recovery must still re-read the old
+		// phone photo that has no attempt, so it must not look deferred.
+		pending, err := s.PhotosWithoutAttempts(ctx)
+		if err != nil || len(pending) != 1 || pending[0].ID != "p1" {
+			t.Fatalf("PhotosWithoutAttempts = %+v, %v; want the v1 photo p1", pending, err)
+		}
+	}
 
 	s, err := Open(path, "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	m, err := s.GetMove(ctx, "m1")
-	if err != nil {
+	checkMigrated(s)
+	// The settings table is there and works.
+	if err := s.SetSettings(ctx, map[string]string{"camera.host": "10.0.0.5"}, "admin"); err != nil {
+		t.Fatalf("SetSettings on a migrated database: %v", err)
+	}
+	if got, err := s.Settings(ctx, "camera."); err != nil || got["camera.host"] != "10.0.0.5" {
+		t.Fatalf("Settings = %v, %v; want the saved host", got, err)
+	}
+	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if m.Source != SourcePhone || len(m.Photos) != 1 || m.Photos[0].Deferred {
-		t.Fatalf("migrated move = %+v", m)
+
+	// Opening the migrated database again changes nothing and loses nothing.
+	again, err := Open(path, "local", "own-depot")
+	if err != nil {
+		t.Fatalf("reopening a migrated database: %v", err)
+	}
+	defer again.Close()
+	checkMigrated(again)
+	if got, err := again.Settings(ctx, "camera."); err != nil || got["camera.host"] != "10.0.0.5" {
+		t.Fatalf("Settings after reopen = %v, %v; want the saved host", got, err)
 	}
 }

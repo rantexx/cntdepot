@@ -73,7 +73,9 @@ func (s *Store) GetPhoto(ctx context.Context, id string) (Photo, error) {
 	return p, err
 }
 
-// MarkForReading chooses a deferred photo for reading.
+// MarkForReading chooses a deferred photo for reading. A photo that is already
+// chosen, or was never deferred, is left alone and writes no second event; an
+// unknown id is ErrNotFound.
 func (s *Store) MarkForReading(ctx context.Context, id, actor string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		var moveID string
@@ -84,8 +86,16 @@ func (s *Store) MarkForReading(ctx context.Context, id, actor string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photos SET deferred = 0 WHERE id = ?`, id); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE photos SET deferred = 0 WHERE id = ? AND deferred = 1`, id)
+		if err != nil {
 			return err
+		}
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			return nil // the photo exists and is already chosen
 		}
 		return s.appendEvent(ctx, tx, moveID, "photo.chosen", actor, map[string]any{"photo_id": id})
 	})
