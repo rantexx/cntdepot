@@ -142,7 +142,7 @@ type Camera interface {
   - one stream named `gate` = the camera's `LiveSource()`.
   go2rtc is started with an inline, secret-free safe config first (API off) and the file second, so if the file cannot be read it fails closed. The hub reports it running only after a readiness probe (401 without, 200 with the password). It restarts go2rtc on exit with backoff (1 s doubling to 30 s), restarts it when camera settings change, and stops it with the hub; on Windows a kill-on-close Job Object also ends it if depotd is killed. go2rtc's API requires a user name and password generated at every start (`api.username`, `api.password`, `local_auth: true`), so a web page open on the PC cannot use it either; the proxy adds them. `go2rtc.yaml` is deleted when go2rtc stops.
 - **Proxy:** `GET /api/live/ws` is reverse-proxied to go2rtc `ws://127.0.0.1:<port>/api/ws?src=gate`. The stream name is fixed on the server, and **no other go2rtc path is exposed**. The hub first refuses cross-site requests (an `Origin` whose host differs from `Host` gets 403 E5006: browsers apply no CORS to WebSockets), then rewrites Host and Origin to go2rtc's address. The existing host guard and access code apply.
-- **Browser player** (`web/src/live/`): small MSE player for go2rtc's protocol:
+- **Browser player** (`web/src/camera/`): small MSE player for go2rtc's protocol:
   1. send `{"type":"mse","value":"<supported codecs>"}`;
   2. receive `{"type":"mse","value":"<mime>"}`;
   3. append binary fMP4 to a SourceBuffer, keeping about 5 s and staying at the live edge.
