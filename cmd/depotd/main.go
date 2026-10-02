@@ -242,7 +242,8 @@ func runExport(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("exported %d verified moves, %d photos (%d with number boxes) to %s\n", sum.Moves, sum.Photos, sum.Boxes, *out)
+	fmt.Printf("exported %d verified moves, %d photos (%d with number boxes, %d unread camera stills in images-unread) to %s\n",
+		sum.Moves, sum.Photos, sum.Boxes, sum.Unread, *out)
 	return nil
 }
 

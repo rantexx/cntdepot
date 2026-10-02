@@ -15,12 +15,16 @@ import (
 	"depot/internal/store"
 )
 
-// Label describes one exported photo.
+// Label describes one exported photo. Read is false for a camera still that
+// was never read: it is in images-unread/, has no box, and may not show the
+// number at all.
 type Label struct {
 	Image         string           `json:"image"` // relative path, forward slashes
 	PhotoID       string           `json:"photo_id"`
 	MoveID        string           `json:"move_id"`
 	Role          string           `json:"role"`
+	Source        string           `json:"source"` // phone or camera
+	Read          bool             `json:"read"`
 	Number        string           `json:"number"` // confirmed by a person
 	TypeCode      string           `json:"type_code"`
 	Color         string           `json:"color"`
@@ -33,18 +37,22 @@ type Label struct {
 // Summary counts what was exported.
 type Summary struct {
 	Moves  int
-	Photos int
+	Photos int // every photo, unread ones included
 	Boxes  int
+	Unread int // camera stills that were never read, in images-unread/
 }
 
 const readme = `Depot gate dataset export
 
-labels.jsonl  one JSON object per photo: the container number confirmed by a person,
-              ISO type code, color, what the engine read, and the number's box when
-              the engine gave one.
-images/       the ORIGINAL photos exactly as captured (fingerprints match the gate record).
-yolo/         one YOLO label per photo that has a box: "class cx cy w h", normalized 0-1.
-classes.txt   YOLO class names.
+labels.jsonl    one JSON object per photo: the container number confirmed by a person,
+                ISO type code, color, what the engine read, the number's box when the
+                engine gave one, where the photo came from ("source": phone or camera),
+                and whether it was read ("read").
+images/         the ORIGINAL photos exactly as captured (fingerprints match the gate record).
+images-unread/  camera stills that were never read ("read": false), also as captured.
+yolo/           one YOLO label per photo in images/ that has a box: "class cx cy w h",
+                normalized 0-1.
+classes.txt     YOLO class names.
 
 Boxes come from the reading engine, not from a person: check them before training.
 A box is only kept when the engine's number in that photo is the confirmed number or
@@ -52,12 +60,19 @@ differs from it in one character; a box around any other number is left out.
 Only number is confirmed by a person: type_code and color are the engine's reading, not a person's.
 Boxes are relative to the photo as displayed (EXIF orientation applied), so apply EXIF
 orientation when loading images (for example PIL.ImageOps.exif_transpose).
+
+Unread camera stills (images-unread/, "read": false): the camera takes a still every
+second while a truck passes and reads only a few of them, so these show the same truck
+seconds apart. The confirmed number applies to the truck, but the still may not show it:
+the truck may not be in view yet, or the number may be hidden or blurred. They have no
+boxes and no YOLO labels. Keep them out of YOLO training unless you label them: YOLO
+treats an image without a label as one with no number in it.
 `
 
 // Export writes every verified, non-practice move into outDir.
 func Export(ctx context.Context, st *store.Store, bl *blob.Store, outDir string) (Summary, error) {
 	var sum Summary
-	for _, dir := range []string{"images", "yolo"} {
+	for _, dir := range []string{"images", "images-unread", "yolo"} {
 		if err := os.MkdirAll(filepath.Join(outDir, dir), 0o755); err != nil {
 			return sum, err
 		}
@@ -79,15 +94,24 @@ func Export(ctx context.Context, st *store.Store, bl *blob.Store, outDir string)
 			if err != nil {
 				return sum, fmt.Errorf("photo %s: %w", p.ID, err)
 			}
+			// A deferred photo is a camera still nobody chose for reading. It
+			// goes to its own folder, without a box: mixed with the read ones,
+			// YOLO would learn it as a picture without a number.
+			dir := "images"
+			if p.Deferred {
+				dir = "images-unread"
+			}
 			name := p.ID + extension(p.MediaType)
-			if err := os.WriteFile(filepath.Join(outDir, "images", name), data, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(outDir, dir, name), data, 0o644); err != nil {
 				return sum, err
 			}
 			label := Label{
-				Image: "images/" + name, PhotoID: p.ID, MoveID: m.ID, Role: p.Role, Number: m.Number,
-				TypeCode: m.TypeCode, Color: m.Color, CorrectedFrom: m.CorrectedFrom, Verified: m.Verified,
+				Image: dir + "/" + name, PhotoID: p.ID, MoveID: m.ID, Role: p.Role, Source: m.Source, Read: !p.Deferred,
+				Number: m.Number, TypeCode: m.TypeCode, Color: m.Color, CorrectedFrom: m.CorrectedFrom, Verified: m.Verified,
 			}
-			if r, ok := readings[p.ID]; ok {
+			if p.Deferred {
+				sum.Unread++
+			} else if r, ok := readings[p.ID]; ok {
 				if len(r.Candidates) > 0 {
 					label.EngineNumber = iso6346.Normalize(r.Candidates[0].Number)
 				}
