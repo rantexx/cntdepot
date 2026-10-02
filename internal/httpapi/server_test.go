@@ -551,3 +551,20 @@ func TestParallelGuessesCannotSlipPastTheLimit(t *testing.T) {
 		t.Fatalf("answers = %v; want exactly 5 wrong-code answers and 35 lock-outs", counted)
 	}
 }
+
+func TestBlobPreviewWidthIsChecked(t *testing.T) {
+	srv := newTestServer(t, "")
+	client := srv.Client()
+	_, d := createAndRead(t, client, srv.URL, "orig-preview")
+	if len(d.Photos) == 0 {
+		t.Fatal("move has no photos")
+	}
+	digest := d.Photos[0].SHA256
+	if status, body := call(t, client, "GET", srv.URL+"/api/blobs/"+digest+"?w=999", ""); status != 400 || errorCode(body) != "E4006" {
+		t.Fatalf("w=999 = %d %s; want 400 E4006", status, body)
+	}
+	// The test photo is not a real image: a preview falls back to the original.
+	if status, _ := call(t, client, "GET", srv.URL+"/api/blobs/"+digest+"?w=320", ""); status != 200 {
+		t.Fatalf("w=320 = %d; want 200", status)
+	}
+}

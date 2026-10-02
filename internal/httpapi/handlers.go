@@ -13,6 +13,7 @@ import (
 	"depot/internal/gate"
 	"depot/internal/iso6346"
 	"depot/internal/store"
+	"depot/internal/thumb"
 )
 
 const maxUpload = 60 << 20 // one original phone photo plus its AI copy
@@ -153,6 +154,21 @@ func formFile(r *http.Request, field string) ([]byte, string, error) {
 	return data, http.DetectContentType(data), nil
 }
 
+// previewWidth reads the optional ?w= preview width (0 when absent). ok is
+// false when the value is not allowed; the error answer has been written.
+func previewWidth(w http.ResponseWriter, r *http.Request) (width int, ok bool) {
+	q := r.URL.Query().Get("w")
+	if q == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(q)
+	if err != nil || !thumb.Allowed(n) {
+		writeError(w, http.StatusBadRequest, "E4006", "w must be one of 160, 320, 640, 1280")
+		return 0, false
+	}
+	return n, true
+}
+
 func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	var body gate.Resolution
 	if !decodeJSON(w, r, &body) {
@@ -192,6 +208,15 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeServiceError(w, err)
 		return
+	}
+	width, ok := previewWidth(w, r)
+	if !ok {
+		return
+	}
+	if width > 0 {
+		if small, err := thumb.Scale(data, width); err == nil {
+			data = small
+		}
 	}
 	// Originals are stored exactly as uploaded. Only images are shown inline;
 	// anything else downloads, so an uploaded file can never run as a page.
