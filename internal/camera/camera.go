@@ -73,7 +73,11 @@ var (
 	ErrProtocol    = errors.New("camera answered something unexpected")
 
 	errRTSPOff     = errors.New("RTSP is off")
+	errPortsUnread = errors.New("could not read the port settings")
 	errNoDetection = errors.New("the camera did not answer a detection query")
+	// errSessionsFull passes on its own: errors carrying it are also
+	// ErrUnreachable, never ErrAuth.
+	errSessionsFull = errors.New("the camera has too many open sessions: wait a few minutes or restart the camera")
 )
 
 // Camera is one fixed camera.
@@ -92,6 +96,11 @@ type Camera interface {
 // advice turns a failed step into what the person should do.
 func advice(step string, err error) string {
 	switch {
+	case errors.Is(err, errPortsUnread):
+		return err.Error() // "could not read the port settings: <why>", whatever the why
+	case errors.Is(err, errSessionsFull):
+		return "The camera has too many open sessions, for example from the Reolink app, a recorder or another program. " +
+			"Wait a few minutes or restart the camera, then test again."
 	case errors.Is(err, ErrUnreachable):
 		return "Cannot connect. Check the address, that the camera has power and is on this network, " +
 			"and that HTTP is on (Reolink app: Settings → Network → Advanced → Port Settings). " + err.Error()
