@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, blobUrl, typedNumber, type Attempt, type MoveDetail as Detail, type Photo } from "../api";
-import { LiveVideo } from "../camera/LiveVideo";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { api, blobUrl, typedNumber, type Attempt, type CameraView, type MoveDetail as Detail, type Photo } from "../api";
+import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
 import { CandidateList, CheckDigitMath, PhotoWithBox, StatusChip } from "../components";
 import { useT } from "../i18n";
 import { useMoveEvents } from "../live";
@@ -22,8 +22,9 @@ export function MoveDetail({ id }: { id: string }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // null: live view hidden; otherwise whether live video is running on the hub
-  const [live, setLive] = useState<boolean | null>(null);
+  // null: live view hidden; otherwise the hub's camera view when it was
+  // opened, or "failed" when the hub could not be asked
+  const [live, setLive] = useState<CameraView | "failed" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,11 +45,15 @@ export function MoveDetail({ id }: { id: string }) {
     },
     () => void load(),
   );
+  // Poll while the hub is working on the move. Only a camera visit leaves
+  // "capturing" by itself; a phone move waits for the clerk's photos.
+  const working =
+    !!move && (move.status === "reading" || (move.status === "capturing" && move.source === "camera"));
   useEffect(() => {
-    if (!move || (move.status !== "reading" && move.status !== "capturing")) return;
+    if (!working) return;
     const timer = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(timer);
-  }, [move, load]);
+  }, [working, load]);
 
   async function resolve(action: "accept" | "correct" | "refuse") {
     if (!move) return;
@@ -81,10 +86,9 @@ export function MoveDetail({ id }: { id: string }) {
       return;
     }
     try {
-      const v = await api.camera();
-      setLive(v.live.state === "running");
+      setLive(await api.camera());
     } catch {
-      setLive(false);
+      setLive("failed");
     }
   }
 
@@ -103,6 +107,13 @@ export function MoveDetail({ id }: { id: string }) {
     e.preventDefault();
     void resolve(edited ? "correct" : "accept");
   };
+  // Live video logs in to the camera, so it is only opened while the hub's
+  // own login works; otherwise a short line says why.
+  let livePanel: ReactNode = null;
+  if (live === "failed") livePanel = <p className="muted">{t("networkError")}</p>;
+  else if (live && !live.available) livePanel = <p className="muted">{t("camNotAvailable")}</p>;
+  else if (live && live.status.state !== "online") livePanel = <CameraOffline state={live.status.state} />;
+  else if (live) livePanel = <LiveVideo videoAvailable={live.live.state === "running"} />;
 
   return (
     <section>
@@ -115,7 +126,7 @@ export function MoveDetail({ id }: { id: string }) {
             {t("camLive")}
           </button>
         )}
-        {live !== null && <LiveVideo videoAvailable={live} />}
+        {livePanel}
         <div className={`big-number mono ${move.check_digit_valid ? "ok" : "bad"}`}>{move.number || t("noNumber")}</div>
         <p>
           {t("typeCode")}: <b>{move.type_code || "–"}</b> · {t("color")}: <b>{move.color || "–"}</b> ·{" "}
@@ -204,7 +215,7 @@ function PhotoCard({ photo, attempt, chosen }: { photo: Photo; attempt: Attempt 
     <figure className="card">
       <PhotoWithBox src={blobUrl(photo.ai_sha256, 640)} box={reading?.box} alt={photo.role} />
       <figcaption>
-        <b>{photo.role}</b> {chosen && <span className="chip">{t("readTag")}</span>}
+        <b>{photo.role}</b> {chosen && attempt && !attempt.error && <span className="chip">{t("readTag")}</span>}
         {attempt?.error && (
           <p className="error">
             {t("error")}: {attempt.error}

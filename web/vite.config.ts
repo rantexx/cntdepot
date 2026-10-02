@@ -5,5 +5,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: { outDir: "../internal/webui/dist", emptyOutDir: true },
-  server: { proxy: { "/api": "http://localhost:8080" } },
+  // ws: live video (/api/live/ws) is a WebSocket. changeOrigin stays off: the
+  // hub checks that Origin matches Host, and both name the dev server.
+  server: { proxy: { "/api": { target: "http://localhost:8080", ws: true } } },
 });

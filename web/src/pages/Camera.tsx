@@ -1,9 +1,24 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, blobUrl, type CameraRead, type CameraReport, type CameraView, type Move } from "../api";
-import { LiveVideo } from "../camera/LiveVideo";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  api,
+  ApiError,
+  blobUrl,
+  type CameraRead,
+  type CameraReport,
+  type CameraUpdate,
+  type CameraView,
+  type Move,
+} from "../api";
+import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
 import { CandidateList, PhotoWithBox, StatusChip } from "../components";
 import { useT, type Key } from "../i18n";
 import { useMoveEvents } from "../live";
+
+type Action = "save" | "test" | "auto" | "read" | "capture";
+
+const VISITS_EVERY_MS = 2000; // move events reload the visit list at most this often
+
+const errorText = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 
 export function Camera() {
   const { t } = useT();
@@ -12,16 +27,29 @@ export function Camera() {
   const [report, setReport] = useState<CameraReport | null>(null);
   const [read, setRead] = useState<CameraRead | null>(null);
   const [visits, setVisits] = useState<Move[]>([]);
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<Action | "">("");
+  const [error, setError] = useState<{ action: Action; message: string } | null>(null); // the last failed action
+  const [pollError, setPollError] = useState("");
+  const polling = useRef(false); // a status poll is on its way
+  const writing = useRef(false); // a settings save is on its way
+  const writes = useRef(0); // settings saves started; a poll older than the last one is dropped
+  const visitsTimer = useRef(0);
+  const visitsAt = useRef(0);
 
   const load = useCallback(async () => {
+    if (polling.current || writing.current) return;
+    polling.current = true;
+    const gen = writes.current;
     try {
       const v = await api.camera();
+      if (gen !== writes.current) return; // asked before a save; it could undo the save on screen
       setView(v);
       setForm((f) => f ?? { host: v.settings.host, user: v.settings.user, password: "" });
+      setPollError("");
     } catch (e) {
-      setError(String(e));
+      setPollError(errorText(e));
+    } finally {
+      polling.current = false;
     }
   }, []);
   const loadVisits = useCallback(async () => {
@@ -31,6 +59,16 @@ export function Camera() {
       // the status poll reports connection problems
     }
   }, []);
+  // A visit sends a burst of move events; reload at most every VISITS_EVERY_MS.
+  const reloadVisitsSoon = useCallback(() => {
+    if (visitsTimer.current) return;
+    const wait = Math.max(0, visitsAt.current + VISITS_EVERY_MS - Date.now());
+    visitsTimer.current = window.setTimeout(() => {
+      visitsTimer.current = 0;
+      visitsAt.current = Date.now();
+      void loadVisits();
+    }, wait);
+  }, [loadVisits]);
 
   useEffect(() => {
     void load();
@@ -38,20 +76,39 @@ export function Camera() {
     const timer = window.setInterval(() => void load(), 1000); // the "vehicle seen" light
     return () => window.clearInterval(timer);
   }, [load, loadVisits]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(visitsTimer.current);
+      visitsTimer.current = 0;
+    },
+    [],
+  );
   useMoveEvents(
-    () => void loadVisits(),
+    () => reloadVisitsSoon(),
     () => void loadVisits(),
   );
 
-  async function run(name: string, fn: () => Promise<void>) {
+  async function run(name: Action, fn: () => Promise<void>) {
     setBusy(name);
-    setError("");
+    setError(null);
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setError({ action: name, message: errorText(e) });
     } finally {
       setBusy("");
+    }
+  }
+
+  // saveSettings writes camera settings. Status polls wait for it, and a poll
+  // already on its way is dropped, so a stale answer cannot flip the page back.
+  async function saveSettings(u: CameraUpdate) {
+    writing.current = true;
+    writes.current += 1;
+    try {
+      setView(await api.saveCamera(u));
+    } finally {
+      writing.current = false;
     }
   }
 
@@ -59,26 +116,35 @@ export function Camera() {
     e.preventDefault();
     if (!form) return;
     void run("save", async () => {
-      setView(await api.saveCamera({ host: form.host, user: form.user, password: form.password }));
-      setForm({ ...form, password: "" });
+      await saveSettings({ host: form.host, user: form.user, password: form.password });
+      setForm((f) => f && { ...f, password: "" });
       setReport(await api.testCamera());
     });
   };
 
-  if (!view) return <p>{error || t("loading")}</p>;
+  const errorFor = (...actions: Action[]) =>
+    error && actions.includes(error.action) ? <p className="error">{error.message}</p> : null;
+
+  if (!view) return <p>{pollError || t("loading")}</p>;
   if (!view.available) return <p>{t("camNotAvailable")}</p>;
   const s = view.status;
   const configured = s.state !== "unconfigured";
-  const light = s.state === "online" ? "on" : configured ? "bad" : "";
+  const online = s.state === "online";
+  const light = online ? "on" : s.state === "offline" || s.state === "auth" ? "bad" : "";
+  const since =
+    configured && !online && s.since
+      ? t("camSince").replace("{time}", new Date(s.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
+      : "";
 
   return (
     <section>
+      {pollError && <p className="error">{pollError}</p>}
       <div className="card">
         <h3>{t("camSetup")}</h3>
         <p>
           <span className={`light ${light}`} />
           {t(`camState_${s.state}` as Key)}
-          {configured && s.state !== "online" && s.since && ` · ${t("camSince")} ${new Date(s.since).toLocaleTimeString()}`}
+          {since && ` · ${since}`}
           {s.info.model && ` · ${s.info.model} ${s.info.firmware}`}
           {s.info.width > 0 && ` · ${s.info.width}×${s.info.height}`}
         </p>
@@ -125,6 +191,7 @@ export function Camera() {
           </form>
         )}
         {(busy === "save" || busy === "test") && <p>{t("loading")}</p>}
+        {errorFor("save", "test")}
         {report && (
           <div>
             <ul className="steps">
@@ -151,8 +218,18 @@ export function Camera() {
             {s.vehicle ? t("camVehicle") : t("camNoVehicle")}
             {s.detection === "motion" && ` · ${t("camMotionOnly")}`}
           </p>
-          <LiveVideo videoAvailable={view.live.state === "running"} />
-          {view.live.state !== "running" && view.live.reason && <p className="small muted">{view.live.reason}</p>}
+          {/* Video and stills log in to the camera, so they wait until the
+              hub's own login works: a wrong password is not retried. */}
+          {online ? (
+            <>
+              <LiveVideo videoAvailable={view.live.state === "running"} />
+              {view.live.state !== "running" && view.live.reason && (
+                <p className="small muted">{view.live.reason}</p>
+              )}
+            </>
+          ) : (
+            <CameraOffline state={s.state} />
+          )}
           <label className="check">
             <input
               type="checkbox"
@@ -160,7 +237,7 @@ export function Camera() {
               disabled={busy !== ""}
               onChange={(e) => {
                 const auto = e.target.checked;
-                void run("auto", async () => setView(await api.saveCamera({ auto })));
+                void run("auto", () => saveSettings({ auto }));
               }}
             />
             {t("camAuto")}
@@ -188,11 +265,10 @@ export function Camera() {
             </button>
           </div>
           {busy === "read" && <p>{t("status_reading")}</p>}
+          {errorFor("read", "capture", "auto")}
           {read && <ReadResult read={read} />}
         </div>
       )}
-
-      {error && <p className="error">{error}</p>}
 
       {configured && (
         <div className="card">
@@ -209,7 +285,7 @@ export function Camera() {
                       <div className="mono strong">{m.number || t("noNumber")}</div>
                       <StatusChip status={m.status} />
                       <div className="muted small">
-                        {new Date(m.created_at).toLocaleTimeString()} · {(m.photos ?? []).length} {t("camPhotos")}
+                        {new Date(m.created_at).toLocaleString()} · {(m.photos ?? []).length} {t("camPhotos")}
                       </div>
                     </div>
                   </a>
