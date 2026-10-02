@@ -10,7 +10,13 @@ const PromptVersion = "reading-v1"
 type Image struct {
 	Data      []byte
 	MediaType string // image/jpeg, image/png or image/webp
+	// Detail asks the engine to look closer. Use DetailUltraHigh for wide 4K
+	// camera stills, where the marks are small. Empty keeps the engine default.
+	Detail string
 }
+
+// DetailUltraHigh is the Detail for 4K camera stills.
+const DetailUltraHigh = "ultra_high"
 
 // Recognizer reads one photo. Engines plug in behind this interface: Gemini
 // now, a backup cloud engine and the owner's own model later.

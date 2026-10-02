@@ -162,3 +162,22 @@ func TestGeminiMaxTokensIsTruncated(t *testing.T) {
 		t.Fatalf("err = %v; want ErrTruncated", err)
 	}
 }
+
+func TestGeminiAsksForUltraHighDetailOnlyWhenTold(t *testing.T) {
+	var got []any
+	srv, _ := fakeGemini(t, []int{200}, []string{geminiOK}, func(r *http.Request, p map[string]any) {
+		got = append(got, dig(p, "contents", 0, "parts", 0, "mediaResolution", "level"))
+	})
+	g := testGemini(srv, 0)
+	if _, err := g.Read(context.Background(), jpeg); err != nil {
+		t.Fatal(err)
+	}
+	still := jpeg
+	still.Detail = DetailUltraHigh
+	if _, err := g.Read(context.Background(), still); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != nil || got[1] != "MEDIA_RESOLUTION_ULTRA_HIGH" {
+		t.Fatalf("mediaResolution levels = %v; want [<nil> MEDIA_RESOLUTION_ULTRA_HIGH]", got)
+	}
+}

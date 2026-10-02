@@ -186,16 +186,19 @@ func (g *Gemini) request(img Image) map[string]any {
 	if g.cfg.ThinkingLevel != "" {
 		config["thinkingConfig"] = map[string]any{"thinkingLevel": g.cfg.ThinkingLevel}
 	}
+	image := map[string]any{"inlineData": map[string]any{
+		"mimeType": img.MediaType,
+		"data":     base64.StdEncoding.EncodeToString(img.Data),
+	}}
+	if img.Detail == DetailUltraHigh {
+		// Per-part resolution (Gemini 3): twice the image tokens of the
+		// default, for container marks that are small in a wide 4K still.
+		image["mediaResolution"] = map[string]any{"level": "MEDIA_RESOLUTION_ULTRA_HIGH"}
+	}
 	return map[string]any{
 		"contents": []any{map[string]any{
-			"role": "user",
-			"parts": []any{
-				map[string]any{"inlineData": map[string]any{
-					"mimeType": img.MediaType,
-					"data":     base64.StdEncoding.EncodeToString(img.Data),
-				}},
-				map[string]any{"text": Prompt},
-			},
+			"role":  "user",
+			"parts": []any{image, map[string]any{"text": Prompt}},
 		}},
 		"generationConfig": config,
 	}
