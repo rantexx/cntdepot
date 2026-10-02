@@ -19,8 +19,11 @@ import (
 //go:embed schema.sql
 var schemaV1 string
 
+//go:embed schema_v2.sql
+var schemaV2 string
+
 // migrations run in order. Append new versions; never edit a shipped one.
-var migrations = []string{schemaV1}
+var migrations = []string{schemaV1, schemaV2}
 
 // Move statuses.
 const (
@@ -29,6 +32,15 @@ const (
 	StatusNeedsReview = "needs_review"
 	StatusAccepted    = "accepted"
 	StatusRefused     = "refused"
+	// StatusNoContainer is a camera visit whose photos showed no container
+	// number, such as a car or forklift passing. It stays out of the review queue.
+	StatusNoContainer = "no_container"
+)
+
+// Where a move's photos come from.
+const (
+	SourcePhone  = "phone"
+	SourceCamera = "camera"
 )
 
 var ErrNotFound = errors.New("not found")

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -20,16 +21,20 @@ type Photo struct {
 	Width       int       `json:"width"`
 	Height      int       `json:"height"`
 	CapturedAt  time.Time `json:"captured_at"`
+	// Deferred photos are stored but not read until chosen: a camera visit
+	// takes a still every second and reads only a few of them.
+	Deferred bool `json:"deferred"`
 }
 
-const photoColumns = `id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at`
+const photoColumns = `id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred`
 
 func scanPhoto(sc scanner) (Photo, error) {
 	var p Photo
 	var captured string
+	var deferred int
 	err := sc.Scan(&p.ID, &p.MoveID, &p.Role, &p.SHA256, &p.AISHA256, &p.MediaType, &p.AIMediaType,
-		&p.Bytes, &p.Width, &p.Height, &captured)
-	p.CapturedAt = parseTS(captured)
+		&p.Bytes, &p.Width, &p.Height, &captured, &deferred)
+	p.CapturedAt, p.Deferred = parseTS(captured), deferred == 1
 	return p, err
 }
 
@@ -42,9 +47,9 @@ func (s *Store) AddPhoto(ctx context.Context, p Photo, actor string) (Photo, err
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO photos (id, tenant_id, move_id, role, sha256, ai_sha256, media_type, ai_media_type,
-			 bytes, width, height, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 bytes, width, height, captured_at, deferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			p.ID, s.tenant, p.MoveID, p.Role, p.SHA256, p.AISHA256, p.MediaType, p.AIMediaType,
-			p.Bytes, p.Width, p.Height, ts(p.CapturedAt))
+			p.Bytes, p.Width, p.Height, ts(p.CapturedAt), boolInt(p.Deferred))
 		if err != nil {
 			return err
 		}
@@ -59,12 +64,41 @@ func (s *Store) ListPhotos(ctx context.Context, moveID string) ([]Photo, error) 
 	return s.queryPhotos(ctx, `SELECT `+photoColumns+` FROM photos WHERE move_id = ? ORDER BY id`, moveID)
 }
 
-// PhotosWithoutAttempts returns photos of open moves that no engine has read
-// yet, e.g. because the hub stopped mid-read. Start re-queues them.
+// GetPhoto returns one photo.
+func (s *Store) GetPhoto(ctx context.Context, id string) (Photo, error) {
+	p, err := scanPhoto(s.db.QueryRowContext(ctx, `SELECT `+photoColumns+` FROM photos WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Photo{}, ErrNotFound
+	}
+	return p, err
+}
+
+// MarkForReading chooses a deferred photo for reading.
+func (s *Store) MarkForReading(ctx context.Context, id, actor string) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var moveID string
+		err := tx.QueryRowContext(ctx, `SELECT move_id FROM photos WHERE id = ?`, id).Scan(&moveID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE photos SET deferred = 0 WHERE id = ?`, id); err != nil {
+			return err
+		}
+		return s.appendEvent(ctx, tx, moveID, "photo.chosen", actor, map[string]any{"photo_id": id})
+	})
+}
+
+// PhotosWithoutAttempts returns photos of open moves that should be read but
+// have not been yet, e.g. because the hub stopped mid-read. Start re-queues
+// them. Deferred photos are left alone: nobody chose them for reading.
 func (s *Store) PhotosWithoutAttempts(ctx context.Context) ([]Photo, error) {
 	return s.queryPhotos(ctx,
 		`SELECT `+photoColumns+` FROM photos p
-		 WHERE NOT EXISTS (SELECT 1 FROM recognition_attempts a WHERE a.photo_id = p.id)
+		 WHERE p.deferred = 0
+		   AND NOT EXISTS (SELECT 1 FROM recognition_attempts a WHERE a.photo_id = p.id)
 		   AND p.move_id IN (SELECT id FROM gate_moves WHERE resolved_by = '')
 		 ORDER BY id`)
 }

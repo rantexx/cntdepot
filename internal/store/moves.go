@@ -13,6 +13,7 @@ type Move struct {
 	ID              string          `json:"id"`
 	Lane            string          `json:"lane"`
 	Direction       string          `json:"direction"`
+	Source          string          `json:"source"` // phone | camera
 	Status          string          `json:"status"`
 	Number          string          `json:"number"`
 	TypeCode        string          `json:"type_code"`
@@ -58,18 +59,19 @@ type ResolveUpdate struct {
 // ListFilter selects moves, newest first. Before is a move ID (keyset paging).
 type ListFilter struct {
 	Status string
+	Source string
 	Limit  int
 	Before string
 }
 
-const moveColumns = `id, lane, direction, status, number, type_code, color, confidence, check_digit_valid,
+const moveColumns = `id, lane, direction, source, status, number, type_code, color, confidence, check_digit_valid,
 	decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, created_at, updated_at`
 
 func scanMove(sc scanner) (Move, error) {
 	var m Move
 	var result, created, updated string
 	var cdv, verified, isTest int
-	err := sc.Scan(&m.ID, &m.Lane, &m.Direction, &m.Status, &m.Number, &m.TypeCode, &m.Color, &m.Confidence, &cdv,
+	err := sc.Scan(&m.ID, &m.Lane, &m.Direction, &m.Source, &m.Status, &m.Number, &m.TypeCode, &m.Color, &m.Confidence, &cdv,
 		&m.Decision, &m.Reason, &result, &verified, &m.CorrectedFrom, &m.ResolvedBy, &m.Note, &isTest, &created, &updated)
 	if err != nil {
 		return Move{}, err
@@ -84,22 +86,27 @@ func scanMove(sc scanner) (Move, error) {
 	return m, nil
 }
 
-// CreateMove starts a gate-in on a lane.
+// CreateMove starts a phone gate-in on a lane.
 func (s *Store) CreateMove(ctx context.Context, lane string, isTest bool, actor string) (Move, error) {
+	return s.CreateMoveWithSource(ctx, lane, SourcePhone, isTest, actor)
+}
+
+// CreateMoveWithSource starts a gate-in whose photos come from source.
+func (s *Store) CreateMoveWithSource(ctx context.Context, lane, source string, isTest bool, actor string) (Move, error) {
 	now := s.now()
 	m := Move{
-		ID: newID(), Lane: lane, Direction: "in", Status: StatusCapturing, Result: json.RawMessage("{}"),
+		ID: newID(), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
 		IsTest: isTest, CreatedAt: now, UpdatedAt: now, Photos: []Photo{},
 	}
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO gate_moves (id, tenant_id, depot_id, lane, direction, status, is_test, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, s.tenant, s.depot, lane, m.Direction, m.Status, boolInt(isTest), ts(now), ts(now))
+			`INSERT INTO gate_moves (id, tenant_id, depot_id, lane, direction, source, status, is_test, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, s.tenant, s.depot, lane, m.Direction, source, m.Status, boolInt(isTest), ts(now), ts(now))
 		if err != nil {
 			return err
 		}
-		return s.appendEvent(ctx, tx, m.ID, "move.created", actor, map[string]any{"lane": lane, "is_test": isTest})
+		return s.appendEvent(ctx, tx, m.ID, "move.created", actor, map[string]any{"lane": lane, "source": source, "is_test": isTest})
 	})
 	return m, err
 }
@@ -124,9 +131,9 @@ func (s *Store) ListMoves(ctx context.Context, f ListFilter) ([]Move, error) {
 	}
 	return s.queryMoves(ctx,
 		`SELECT `+moveColumns+` FROM gate_moves
-		 WHERE (? = '' OR status = ?) AND (? = '' OR id < ?)
+		 WHERE (? = '' OR status = ?) AND (? = '' OR source = ?) AND (? = '' OR id < ?)
 		 ORDER BY id DESC LIMIT ?`,
-		f.Status, f.Status, f.Before, f.Before, f.Limit)
+		f.Status, f.Status, f.Source, f.Source, f.Before, f.Before, f.Limit)
 }
 
 // VerifiedMoves returns accepted, person-verified, non-practice moves, oldest
