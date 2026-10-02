@@ -18,15 +18,17 @@ import (
 var ctx = context.Background()
 
 type harness struct {
-	svc   *Service
-	store *store.Store
-	blobs *blob.Store
+	svc    *Service
+	store  *store.Store
+	blobs  *blob.Store
+	dbPath string
 }
 
 func newHarness(t *testing.T, rec recognition.Recognizer, cfg Config, start bool) *harness {
 	t.Helper()
 	dir := testdir.New(t)
-	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
+	dbPath := filepath.Join(dir, "depot.db")
+	st, err := store.Open(dbPath, "local", "own-depot")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +48,7 @@ func newHarness(t *testing.T, rec recognition.Recognizer, cfg Config, start bool
 		svc.Wait()
 		st.Close()
 	})
-	return &harness{svc: svc, store: st, blobs: bl}
+	return &harness{svc: svc, store: st, blobs: bl, dbPath: dbPath}
 }
 
 func reading(number string, conf float64) recognition.Reading {

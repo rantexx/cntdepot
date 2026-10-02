@@ -53,6 +53,16 @@ type Service struct {
 
 type job struct {
 	moveID, photoID, role, aiSHA, aiType string
+	detail                               string // recognition.Image.Detail: ultra-high for camera stills
+}
+
+// detailFor is the engine detail for photos of a move from source: camera
+// stills are wide 4K pictures in which the marks are small.
+func detailFor(source string) string {
+	if source == store.SourceCamera {
+		return recognition.DetailUltraHigh
+	}
+	return ""
 }
 
 // New builds the service. notify is called whenever a move changes (live
@@ -86,9 +96,19 @@ func (s *Service) Start(ctx context.Context) error {
 		return err
 	}
 	unread := map[string]bool{}
+	details := map[string]string{} // move ID → engine detail, one lookup per move
 	for _, p := range pending {
+		detail, ok := details[p.MoveID]
+		if !ok {
+			m, err := s.store.GetMove(ctx, p.MoveID)
+			if err != nil {
+				return err
+			}
+			detail = detailFor(m.Source)
+			details[p.MoveID] = detail
+		}
 		unread[p.MoveID] = true
-		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
 	}
 	// A re-read cut short by a shutdown leaves its move saying "reading" with
 	// every photo already read and no job left to finish it. Camera visits do
@@ -161,7 +181,7 @@ func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, err
 		return p, err
 	}
 	s.notify(p.MoveID)
-	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType}) // a phone photo: default detail
 	return p, nil
 }
 
@@ -224,8 +244,9 @@ func (s *Service) Reread(ctx context.Context, moveID string) error {
 		return err
 	}
 	s.notify(m.ID)
+	detail := detailFor(m.Source)
 	for _, p := range photos {
-		s.enqueue(job{moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+		s.enqueue(job{moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
 	}
 	return nil
 }
@@ -341,10 +362,7 @@ func (s *Service) worker() {
 
 func (s *Service) process(j job) {
 	ctx := s.ctx
-	img := recognition.Image{MediaType: j.aiType}
-	if m, err := s.store.GetMove(ctx, j.moveID); err == nil && m.Source == store.SourceCamera {
-		img.Detail = recognition.DetailUltraHigh // wide 4K stills: the marks are small
-	}
+	img := recognition.Image{MediaType: j.aiType, Detail: j.detail}
 	data, err := s.blobs.Get(j.aiSHA)
 	att := recognition.Attempt{Engine: s.rec.Name(), Model: s.rec.Model(), PromptVersion: recognition.PromptVersion}
 	if err == nil {
@@ -430,6 +448,15 @@ func (s *Service) recompute(ctx context.Context, moveID string) error {
 		}
 	}
 	res := recognition.Reconcile(frames, s.cfg.AutoAcceptThreshold)
+	if camera {
+		// A person confirms every camera read in this kit (camera spec §2.2),
+		// so neither the stored decision nor the move.read event may say
+		// auto_accept, even while the visit is still open.
+		if res.Decision == recognition.DecisionAutoAccept {
+			res.Decision, res.Reason = recognition.DecisionReview, "camera reads are confirmed by a person"
+		}
+		capCameraConfidence(&res, frames)
+	}
 	status := store.StatusNeedsReview
 	switch {
 	case pending > 0:
@@ -438,11 +465,8 @@ func (s *Service) recompute(ctx context.Context, moveID string) error {
 		status = store.StatusCapturing // the visit may still choose photos to read
 	case camera && noContainer(frames):
 		status, res.Reason = store.StatusNoContainer, "no container number in any photo"
-	case camera:
-		// A person confirms every camera read in this kit (camera spec §2.2).
-		if res.Decision == recognition.DecisionAutoAccept {
-			res.Decision, res.Reason = recognition.DecisionReview, "camera reads are confirmed by a person"
-		}
+	case camera && len(frames) == 0:
+		res.Reason = "no photo was read" // e.g. every still failed, or a restart came before the first read
 	case res.Decision == recognition.DecisionAutoAccept && s.cfg.AutoAcceptEnabled:
 		status = store.StatusAccepted
 	}

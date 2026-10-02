@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -267,5 +268,187 @@ func TestRereadSkipsDeferredPhotos(t *testing.T) {
 	waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
 	if fake.Calls() != 2 {
 		t.Fatalf("engine calls = %d; want 2 (the chosen photo twice, never the deferred one)", fake.Calls())
+	}
+}
+
+func TestCameraMoveWithoutAnyReadIsNotNoContainer(t *testing.T) {
+	fake := &recognition.Fake{Reading: recognition.Reading{Visible: "none"}}
+	h := newHarness(t, fake, Config{}, false)
+	startWithHook(t, h)
+	// Every still failed: no photo at all.
+	empty, _ := h.svc.NewCameraMove(ctx, "camera")
+	// Stills were taken, but none was ever chosen for reading.
+	unread, _ := h.svc.NewCameraMove(ctx, "camera")
+	if _, err := h.svc.AddFrame(ctx, unread.ID, still("u1"), 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{empty.ID, unread.ID} {
+		if err := h.svc.SettleCamera(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		got := waitStatus(t, h.store, id, store.StatusNeedsReview)
+		if got.Reason != "no photo was read" {
+			t.Fatalf("reason = %q; want no photo was read", got.Reason)
+		}
+	}
+	if fake.Calls() != 0 {
+		t.Fatalf("engine calls = %d; want 0", fake.Calls())
+	}
+}
+
+func TestRestartBeforeTheFirstReadNeedsReview(t *testing.T) {
+	h := newHarness(t, &recognition.Fake{Reading: recognition.Reading{Visible: "none"}}, Config{}, false)
+	// Before the restart the visit stored a still but never chose one.
+	m, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
+	sha, _ := h.blobs.Put(still("d1"))
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera"); err != nil {
+		t.Fatal(err)
+	}
+	startWithHook(t, h)
+	if got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview); got.Reason != "no photo was read" {
+		t.Fatalf("reason = %q", got.Reason)
+	}
+}
+
+func TestCameraMoveWithAContainerButNoLegibleNumberNeedsReview(t *testing.T) {
+	for name, r := range map[string]recognition.Reading{
+		"seen":      {Visible: "partial"},
+		"type code": {Visible: "none", TypeCode: "45G1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, &recognition.Fake{Reading: r}, Config{}, false)
+			reads := startWithHook(t, h)
+			m, _ := h.svc.NewCameraMove(ctx, "camera")
+			p, _ := h.svc.AddFrame(ctx, m.ID, still("box"), 0, 0)
+			if err := h.svc.ReadFrame(ctx, p.ID); err != nil {
+				t.Fatal(err)
+			}
+			nextRead(t, reads)
+			if err := h.svc.SettleCamera(ctx, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+		})
+	}
+}
+
+func TestOpenCameraVisitNeverRecordsAutoAccept(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.99)}
+	h := newHarness(t, fake, Config{AutoAcceptEnabled: true}, false)
+	reads := startWithHook(t, h)
+	m, _ := h.svc.NewCameraMove(ctx, "camera")
+	p, _ := h.svc.AddFrame(ctx, m.ID, still("open"), 0, 0)
+	if err := h.svc.ReadFrame(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	nextRead(t, reads)
+	got := waitStatus(t, h.store, m.ID, store.StatusCapturing) // the visit is still open
+	if got.Decision == string(recognition.DecisionAutoAccept) || !strings.Contains(got.Reason, "person") {
+		t.Fatalf("open visit: decision %q, reason %q", got.Decision, got.Reason)
+	}
+	events, err := h.store.Events(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind == "move.read" && strings.Contains(string(e.Payload), string(recognition.DecisionAutoAccept)) {
+			t.Fatalf("move.read event says auto_accept: %s", e.Payload)
+		}
+	}
+}
+
+func TestCameraConfidenceIsOneStillsConfidence(t *testing.T) {
+	fake := &recognition.Fake{ByImage: map[string]recognition.Reading{
+		string(still("c1")): reading("CSQU3054383", 0.95),
+		string(still("c2")): reading("CSQU3054383", 0.90),
+	}}
+	h := newHarness(t, fake, Config{}, false)
+	reads := startWithHook(t, h)
+	m, _ := h.svc.NewCameraMove(ctx, "camera")
+	for _, name := range []string{"c1", "c2"} {
+		p, _ := h.svc.AddFrame(ctx, m.ID, still(name), 0, 0)
+		if err := h.svc.ReadFrame(ctx, p.ID); err != nil {
+			t.Fatal(err)
+		}
+		nextRead(t, reads)
+	}
+	if err := h.svc.SettleCamera(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	if got.Confidence != 0.95 {
+		t.Fatalf("confidence = %v; want 0.95, the best single still (no bonus for stills of one side)", got.Confidence)
+	}
+	var res recognition.Result
+	if err := json.Unmarshal(got.Result, &res); err != nil || res.Confidence != 0.95 {
+		t.Fatalf("stored result confidence = %v, %v", res.Confidence, err)
+	}
+}
+
+func TestCameraPhotosKeepUltraHighDetailOnRereadAndRestart(t *testing.T) {
+	rec := &detailRecorder{}
+	h := newHarness(t, rec, Config{Workers: 1}, false)
+	// Before the restart: a camera photo and a phone photo were chosen but not read.
+	cam, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
+	sha, _ := h.blobs.Put(still("restart"))
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: cam.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "camera"); err != nil {
+		t.Fatal(err)
+	}
+	phone, _ := h.store.CreateMove(ctx, "1", false, "clerk")
+	sha2, _ := h.blobs.Put([]byte("phone"))
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: phone.ID, Role: "rear", SHA256: sha2, AISHA256: sha2, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "clerk"); err != nil {
+		t.Fatal(err)
+	}
+	reads := startWithHook(t, h)
+	nextRead(t, reads)
+	nextRead(t, reads)
+	waitStatus(t, h.store, cam.ID, store.StatusNeedsReview)
+	if err := h.svc.Reread(ctx, cam.ID); err != nil {
+		t.Fatal(err)
+	}
+	nextRead(t, reads)
+	got := rec.got()
+	ultra := 0
+	for _, d := range got {
+		if d == recognition.DetailUltraHigh {
+			ultra++
+		}
+	}
+	if len(got) != 3 || ultra != 2 {
+		t.Fatalf("details = %q; want the camera photo in ultra-high twice (restart, re-read) and the phone photo once by default", got)
+	}
+}
+
+func TestReadFrameQueuesThePhotoEvenWhenTheStatusCannotBeSet(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, false)
+	reads := startWithHook(t, h)
+	m, _ := h.svc.NewCameraMove(ctx, "camera")
+	p, _ := h.svc.AddFrame(ctx, m.ID, still("s1"), 0, 0)
+
+	// Make every "reading" status write fail, as a full disk or a locked
+	// database would, while choosing the photo still works.
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TRIGGER fail_reading BEFORE UPDATE OF status ON gate_moves
+		WHEN NEW.status = 'reading' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetStatus(ctx, m.ID, store.StatusReading); err == nil {
+		t.Fatal("the injected failure does not work")
+	}
+
+	if err := h.svc.ReadFrame(ctx, p.ID); err != nil {
+		t.Fatalf("ReadFrame = %v; want the photo queued anyway", err)
+	}
+	if f := nextRead(t, reads); len(f.Candidates) == 0 {
+		t.Fatalf("hook frame = %+v", f)
+	}
+	if fake.Calls() != 1 {
+		t.Fatalf("engine calls = %d; want 1", fake.Calls())
 	}
 }

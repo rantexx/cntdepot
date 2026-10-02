@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"depot/internal/recognition"
@@ -71,11 +72,15 @@ func (s *Service) ReadFrame(ctx context.Context, photoID string) error {
 	if err := s.store.MarkForReading(ctx, p.ID, "camera"); err != nil {
 		return err
 	}
+	// The photo is chosen now, so it must be read whatever happens next: a
+	// chosen photo without a job would hold the move at "reading" until a
+	// restart. The status is only what the screens show meanwhile.
 	if err := s.store.SetStatus(ctx, p.MoveID, store.StatusReading); err != nil {
-		return err
+		log.Printf("gate: mark move %s reading: %v", p.MoveID, err)
 	}
 	s.notify(p.MoveID)
-	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType,
+		detail: recognition.DetailUltraHigh})
 	return nil
 }
 
@@ -110,13 +115,46 @@ func (s *Service) visitOpen(moveID string) bool {
 	return s.visits[moveID]
 }
 
-// noContainer reports whether every read of a camera move succeeded and none
-// found a number. A failed read is not proof of an empty lane.
+// noContainer reports whether a camera move's reads prove an empty lane: at
+// least one photo was read, every read succeeded, and none saw a container.
+// No read at all proves nothing, a failed read is not proof either, and a
+// container whose number is illegible (seen, or its type code read) goes to a
+// person.
 func noContainer(frames []recognition.Frame) bool {
+	if len(frames) == 0 {
+		return false
+	}
 	for _, f := range frames {
-		if f.Error != "" || len(f.Candidates) > 0 {
+		if f.Error != "" || len(f.Candidates) > 0 || f.Visible != "none" || f.TypeCode != "" {
 			return false
 		}
 	}
 	return true
+}
+
+// capCameraConfidence keeps a camera move's confidence at what one still
+// actually read. Every still counts as its own view, so stills of the same
+// side would otherwise add agreement bonuses (0.95 becoming 1.00).
+func capCameraConfidence(res *recognition.Result, frames []recognition.Frame) {
+	if res.Number == "" {
+		return
+	}
+	direct, repaired, found := 0.0, 0.0, false
+	for _, f := range frames {
+		for _, c := range f.Candidates {
+			if c.Number != res.Number {
+				continue
+			}
+			if c.RepairedFrom == "" {
+				direct, found = max(direct, c.Confidence), true
+			} else {
+				repaired = max(repaired, c.Confidence)
+			}
+		}
+	}
+	limit := direct
+	if !found {
+		limit = repaired // only ever guessed by repair: Reconcile adds no bonus to those
+	}
+	res.Confidence = min(res.Confidence, limit)
 }
