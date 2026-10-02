@@ -32,7 +32,9 @@ const (
 var ErrBadSettings = errors.New("invalid camera settings")
 
 // Update is a change from the Camera page. Nil fields keep their value, and
-// an empty password keeps the saved one; the page never sees it.
+// an empty password keeps the saved one; the page never sees it. The saved
+// password is kept only for the saved address and user name: changing either
+// needs the password again, so nobody can send it to another host.
 type Update struct {
 	Host     *string `json:"host"`
 	User     *string `json:"user"`
@@ -95,15 +97,23 @@ func (m *Manager) Settings() camera.Settings {
 func (m *Manager) Save(ctx context.Context, u Update) (camera.Settings, error) {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
-	s := m.Settings()
+	prev := m.Settings()
+	s := prev
 	if u.Host != nil {
 		s.Host = strings.TrimSpace(*u.Host)
 	}
 	if u.User != nil {
 		s.User = strings.TrimSpace(*u.User)
 	}
-	if u.Password != nil && *u.Password != "" {
+	newPassword := u.Password != nil && *u.Password != ""
+	if newPassword {
 		s.Password = *u.Password
+	}
+	// The saved password belongs to the saved address and user name: keeping
+	// it for new ones would let anyone with the app send it to a host of
+	// their choice.
+	if prev.Password != "" && !newPassword && (s.Host != prev.Host || s.User != prev.User) {
+		return prev, fmt.Errorf("%w: enter the camera password again when you change the address or user name", ErrBadSettings)
 	}
 	if u.Auto != nil {
 		s.Auto = *u.Auto

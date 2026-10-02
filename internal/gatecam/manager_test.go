@@ -3,6 +3,7 @@ package gatecam
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -67,8 +68,16 @@ func TestManagerSavesAppliesAndKeepsThePassword(t *testing.T) {
 		t.Fatalf("built %d cameras, auto %v; want the same camera with auto on", len(built), w.Status().Auto)
 	}
 
-	// An empty password keeps the saved one.
-	if _, err := m.Save(ctx, Update{Host: ptr("192.168.1.51"), Password: ptr("")}); err != nil {
+	// An empty password keeps the saved one for the same address and user.
+	if _, err := m.Save(ctx, Update{Host: ptr("192.168.1.50"), User: ptr("admin"), Password: ptr("")}); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.Settings(); s.Password != "pw-secret" || len(built) != 1 {
+		t.Fatalf("settings = %+v, built %d; want the saved password and the working camera kept", s, len(built))
+	}
+
+	// A new address needs the password again.
+	if _, err := m.Save(ctx, Update{Host: ptr("192.168.1.51"), Password: ptr("pw-secret")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(built) != 2 || built[1].Host != "192.168.1.51" || built[1].Password != "pw-secret" {
@@ -83,6 +92,75 @@ func TestManagerSavesAppliesAndKeepsThePassword(t *testing.T) {
 	if s := m2.Settings(); s.Host != "192.168.1.51" || s.User != "admin" || s.Password != "pw-secret" || !s.Auto {
 		t.Fatalf("loaded settings = %+v", s)
 	}
+}
+
+func TestChangingTheAddressOrUserNeedsThePasswordAgain(t *testing.T) {
+	st, _ := testkit.Open(t)
+	w := New(newFakeGate(), DefaultConfig())
+	b := &fakeBuilder{}
+	m := NewManager(st, w, &fakeLive{}, b.build)
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Save(ctx, setupUpdate()); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []Update{
+		{Host: ptr("203.0.113.9")},                       // somebody else's host
+		{Host: ptr("203.0.113.9"), Password: ptr("")},    // the page sends an empty password
+		{User: ptr("other")},                             // another user on the same camera
+		{Host: ptr("203.0.113.9"), User: ptr(setupUser)}, // same user, new host
+	} {
+		_, err := m.Save(ctx, u)
+		if !errors.Is(err, ErrBadSettings) || !strings.Contains(err.Error(), "enter the camera password again") {
+			t.Errorf("Save(%s) = %v; want ErrBadSettings asking for the password", describe(u), err)
+		}
+	}
+	if b.count() != 1 {
+		t.Fatalf("built %+v; a refused save connected to a camera", b.built)
+	}
+	if s := m.Settings(); s.Host != setupHost || s.User != setupUser || s.Password != setupPassword {
+		t.Fatalf("settings = %+v; want them unchanged", s)
+	}
+	stored, err := st.Settings(ctx, "camera.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored[keyHost] != setupHost || stored[keyUser] != setupUser {
+		t.Fatalf("stored = %v; a refused save was written", stored)
+	}
+
+	// Still allowed: the automatic switch alone, the same address and user
+	// with an empty password (the re-save that reconnects), and a new
+	// address with the password typed again.
+	for _, u := range []Update{
+		{Auto: ptr(true)},
+		{Host: ptr(setupHost), User: ptr(setupUser), Password: ptr("")},
+		{Host: ptr(" " + setupHost + " "), User: ptr(setupUser)}, // spaces are trimmed: the same address
+		{Host: ptr("192.168.1.51"), Password: ptr(setupPassword)},
+	} {
+		if _, err := m.Save(ctx, u); err != nil {
+			t.Errorf("Save(%s) = %v", describe(u), err)
+		}
+	}
+	if s := m.Settings(); s.Host != "192.168.1.51" || s.Password != setupPassword || !s.Auto {
+		t.Fatalf("settings = %+v", s)
+	}
+}
+
+// describe prints an update without its password.
+func describe(u Update) string {
+	str := func(p *string) string {
+		if p == nil {
+			return "nil"
+		}
+		return fmt.Sprintf("%q", *p)
+	}
+	pw := "nil"
+	if u.Password != nil {
+		pw = fmt.Sprintf("%d chars", len(*u.Password))
+	}
+	return fmt.Sprintf("host %s, user %s, password %s, auto %v", str(u.Host), str(u.User), pw, u.Auto != nil)
 }
 
 func TestManagerRejectsAnythingButAnAddress(t *testing.T) {

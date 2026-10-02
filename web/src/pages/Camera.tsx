@@ -135,6 +135,13 @@ export function Camera() {
     configured && !online && s.since
       ? t("camSince").replace("{time}", new Date(s.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
       : "";
+  // The hub keeps the saved password only for the saved address and user
+  // name: changing either needs the password typed again.
+  const needPassword =
+    !!form &&
+    view.settings.password_set &&
+    form.password === "" &&
+    (form.host.trim() !== view.settings.host || form.user.trim() !== view.settings.user);
 
   return (
     <section>
@@ -174,8 +181,13 @@ export function Camera() {
                 autoComplete="new-password"
               />
             </label>
+            {needPassword && <p className="small muted">{t("camPasswordAgain")}</p>}
             <div className="row">
-              <button type="submit" className="primary" disabled={busy !== "" || !form.host.trim() || !form.user.trim()}>
+              <button
+                type="submit"
+                className="primary"
+                disabled={busy !== "" || !form.host.trim() || !form.user.trim() || needPassword}
+              >
                 {t("camSaveTest")}
               </button>
               {configured && (

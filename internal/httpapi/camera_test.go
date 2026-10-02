@@ -131,6 +131,25 @@ func TestCameraSettingsNeverReturnThePassword(t *testing.T) {
 	}
 }
 
+func TestANewCameraAddressNeedsThePasswordAgain(t *testing.T) {
+	srv := newCameraServer(t, true)
+	c := srv.Client()
+	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+		t.Fatalf("PUT = %d %s", status, body)
+	}
+	status, body := call(t, c, "PUT", srv.URL+"/api/camera", `{"host":"203.0.113.9","user":"admin","password":""}`)
+	if status != 400 || errorCode(body) != "E4007" || !strings.Contains(string(body), "enter the camera password again") {
+		t.Fatalf("PUT with a new host and no password = %d %s; want 400 E4007", status, body)
+	}
+	if _, body := call(t, c, "GET", srv.URL+"/api/camera", ""); !strings.Contains(string(body), `"host":"192.168.1.50"`) {
+		t.Fatalf("a refused PUT changed the camera settings: %s", body)
+	}
+	// The same address with an empty password is the re-save that reconnects.
+	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", `{"host":"192.168.1.50","user":"admin","password":""}`); status != 200 {
+		t.Fatalf("PUT with the same host = %d %s", status, body)
+	}
+}
+
 func TestCameraMustBeSetUpBeforeUse(t *testing.T) {
 	srv := newCameraServer(t, true)
 	c := srv.Client()
