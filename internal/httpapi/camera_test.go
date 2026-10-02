@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image/jpeg"
 	"io"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"depot/internal/blob"
 	"depot/internal/camera"
@@ -26,6 +28,15 @@ import (
 // the manager, a running watcher, and live video that is never started.
 func newCameraServer(t *testing.T, withCamera bool) *httptest.Server {
 	t.Helper()
+	srv, _ := newCameraServerWithFake(t, withCamera)
+	return srv
+}
+
+// newCameraServerWithFake is newCameraServer that also returns the fake
+// camera (nil without camera support).
+func newCameraServerWithFake(t *testing.T, withCamera bool) (*httptest.Server, *camera.Fake) {
+	t.Helper()
+	var cam *camera.Fake
 	dir := testdir.New(t)
 	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
 	if err != nil {
@@ -49,7 +60,7 @@ func newCameraServer(t *testing.T, withCamera bool) *httptest.Server {
 	runCtx, cancel := context.WithCancel(context.Background())
 	watcherDone := make(chan struct{})
 	if withCamera {
-		cam := camera.NewFake(camera.DemoStill())
+		cam = camera.NewFake(camera.DemoStill())
 		w := gatecam.New(svc, gatecam.DefaultConfig())
 		svc.SetReadHook(w.OnRead)
 		sup := live.New(live.Config{}) // never run: live video stays off
@@ -73,7 +84,7 @@ func newCameraServer(t *testing.T, withCamera bool) *httptest.Server {
 		svc.Wait()
 		st.Close()
 	})
-	return srv
+	return srv, cam
 }
 
 const setupBody = `{"host":"192.168.1.50","user":"admin","password":"pw-secret"}`
@@ -228,4 +239,53 @@ func TestCameraWritesNeedTheClientHeaderAndStillWidthIsChecked(t *testing.T) {
 	if status, body := call(t, c, "GET", srv.URL+"/api/camera/still?w=999", ""); status != 400 || errorCode(body) != "E4006" {
 		t.Fatalf("still with a bad width = %d %s; want 400 E4006", status, body)
 	}
+}
+
+// waitCameraState polls GET /api/camera until the watcher reports want.
+func waitCameraState(t *testing.T, srv *httptest.Server, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, body := call(t, srv.Client(), "GET", srv.URL+"/api/camera", "")
+		var v struct {
+			Status struct {
+				State string `json:"state"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(body, &v); err != nil {
+			t.Fatal(err)
+		}
+		if v.Status.State == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("camera state = %q; want %q", v.Status.State, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestAGreenTestAfterAWrongPasswordResumesPolling(t *testing.T) {
+	srv, cam := newCameraServerWithFake(t, true)
+	c := srv.Client()
+	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+		t.Fatalf("PUT = %d %s", status, body)
+	}
+	waitCameraState(t, srv, gatecam.StateOnline)
+	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
+	waitCameraState(t, srv, gatecam.StateAuth)
+
+	// A failed test changes nothing.
+	call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	waitCameraState(t, srv, gatecam.StateAuth)
+
+	// The password works again (fixed on the camera): the test passes and
+	// polling resumes without re-saving.
+	cam.SetDetectErr(nil)
+	status, body := call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	var rep camera.Report
+	if status != 200 || json.Unmarshal(body, &rep) != nil || !rep.OK() {
+		t.Fatalf("test = %d %s", status, body)
+	}
+	waitCameraState(t, srv, gatecam.StateOnline)
 }

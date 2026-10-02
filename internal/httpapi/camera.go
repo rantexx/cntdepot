@@ -99,7 +99,13 @@ func (s *Server) testCamera(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	writeJSON(w, http.StatusOK, cam.Test(ctx))
+	rep := cam.Test(ctx)
+	// A wrong password stops polling until the settings change. A green test
+	// after that means the password works again, so polling resumes.
+	if rep.OK() && s.opts.Camera.Status().State == gatecam.StateAuth {
+		s.opts.Camera.Reconnect()
+	}
+	writeJSON(w, http.StatusOK, rep)
 }
 
 // cameraRead is "read this frame": the still, what the engine saw, and how
