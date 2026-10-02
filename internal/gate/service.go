@@ -45,10 +45,14 @@ type Service struct {
 	mu     sync.Mutex // serializes recompute and resolve
 	addMu  sync.Mutex // serializes storing photos, so the duplicate check is exact
 	wg     sync.WaitGroup
+
+	hook    ReadHook        // told about every finished read; may be nil
+	visitMu sync.Mutex      // guards visits
+	visits  map[string]bool // camera moves whose visit may still choose photos
 }
 
 type job struct {
-	moveID, photoID, aiSHA, aiType string
+	moveID, photoID, role, aiSHA, aiType string
 }
 
 // New builds the service. notify is called whenever a move changes (live
@@ -63,7 +67,7 @@ func New(st *store.Store, bl *blob.Store, rec recognition.Recognizer, cfg Config
 	if notify == nil {
 		notify = func(string) {}
 	}
-	return &Service{store: st, blobs: bl, rec: rec, cfg: cfg, notify: notify, jobs: make(chan job, 256), ctx: context.Background()}
+	return &Service{store: st, blobs: bl, rec: rec, cfg: cfg, notify: notify, jobs: make(chan job, 256), ctx: context.Background(), visits: map[string]bool{}}
 }
 
 // Engine names the engine and model in use.
@@ -84,21 +88,25 @@ func (s *Service) Start(ctx context.Context) error {
 	unread := map[string]bool{}
 	for _, p := range pending {
 		unread[p.MoveID] = true
-		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
 	}
 	// A re-read cut short by a shutdown leaves its move saying "reading" with
-	// every photo already read and no job left to finish it. Moves with unread
-	// photos were just re-queued above and settle as those jobs complete.
-	return s.settleStuckReading(ctx, unread)
+	// every photo already read and no job left to finish it. Camera visits do
+	// not survive a restart either. Moves with unread photos were just
+	// re-queued above and settle as those jobs complete.
+	if err := s.settleOpen(ctx, store.ListFilter{Status: store.StatusReading}, unread); err != nil {
+		return err
+	}
+	return s.settleOpen(ctx, store.ListFilter{Status: store.StatusCapturing, Source: store.SourceCamera}, unread)
 }
 
-// settleStuckReading recomputes every open move still marked "reading" from
-// its existing attempts, except those in skip.
-func (s *Service) settleStuckReading(ctx context.Context, skip map[string]bool) error {
+// settleOpen recomputes every open move matching f from its existing
+// attempts, except those in skip.
+func (s *Service) settleOpen(ctx context.Context, f store.ListFilter, skip map[string]bool) error {
 	const page = 200
-	before := ""
+	f.Limit = page
 	for {
-		moves, err := s.store.ListMoves(ctx, store.ListFilter{Status: store.StatusReading, Limit: page, Before: before})
+		moves, err := s.store.ListMoves(ctx, f)
 		if err != nil {
 			return err
 		}
@@ -115,7 +123,7 @@ func (s *Service) settleStuckReading(ctx context.Context, skip map[string]bool) 
 		if len(moves) < page {
 			return nil
 		}
-		before = moves[len(moves)-1].ID
+		f.Before = moves[len(moves)-1].ID
 	}
 }
 
@@ -153,7 +161,7 @@ func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, err
 		return p, err
 	}
 	s.notify(p.MoveID)
-	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
 	return p, nil
 }
 
@@ -196,22 +204,28 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 	return p, true, nil
 }
 
-// Reread queues every photo of an open move for another engine run, e.g.
-// after an engine outage.
+// Reread queues every chosen photo of an open move for another engine run,
+// e.g. after an engine outage. Deferred camera photos stay unread.
 func (s *Service) Reread(ctx context.Context, moveID string) error {
 	m, err := s.openMove(ctx, moveID)
 	if err != nil {
 		return err
 	}
-	if len(m.Photos) == 0 {
+	var photos []store.Photo
+	for _, p := range m.Photos {
+		if !p.Deferred {
+			photos = append(photos, p)
+		}
+	}
+	if len(photos) == 0 {
 		return nil
 	}
 	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
 		return err
 	}
 	s.notify(m.ID)
-	for _, p := range m.Photos {
-		s.enqueue(job{moveID: m.ID, photoID: p.ID, aiSHA: p.AISHA256, aiType: p.AIMediaType})
+	for _, p := range photos {
+		s.enqueue(job{moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType})
 	}
 	return nil
 }
@@ -277,7 +291,11 @@ func (s *Service) TestRead(ctx context.Context, ai []byte, aiType string) (TestR
 	if len(ai) == 0 || !engineReadable(aiType) {
 		return TestReadResult{}, ErrBadPhoto
 	}
-	att, err := s.rec.Read(ctx, recognition.Image{Data: ai, MediaType: aiType})
+	return s.testRead(ctx, recognition.Image{Data: ai, MediaType: aiType})
+}
+
+func (s *Service) testRead(ctx context.Context, img recognition.Image) (TestReadResult, error) {
+	att, err := s.rec.Read(ctx, img)
 	res := TestReadResult{Attempt: att}
 	if err != nil {
 		res.Error = err.Error()
@@ -323,14 +341,20 @@ func (s *Service) worker() {
 
 func (s *Service) process(j job) {
 	ctx := s.ctx
+	img := recognition.Image{MediaType: j.aiType}
+	if m, err := s.store.GetMove(ctx, j.moveID); err == nil && m.Source == store.SourceCamera {
+		img.Detail = recognition.DetailUltraHigh // wide 4K stills: the marks are small
+	}
 	data, err := s.blobs.Get(j.aiSHA)
 	att := recognition.Attempt{Engine: s.rec.Name(), Model: s.rec.Model(), PromptVersion: recognition.PromptVersion}
 	if err == nil {
-		att, err = s.rec.Read(ctx, recognition.Image{Data: data, MediaType: j.aiType})
+		img.Data = data
+		att, err = s.rec.Read(ctx, img)
 	}
 	if ctx.Err() != nil {
 		return // shutting down: the photo stays unread and Start re-queues it
 	}
+	frame := recognition.BuildFrame(j.role, att.Reading)
 	reading, _ := json.Marshal(att.Reading)
 	row := store.Attempt{
 		MoveID: j.moveID, PhotoID: j.photoID, Engine: att.Engine, Model: att.Model, PromptVersion: att.PromptVersion,
@@ -339,7 +363,15 @@ func (s *Service) process(j job) {
 	}
 	if err != nil {
 		row.Error = err.Error()
+		frame = recognition.ErrorFrame(j.role, err.Error())
 	}
+	// The hook hears about every read, stored or not, so a camera visit
+	// never waits forever for an answer.
+	defer func() {
+		if s.hook != nil {
+			s.hook(j.moveID, j.photoID, frame)
+		}
+	}()
 	if _, err := s.store.AddAttempt(ctx, row); err != nil {
 		log.Printf("gate: store attempt for photo %s: %v", j.photoID, err)
 		return
@@ -369,22 +401,32 @@ func (s *Service) recompute(ctx context.Context, moveID string) error {
 	for _, a := range attempts { // oldest first, so later attempts win
 		latest[a.PhotoID] = a
 	}
+	camera := m.Source == store.SourceCamera
 	var frames []recognition.Frame
 	pending := 0
 	for _, p := range m.Photos {
+		if p.Deferred {
+			continue // stored for training, never chosen for reading
+		}
+		// Every camera still is its own view, so stills that agree count as
+		// agreement. Camera moves are never auto-accepted anyway.
+		role := p.Role
+		if camera {
+			role = p.ID
+		}
 		a, ok := latest[p.ID]
 		switch {
 		case !ok:
 			pending++
 		case a.Error != "":
-			frames = append(frames, recognition.ErrorFrame(p.Role, a.Error))
+			frames = append(frames, recognition.ErrorFrame(role, a.Error))
 		default:
 			var r recognition.Reading
 			if err := json.Unmarshal(a.Reading, &r); err != nil {
-				frames = append(frames, recognition.ErrorFrame(p.Role, err.Error()))
+				frames = append(frames, recognition.ErrorFrame(role, err.Error()))
 				continue
 			}
-			frames = append(frames, recognition.BuildFrame(p.Role, r))
+			frames = append(frames, recognition.BuildFrame(role, r))
 		}
 	}
 	res := recognition.Reconcile(frames, s.cfg.AutoAcceptThreshold)
@@ -392,6 +434,15 @@ func (s *Service) recompute(ctx context.Context, moveID string) error {
 	switch {
 	case pending > 0:
 		status = store.StatusReading
+	case camera && s.visitOpen(m.ID):
+		status = store.StatusCapturing // the visit may still choose photos to read
+	case camera && noContainer(frames):
+		status, res.Reason = store.StatusNoContainer, "no container number in any photo"
+	case camera:
+		// A person confirms every camera read in this kit (camera spec §2.2).
+		if res.Decision == recognition.DecisionAutoAccept {
+			res.Decision, res.Reason = recognition.DecisionReview, "camera reads are confirmed by a person"
+		}
 	case res.Decision == recognition.DecisionAutoAccept && s.cfg.AutoAcceptEnabled:
 		status = store.StatusAccepted
 	}
