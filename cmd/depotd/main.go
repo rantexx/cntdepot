@@ -11,13 +11,18 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 
 	"depot/internal/bench"
 	"depot/internal/blob"
+	"depot/internal/camera"
 	"depot/internal/dataset"
 	"depot/internal/gate"
+	"depot/internal/gatecam"
 	"depot/internal/httpapi"
+	"depot/internal/live"
 	"depot/internal/recognition"
 	"depot/internal/store"
 	"depot/internal/webui"
@@ -25,6 +30,9 @@ import (
 
 // Version is set at build time with -ldflags "-X main.Version=...".
 var Version = "dev"
+
+// The camera watcher drives gate-ins through the gate service.
+var _ gatecam.Gate = (*gate.Service)(nil)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -125,6 +133,8 @@ func runHub(args []string) error {
 	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
 	accessCode := fs.String("access-code", os.Getenv("DEPOT_ACCESS_CODE"), "code people must enter to use the app (empty: none)")
+	fakeCamera := fs.Bool("fake-camera", false, "use a simulated camera (try the Camera page without one)")
+	go2rtcPath := fs.String("go2rtc", defaultGo2rtc(), "go2rtc executable for live video")
 	_ = fs.Parse(args)
 
 	rec, err := eng.build()
@@ -150,9 +160,24 @@ func runHub(args []string) error {
 
 	broker := httpapi.NewBroker()
 	svc := gate.New(st, bl, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, broker.Publish)
+
+	watcher := gatecam.New(svc, gatecam.DefaultConfig())
+	svc.SetReadHook(watcher.OnRead)
+	liveVideo := live.New(live.Config{Binary: *go2rtcPath, DataDir: data.dir})
+	cams := gatecam.NewManager(st, watcher, liveVideo, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) })
+	if *fakeCamera {
+		cams.UseFixed(camera.NewDemoFake())
+	}
+	if err := cams.Load(ctx); err != nil {
+		return err
+	}
 	if err := svc.Start(ctx); err != nil {
 		return err
 	}
+	var background sync.WaitGroup
+	background.Add(2)
+	go func() { defer background.Done(); watcher.Run(ctx) }()
+	go func() { defer background.Done(); liveVideo.Run(ctx) }() // stops go2rtc on exit
 
 	static := webui.Dist()
 	if static == nil {
@@ -162,6 +187,7 @@ func runHub(args []string) error {
 		Addr: *addr,
 		Handler: httpapi.New(httpapi.Options{
 			Service: svc, Store: st, Blobs: bl, Static: static, AccessCode: *accessCode, Version: Version,
+			Camera: cams, Live: liveVideo,
 		}, broker).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Requests inherit ctx, so live-update streams end on Ctrl+C.
@@ -172,6 +198,14 @@ func runHub(args []string) error {
 	go func() { errc <- server.Serve(ln) }()
 	name, model := svc.Engine()
 	log.Printf("depotd %s · engine %s (%s) · data %s · auto-accept %v", Version, name, model, data.dir, *autoAccept)
+	switch s := cams.Settings(); {
+	case *fakeCamera:
+		log.Print("camera: simulated (-fake-camera)")
+	case s.Configured():
+		log.Printf("camera: %s (automatic photos %v)", s.Host, s.Auto)
+	default:
+		log.Print("camera: not set up; open the Camera page")
+	}
 	for _, u := range lanURLs(*addr) {
 		log.Printf("open: %s", u)
 	}
@@ -187,6 +221,7 @@ func runHub(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
+	background.Wait()
 	svc.Wait()
 	return nil
 }
@@ -277,4 +312,17 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// defaultGo2rtc is go2rtc next to depotd itself (bin\go2rtc.exe).
+func defaultGo2rtc() string {
+	name := "go2rtc"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return name
+	}
+	return filepath.Join(filepath.Dir(exe), name)
 }
