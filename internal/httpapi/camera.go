@@ -100,9 +100,10 @@ func (s *Server) testCamera(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	rep := cam.Test(ctx)
-	// A wrong password stops polling until the settings change. A green test
-	// after that means the password works again, so polling resumes.
-	if rep.OK() && s.opts.Camera.Status().State == gatecam.StateAuth {
+	// A wrong password stops polling until the settings change. A test that
+	// logs in after that means the password works again, so polling resumes,
+	// even when a later step (live video port, still) has something to fix.
+	if rep.LoginOK() && s.opts.Camera.Status().State == gatecam.StateAuth {
 		s.opts.Camera.Reconnect()
 	}
 	writeJSON(w, http.StatusOK, rep)

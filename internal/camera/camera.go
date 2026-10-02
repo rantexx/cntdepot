@@ -65,6 +65,17 @@ func (r Report) OK() bool {
 	return len(r.Steps) > 0
 }
 
+// LoginOK reports whether the login step passed: the user name and password
+// work, whatever else failed.
+func (r Report) LoginOK() bool {
+	for _, s := range r.Steps {
+		if s.Name == "login" {
+			return s.OK
+		}
+	}
+	return false
+}
+
 // Camera errors. ErrAuth must stop polling: cameras lock logins after a few
 // wrong passwords.
 var (

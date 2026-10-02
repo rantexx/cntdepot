@@ -98,13 +98,19 @@ func (f *Fake) Test(ctx context.Context) Report {
 	if err != nil {
 		return Report{Steps: []Step{{Name: "reach", Detail: advice("reach", err)}}}
 	}
+	snap := Step{Name: "snapshot", OK: true, Detail: "1280×720"}
+	f.mu.Lock()
+	if f.snapErr != nil {
+		snap = Step{Name: "snapshot", Detail: advice("snapshot", f.snapErr)}
+	}
+	f.mu.Unlock()
 	return Report{Info: info, Raw: "fake camera", Steps: []Step{
 		{Name: "reach", OK: true, Detail: "fake camera"},
 		{Name: "login", OK: true},
 		{Name: "info", OK: true, Detail: info.Model},
 		{Name: "ports", OK: true, Detail: "a fake camera has no live video"},
 		{Name: "detect", OK: true, Detail: "vehicle detection"},
-		{Name: "snapshot", OK: true, Detail: "1280×720"},
+		snap,
 	}}
 }
 

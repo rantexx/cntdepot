@@ -711,4 +711,25 @@ func TestFakeCamera(t *testing.T) {
 	if !NewDemoFake().Test(ctx).OK() {
 		t.Fatal("demo fake test report is not green")
 	}
+	// A still that fails fails the snapshot step, after a good login.
+	if rep := f.Test(ctx); rep.OK() || !rep.LoginOK() || rep.Steps[len(rep.Steps)-1].Name != "snapshot" || rep.Steps[len(rep.Steps)-1].OK {
+		t.Fatalf("report with a failing still = %+v", rep)
+	}
+}
+
+func TestReportLoginOK(t *testing.T) {
+	for _, tc := range []struct {
+		steps []Step
+		want  bool
+	}{
+		{nil, false},
+		{[]Step{{Name: "reach"}}, false},
+		{[]Step{{Name: "reach", OK: true}, {Name: "login"}}, false},
+		{[]Step{{Name: "reach", OK: true}, {Name: "login", OK: true}, {Name: "info"}}, true},
+		{[]Step{{Name: "reach", OK: true}, {Name: "login", OK: true}, {Name: "snapshot", OK: true}}, true},
+	} {
+		if got := (Report{Steps: tc.steps}).LoginOK(); got != tc.want {
+			t.Errorf("LoginOK(%+v) = %v; want %v", tc.steps, got, tc.want)
+		}
+	}
 }

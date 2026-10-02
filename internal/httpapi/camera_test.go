@@ -308,3 +308,25 @@ func TestAGreenTestAfterAWrongPasswordResumesPolling(t *testing.T) {
 	}
 	waitCameraState(t, srv, gatecam.StateOnline)
 }
+
+func TestATestThatLogsInAfterAWrongPasswordResumesPolling(t *testing.T) {
+	srv, cam := newCameraServerWithFake(t, true)
+	c := srv.Client()
+	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+		t.Fatalf("PUT = %d %s", status, body)
+	}
+	waitCameraState(t, srv, gatecam.StateOnline)
+	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
+	waitCameraState(t, srv, gatecam.StateAuth)
+
+	// The password works again, but the still fails: the test is not all
+	// green, yet its login passed, so polling resumes.
+	cam.SetDetectErr(nil)
+	cam.SetSnapErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	status, body := call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	var rep camera.Report
+	if status != 200 || json.Unmarshal(body, &rep) != nil || rep.OK() || !rep.LoginOK() {
+		t.Fatalf("test = %d %s; want a passed login and a failed still", status, body)
+	}
+	waitCameraState(t, srv, gatecam.StateOnline)
+}
