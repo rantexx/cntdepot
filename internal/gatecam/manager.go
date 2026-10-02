@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +48,11 @@ type Manager struct {
 	live    LiveSink
 	build   Builder
 
+	// saveMu makes each Save, Load and Reconnect whole: read the settings,
+	// store them, apply them. Two pages saving at once must not lose either
+	// change, nor leave the camera on the older settings.
+	saveMu sync.Mutex
+
 	mu      sync.Mutex
 	current camera.Settings
 	fixed   camera.Camera // replaces the saved settings (depotd hub -fake-camera)
@@ -68,6 +73,8 @@ func (m *Manager) UseFixed(cam camera.Camera) {
 
 // Load reads the saved settings and applies them.
 func (m *Manager) Load(ctx context.Context) error {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
 	vals, err := m.store.Settings(ctx, "camera.")
 	if err != nil {
 		return err
@@ -86,6 +93,8 @@ func (m *Manager) Settings() camera.Settings {
 
 // Save validates, stores and applies an update.
 func (m *Manager) Save(ctx context.Context, u Update) (camera.Settings, error) {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
 	s := m.Settings()
 	if u.Host != nil {
 		s.Host = strings.TrimSpace(*u.Host)
@@ -118,16 +127,38 @@ func (m *Manager) Save(ctx context.Context, u Update) (camera.Settings, error) {
 }
 
 // apply hands the settings to the watcher and the live video. Changing only
-// the automatic switch keeps the connection.
+// the automatic switch keeps a working connection; saving again after a wrong
+// password or while the camera is offline connects afresh. Callers hold
+// saveMu.
 func (m *Manager) apply(s camera.Settings) {
 	m.mu.Lock()
 	prev, fixed, applied := m.current, m.fixed, m.applied
 	m.current, m.applied = s, true
 	m.mu.Unlock()
 	m.watcher.SetAuto(s.Auto)
-	if applied && prev.Host == s.Host && prev.User == s.User && prev.Password == s.Password {
+	state := m.watcher.Status().State
+	if applied && prev.Host == s.Host && prev.User == s.User && prev.Password == s.Password &&
+		state != StateAuth && state != StateOffline {
 		return
 	}
+	m.connect(s, fixed)
+}
+
+// Reconnect connects afresh with the current settings (or the fixed camera),
+// for example after a successful setup test following a wrong password: a
+// camera stopped by a wrong password is never polled again on its own.
+func (m *Manager) Reconnect() {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	m.mu.Lock()
+	s, fixed := m.current, m.fixed
+	m.mu.Unlock()
+	m.connect(s, fixed)
+}
+
+// connect builds a new camera, which forgets any password it saw rejected,
+// and hands it to the watcher and the live video. Callers hold saveMu.
+func (m *Manager) connect(s camera.Settings, fixed camera.Camera) {
 	var cam camera.Camera
 	switch {
 	case fixed != nil:
@@ -152,26 +183,30 @@ func (m *Manager) Camera() camera.Camera { return m.watcher.Camera() }
 // Capture starts a visit by hand.
 func (m *Manager) Capture(ctx context.Context) (string, error) { return m.watcher.Capture(ctx) }
 
+// hostPattern is an IPv4 address or a name, optionally with a port: letters,
+// digits, dots and hyphens only.
+var hostPattern = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+
 // checkHost accepts an IPv4 address or a name, optionally with a port, and
-// nothing else: no scheme, path or credentials.
+// nothing else: no scheme, path, credentials, brackets or control
+// characters. "" means no camera.
 func checkHost(h string) error {
 	if h == "" {
 		return nil // no camera
 	}
 	bad := fmt.Errorf("%w: enter only the camera's address, for example 192.168.1.50", ErrBadSettings)
-	if len(h) > 253 || strings.ContainsAny(h, "/\\@?#% \t") {
+	if len(h) > 253 || !hostPattern.MatchString(h) {
 		return bad
 	}
-	host := h
-	if hh, port, err := net.SplitHostPort(h); err == nil {
+	host, port, hasPort := strings.Cut(h, ":")
+	if hasPort {
 		n, err := strconv.Atoi(port)
 		if err != nil || n < 1 || n > 65535 {
 			return bad
 		}
-		host = hh
 	}
-	if host == "" || strings.Contains(host, ":") {
-		return bad
+	if host == "" || strings.Trim(host, ".-") != host {
+		return bad // no leading or trailing dots or hyphens
 	}
 	return nil
 }
