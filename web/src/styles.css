@@ -82,3 +82,12 @@ button:disabled { opacity: 0.5; cursor: default; }
 .tile b { font-size: 1.3rem; }
 figure { margin: 0; }
 pre { white-space: pre-wrap; word-break: break-all; font-size: 0.8rem; }
+.live-video { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; object-fit: contain; display: block; }
+.light { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; }
+.light.on { background: var(--ok); }
+.light.bad { background: var(--bad); }
+.steps { list-style: none; padding: 0; display: grid; gap: 4px; }
+.steps li.ok::before { content: "✔ "; color: var(--ok); }
+.steps li.bad::before { content: "✖ "; color: var(--bad); }
+.chip-no_container { background: var(--border); color: var(--muted); }
+details > summary { cursor: pointer; margin: 12px 0; }

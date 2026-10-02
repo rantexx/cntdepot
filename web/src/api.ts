@@ -1,6 +1,6 @@
 // Typed client for the hub API. Field names match the Go JSON tags.
 
-export type Status = "capturing" | "reading" | "needs_review" | "accepted" | "refused";
+export type Status = "capturing" | "reading" | "needs_review" | "accepted" | "refused" | "no_container";
 
 export interface Photo {
   id: string;
@@ -14,6 +14,7 @@ export interface Photo {
   width: number;
   height: number;
   captured_at: string;
+  deferred: boolean;
 }
 
 export interface Candidate {
@@ -49,6 +50,7 @@ export interface Move {
   id: string;
   lane: string;
   direction: string;
+  source: "phone" | "camera";
   status: Status;
   number: string;
   type_code: string;
@@ -145,6 +147,64 @@ export interface Health {
   auth_required: boolean;
 }
 
+export interface CameraInfo {
+  model: string;
+  firmware: string;
+  width: number;
+  height: number;
+  rtsp: boolean;
+  detection: string;
+}
+
+export type CameraState = "unconfigured" | "connecting" | "online" | "offline" | "auth";
+
+export interface CameraStatus {
+  state: CameraState;
+  since: string;
+  error?: string;
+  vehicle: boolean;
+  detection: string;
+  info: CameraInfo;
+  auto: boolean;
+  visit_move?: string;
+}
+
+export interface LiveStatus {
+  state: "off" | "missing" | "running" | "failing";
+  reason?: string;
+}
+
+export interface CameraView {
+  available: boolean;
+  settings: { host: string; user: string; password_set: boolean; auto: boolean };
+  status: CameraStatus;
+  live: LiveStatus;
+}
+
+export type CameraStepName = "reach" | "login" | "info" | "ports" | "detect" | "snapshot";
+
+export interface CameraReport {
+  steps: { name: CameraStepName; ok: boolean; detail?: string }[] | null;
+  info: CameraInfo;
+  raw: string;
+}
+
+export interface CameraRead {
+  still: string;
+  width: number;
+  height: number;
+  result: TestReadResult;
+  letter_px: number;
+  verdict: "" | "good" | "borderline" | "too_small";
+}
+
+export interface CameraUpdate {
+  host?: string;
+  user?: string;
+  password?: string;
+  auto?: boolean;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -197,7 +257,10 @@ function postJSON(body: unknown): RequestInit {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
-export const blobUrl = (digest: string) => `/api/blobs/${digest}`;
+// blobUrl links a stored photo. With a width the hub sends a small JPEG
+// preview instead, so phones do not download 4K camera stills.
+export type PreviewWidth = 160 | 320 | 640 | 1280;
+export const blobUrl = (digest: string, w?: PreviewWidth) => (w ? `/api/blobs/${digest}?w=${w}` : `/api/blobs/${digest}`);
 
 // typedNumber normalizes a container number typed on a phone keyboard. A Turkish
 // keyboard produces İ and ı, which are not in the A-Z alphabet of container
@@ -237,4 +300,21 @@ export const api = {
     form.append("ai", ai, "ai.jpg");
     return callWithTimeout<TestReadResult>("/api/test-read", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
   },
+  listMovesBy: (f: { status?: string; source?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (f.status) q.set("status", f.status);
+    if (f.source) q.set("source", f.source);
+    q.set("limit", String(f.limit ?? 100));
+    return call<{ moves: Move[] }>(`/api/moves?${q.toString()}`);
+  },
+  camera: () => call<CameraView>("/api/camera"),
+  saveCamera: (u: CameraUpdate) =>
+    call<CameraView>("/api/camera", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(u),
+    }),
+  testCamera: () => callWithTimeout<CameraReport>("/api/camera/test", { method: "POST" }, 45_000),
+  readCamera: () => callWithTimeout<CameraRead>("/api/camera/read", { method: "POST" }, UPLOAD_TIMEOUT_MS),
+  captureCamera: () => call<{ move_id: string }>("/api/camera/capture", { method: "POST" }),
 };
