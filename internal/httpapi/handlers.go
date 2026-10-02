@@ -199,6 +199,12 @@ func (s *Server) reread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
+	// Check ?w= first: a bad width costs no disk read and is refused the same
+	// way whether or not the blob exists.
+	width, ok := previewWidth(w, r)
+	if !ok {
+		return
+	}
 	data, err := s.opts.Blobs.Get(r.PathValue("digest"))
 	switch {
 	case errors.Is(err, blob.ErrBadDigest):
@@ -211,11 +217,9 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	width, ok := previewWidth(w, r)
-	if !ok {
-		return
-	}
 	if width > 0 {
+		// Any Scale error, such as an image too large to decode, serves the
+		// original: the browser decodes it, not the hub.
 		if small, err := thumb.Scale(data, width); err == nil {
 			data = small
 		}

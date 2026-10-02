@@ -563,6 +563,18 @@ func TestBlobPreviewWidthIsChecked(t *testing.T) {
 	if status, body := call(t, client, "GET", srv.URL+"/api/blobs/"+digest+"?w=999", ""); status != 400 || errorCode(body) != "E4006" {
 		t.Fatalf("w=999 = %d %s; want 400 E4006", status, body)
 	}
+	if status, body := call(t, client, "GET", srv.URL+"/api/blobs/"+digest+"?w=abc", ""); status != 400 || errorCode(body) != "E4006" {
+		t.Fatalf("w=abc = %d %s; want 400 E4006", status, body)
+	}
+	// The width is checked before the blob is read, so a bad one is a 400 even
+	// for a digest that does not exist; a good one on that digest is a 404.
+	missing := strings.Repeat("0", 64)
+	if status, body := call(t, client, "GET", srv.URL+"/api/blobs/"+missing+"?w=abc", ""); status != 400 || errorCode(body) != "E4006" {
+		t.Fatalf("missing digest with w=abc = %d %s; want 400 E4006", status, body)
+	}
+	if status, body := call(t, client, "GET", srv.URL+"/api/blobs/"+missing+"?w=320", ""); status != 404 || errorCode(body) != "E4042" {
+		t.Fatalf("missing digest with w=320 = %d %s; want 404 E4042", status, body)
+	}
 	// The test photo is not a real image: a preview falls back to the original.
 	if status, _ := call(t, client, "GET", srv.URL+"/api/blobs/"+digest+"?w=320", ""); status != 200 {
 		t.Fatalf("w=320 = %d; want 200", status)
