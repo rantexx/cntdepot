@@ -196,11 +196,31 @@ func TestManagerUseFixedIgnoresSavedSettings(t *testing.T) {
 	}
 }
 
+// closeCounter is a fake camera that counts Close calls.
+type closeCounter struct {
+	*camera.Fake
+	mu     sync.Mutex
+	closes int
+}
+
+func (c *closeCounter) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closes++
+}
+
+func (c *closeCounter) closed() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closes
+}
+
 // fakeBuilder builds fake cameras; the first one answers with firstErr.
 type fakeBuilder struct {
 	mu       sync.Mutex
 	firstErr error
 	built    []camera.Settings
+	cams     []*closeCounter
 }
 
 func (b *fakeBuilder) build(s camera.Settings) camera.Camera {
@@ -211,7 +231,20 @@ func (b *fakeBuilder) build(s camera.Settings) camera.Camera {
 		f.SetDetectErr(b.firstErr)
 	}
 	b.built = append(b.built, s)
-	return f
+	c := &closeCounter{Fake: f}
+	b.cams = append(b.cams, c)
+	return c
+}
+
+// closes is how often each built camera was closed, in build order.
+func (b *fakeBuilder) closes() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := []int{}
+	for _, c := range b.cams {
+		n = append(n, c.closed())
+	}
+	return fmt.Sprint(n)
 }
 
 func (b *fakeBuilder) count() int {
@@ -369,5 +402,93 @@ func TestConcurrentSavesKeepBothChanges(t *testing.T) {
 		if !w.Status().Auto || b.last().Host != "192.168.1.51" {
 			t.Fatalf("round %d: watcher auto %v, camera %+v; want both changes applied", i, w.Status().Auto, b.last())
 		}
+	}
+}
+
+func TestReplacedCamerasAreClosed(t *testing.T) {
+	st, _ := testkit.Open(t)
+	w := New(newFakeGate(), DefaultConfig())
+	b := &fakeBuilder{firstErr: fmt.Errorf("%w: login failed", camera.ErrAuth)}
+	m := NewManager(st, w, &fakeLive{}, b.build)
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Save(ctx, setupUpdate()); err != nil {
+		t.Fatal(err)
+	}
+	w.poll(ctx) // wrong password
+	m.Reconnect()
+	if got := b.closes(); got != "[1 0]" {
+		t.Fatalf("closes after Reconnect = %s; want the first camera closed once", got)
+	}
+	w.poll(ctx) // online
+	if _, err := m.Save(ctx, Update{Auto: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.closes(); got != "[1 0]" {
+		t.Fatalf("closes after switching auto = %s; want the working camera kept open", got)
+	}
+	if _, err := m.Save(ctx, Update{Host: ptr("192.168.1.51"), Password: ptr(setupPassword)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.closes(); got != "[1 1 0]" {
+		t.Fatalf("closes after a new address = %s; want the old camera closed", got)
+	}
+	if _, err := m.Save(ctx, Update{Host: ptr(""), User: ptr(""), Password: ptr("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.closes(); got != "[1 1 1]" || w.Camera() != nil {
+		t.Fatalf("closes after removing the camera = %s, camera %v; want the last one closed", got, w.Camera())
+	}
+	m.Close() // no camera: nothing to close
+}
+
+func TestCloseClosesTheCurrentCamera(t *testing.T) {
+	st, _ := testkit.Open(t)
+	w := New(newFakeGate(), DefaultConfig())
+	b := &fakeBuilder{}
+	m := NewManager(st, w, &fakeLive{}, b.build)
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Save(ctx, setupUpdate()); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	if got := b.closes(); got != "[1]" {
+		t.Fatalf("closes = %s; want the current camera closed", got)
+	}
+}
+
+func TestTheFixedCameraIsClosedOnlyByClose(t *testing.T) {
+	st, _ := testkit.Open(t)
+	w := New(newFakeGate(), DefaultConfig())
+	fixed := &closeCounter{Fake: camera.NewFake(camera.DemoStill())}
+	m := NewManager(st, w, &fakeLive{}, func(camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil })
+	m.UseFixed(fixed)
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m.Reconnect()
+	m.Reconnect()
+	if _, err := m.Save(ctx, setupUpdate()); err != nil {
+		t.Fatal(err)
+	}
+	if n := fixed.closed(); n != 0 {
+		t.Fatalf("the fixed camera was closed %d times while in use", n)
+	}
+	m.Close()
+	if n := fixed.closed(); n != 1 {
+		t.Fatalf("closes = %d; want 1 on shutdown", n)
+	}
+
+	// The real fake camera's Close does nothing, however often it is called.
+	plain := camera.NewFake(camera.DemoStill())
+	m.UseFixed(plain)
+	m.Reconnect()
+	m.Close()
+	m.Close()
+	if _, err := plain.Detect(ctx); err != nil {
+		t.Fatalf("the fake camera after Close: %v", err)
 	}
 }

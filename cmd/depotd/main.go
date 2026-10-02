@@ -222,6 +222,7 @@ func runHub(args []string) error {
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 	background.Wait()
+	cams.Close() // log out of the camera: it allows only a few sessions
 	svc.Wait()
 	return nil
 }

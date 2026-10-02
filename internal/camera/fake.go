@@ -89,6 +89,10 @@ func (f *Fake) Detect(ctx context.Context) (Detection, error) {
 // LiveSource is empty: a fake camera has no video, so pages show stills.
 func (f *Fake) LiveSource() string { return "" }
 
+// Close does nothing: a fake camera has no session, and the -fake-camera one
+// stays in use whatever happens to the saved settings.
+func (f *Fake) Close() {}
+
 func (f *Fake) Test(ctx context.Context) Report {
 	info, err := f.Info(ctx)
 	if err != nil {

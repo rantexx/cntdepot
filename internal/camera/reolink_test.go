@@ -32,7 +32,8 @@ type fakeAPI struct {
 	logouts    []string             // the token of every Logout
 	failNext   map[string][]failure // one scripted bad answer per command, in turn
 	hold       chan struct{}        // when set, commands with a dead token wait for it to close
-	held       int                  // commands that waited on hold
+	loginHold  chan struct{}        // when set, Login waits for it to close
+	held       int                  // commands that waited on hold or loginHold
 }
 
 // failure is one scripted bad answer, sent once the session token checks
@@ -54,6 +55,10 @@ func (f *fakeAPI) arrive(r *http.Request) chan struct{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	q := r.URL.Query()
+	if f.loginHold != nil && q.Get("cmd") == "Login" {
+		f.held++
+		return f.loginHold
+	}
 	if f.hold == nil || q.Get("cmd") == "Login" || q.Get("cmd") == "Logout" || f.alive(q.Get("token")) {
 		return nil
 	}
@@ -606,6 +611,78 @@ func TestReolinkLiveSourceUsesTheSubStreamOnPort554(t *testing.T) {
 	if got := cam.LiveSource(); got != want {
 		t.Fatalf("LiveSource = %s; want %s", got, want)
 	}
+}
+
+func TestReolinkCloseLogsOutAndStops(t *testing.T) {
+	api, cam := newFakeCamera(t)
+	if _, err := cam.Detect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cam.Close()
+	api.set(func(f *fakeAPI) {
+		if strings.Join(f.logouts, ",") != "tok1" || f.session != "" {
+			t.Errorf("logouts = %q, session %q; want tok1 logged out", f.logouts, f.session)
+		}
+	})
+	_, detectErr := cam.Detect(ctx)
+	_, snapErr := cam.Snapshot(ctx)
+	_, infoErr := cam.Info(ctx)
+	for name, err := range map[string]error{"Detect": detectErr, "Snapshot": snapErr, "Info": infoErr} {
+		// Unreachable, never ErrAuth: closing says nothing about the password.
+		if !errors.Is(err, ErrUnreachable) || errors.Is(err, ErrAuth) {
+			t.Errorf("%s after Close = %v; want ErrUnreachable", name, err)
+		}
+	}
+	cam.Close() // twice is harmless
+	api.set(func(f *fakeAPI) {
+		if strings.Join(f.cmds, ",") != "Login,GetAiState,Logout" {
+			t.Errorf("requests = %v; want nothing sent after Close", f.cmds)
+		}
+	})
+}
+
+func TestReolinkCloseWithoutASessionSendsNothing(t *testing.T) {
+	api, cam := newFakeCamera(t)
+	cam.Close()
+	api.set(func(f *fakeAPI) {
+		if len(f.cmds) != 0 {
+			t.Errorf("requests = %v; want none: there was no session", f.cmds)
+		}
+	})
+}
+
+func TestReolinkALoginThatEndsAfterCloseIsLoggedOut(t *testing.T) {
+	api, cam := newFakeCamera(t)
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	api.set(func(f *fakeAPI) { f.loginHold = hold })
+	errc := make(chan error, 1)
+	go func() {
+		_, err := cam.Detect(ctx)
+		errc <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		held := 0
+		api.set(func(f *fakeAPI) { held = f.held })
+		if held > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the Login never reached the camera")
+		}
+	}
+	cam.Close() // the session is not there yet
+	release()
+	if err := <-errc; !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("Detect = %v; want ErrUnreachable once closed", err)
+	}
+	api.set(func(f *fakeAPI) {
+		if strings.Join(f.cmds, ",") != "Login,Logout" || strings.Join(f.logouts, ",") != "tok1" || f.session != "" {
+			t.Errorf("requests = %v, logouts %q; want the late session logged out and nothing else sent", f.cmds, f.logouts)
+		}
+	})
 }
 
 func TestFakeCamera(t *testing.T) {

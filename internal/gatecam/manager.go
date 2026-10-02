@@ -167,7 +167,9 @@ func (m *Manager) Reconnect() {
 }
 
 // connect builds a new camera, which forgets any password it saw rejected,
-// and hands it to the watcher and the live video. Callers hold saveMu.
+// and hands it to the watcher and the live video. The camera it replaces is
+// closed, which frees its session on the camera; the fixed camera is never
+// replaced by itself, so it is never closed here. Callers hold saveMu.
 func (m *Manager) connect(s camera.Settings, fixed camera.Camera) {
 	var cam camera.Camera
 	switch {
@@ -176,12 +178,26 @@ func (m *Manager) connect(s camera.Settings, fixed camera.Camera) {
 	case s.Configured():
 		cam = m.build(s)
 	}
+	prev := m.watcher.Camera()
 	m.watcher.SetCamera(cam)
 	src := ""
 	if cam != nil {
 		src = cam.LiveSource()
 	}
 	m.live.SetSource(src)
+	if prev != nil && prev != cam {
+		prev.Close()
+	}
+}
+
+// Close closes the current camera, which logs its session out. The hub calls
+// it once the watcher has stopped.
+func (m *Manager) Close() {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	if cam := m.watcher.Camera(); cam != nil {
+		cam.Close()
+	}
 }
 
 // Status is the watcher's camera status.

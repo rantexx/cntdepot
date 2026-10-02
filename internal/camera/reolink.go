@@ -25,7 +25,8 @@ import (
 //
 // A wrong password stops it: after a rejected Login every call fails with
 // that ErrAuth without contacting the camera, so polling cannot lock the
-// account. Only Test tries again. New settings mean a new Reolink.
+// account. Only Test tries again. New settings mean a new Reolink, and Close
+// logs the old one out.
 type Reolink struct {
 	host, user, password string
 	client               *http.Client
@@ -37,6 +38,7 @@ type Reolink struct {
 	token    string
 	tokenEnd time.Time
 	authErr  error  // the camera rejected the user name or password
+	closed   bool   // Close was called: no new sessions
 	kind     string // detection kind, once known
 	raw      string // last API answer, token and password removed
 }
@@ -60,8 +62,12 @@ const (
 	rspNotSupported = -9 // "not support": this camera has no such command
 )
 
-// logoutTimeout bounds the best-effort Logout before a new Login.
+// logoutTimeout bounds the best-effort Logout before a new Login and in Close.
 const logoutTimeout = 2 * time.Second
+
+// errClosed is a call after Close. It is never ErrAuth: a replaced camera
+// says nothing about the password.
+var errClosed = fmt.Errorf("%w: the connection to the camera was closed", ErrUnreachable)
 
 type apiReply struct {
 	Cmd   string          `json:"cmd"`
@@ -159,10 +165,14 @@ func (c *Reolink) cmd(ctx context.Context, name string, param, out any) error {
 	}
 }
 
-// rejected is the remembered ErrAuth of a wrong password, or nil.
+// rejected is why no call may log in: Close, or the remembered ErrAuth of a
+// wrong password. nil means none.
 func (c *Reolink) rejected() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return errClosed
+	}
 	return c.authErr
 }
 
@@ -194,8 +204,11 @@ func (c *Reolink) retryLogin(ctx context.Context) (string, error) {
 // loginLocked is login with loginMu held.
 func (c *Reolink) loginLocked(ctx context.Context, stale string) (string, error) {
 	c.mu.Lock()
-	token, valid, rejected := c.token, c.token != "" && c.now().Before(c.tokenEnd), c.authErr
+	token, valid, rejected, closed := c.token, c.token != "" && c.now().Before(c.tokenEnd), c.authErr, c.closed
 	c.mu.Unlock()
+	if closed {
+		return "", errClosed
+	}
 	if rejected != nil {
 		return "", rejected
 	}
@@ -237,9 +250,26 @@ func (c *Reolink) loginLocked(ctx context.Context, stale string) (string, error)
 	}
 	lease := max(time.Duration(v.Token.LeaseTime)*time.Second, 2*time.Minute)
 	c.mu.Lock()
+	if c.closed {
+		// Closed while logging in: nobody will use or log out this session.
+		c.mu.Unlock()
+		c.logout(context.WithoutCancel(ctx), v.Token.Name)
+		return "", errClosed
+	}
 	c.token, c.tokenEnd = v.Token.Name, c.now().Add(lease-time.Minute) // renew a minute early
 	c.mu.Unlock()
 	return v.Token.Name, nil
+}
+
+// Close logs the session out, best effort and within logoutTimeout, and
+// makes every later call fail without contacting the camera. It does not
+// wait for calls in flight: one that logs in meanwhile logs its session out.
+func (c *Reolink) Close() {
+	c.mu.Lock()
+	token := c.token
+	c.closed, c.token, c.tokenEnd = true, "", time.Time{}
+	c.mu.Unlock()
+	c.logout(context.Background(), token)
 }
 
 // logout ends the session of token, best effort. It is never sent without a

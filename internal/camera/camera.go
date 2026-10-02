@@ -91,6 +91,10 @@ type Camera interface {
 	LiveSource() string
 	// Test checks the connection step by step.
 	Test(ctx context.Context) Report
+	// Close ends the camera's session, best effort, so the few sessions a
+	// camera allows are not left taken until they time out. Calls after
+	// Close fail. Closing twice is harmless.
+	Close()
 }
 
 // advice turns a failed step into what the person should do.
