@@ -71,9 +71,10 @@ type Status struct {
 }
 
 var (
-	ErrNoCamera = errors.New("no camera is set up")
-	ErrBusy     = errors.New("a visit is already running")
-	ErrStopped  = errors.New("the camera watcher has stopped")
+	ErrNoCamera     = errors.New("no camera is set up")
+	ErrNotConnected = errors.New("the camera is not connected")
+	ErrBusy         = errors.New("a visit is already running")
+	ErrStopped      = errors.New("the camera watcher has stopped")
 )
 
 type readResult struct {
@@ -394,10 +395,18 @@ func (w *Watcher) track(now time.Time, vehicle bool) {
 	}
 }
 
+// startManual starts a "take photos now" visit. The camera must be online: an
+// offline camera would leave an empty move, and one rejecting the password
+// must not be asked again.
 func (w *Watcher) startManual(ctx context.Context, now time.Time) (string, error) {
-	cam := w.Camera()
+	w.mu.Lock()
+	cam, state := w.cam, w.status.State
+	w.mu.Unlock()
 	if cam == nil {
 		return "", ErrNoCamera
+	}
+	if state != StateOnline {
+		return "", ErrNotConnected
 	}
 	if w.visit != nil {
 		return "", ErrBusy

@@ -161,6 +161,8 @@ func (s *Server) captureCamera(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, gatecam.ErrNoCamera):
 		writeError(w, http.StatusConflict, "E4091", "no camera is set up yet")
+	case errors.Is(err, gatecam.ErrNotConnected):
+		writeError(w, http.StatusConflict, "E4093", "the camera is not connected")
 	case errors.Is(err, gatecam.ErrBusy):
 		writeError(w, http.StatusConflict, "E4092", "the camera is already taking photos of a vehicle")
 	case err != nil:

@@ -228,6 +228,7 @@ func TestTakePhotosNowCreatesACameraMove(t *testing.T) {
 	srv := newCameraServer(t, true)
 	c := srv.Client()
 	call(t, c, "PUT", srv.URL+"/api/camera", setupBody)
+	waitCameraState(t, srv, gatecam.StateOnline)
 	status, body := call(t, c, "POST", srv.URL+"/api/camera/capture", "")
 	var r struct {
 		MoveID string `json:"move_id"`
@@ -242,6 +243,23 @@ func TestTakePhotosNowCreatesACameraMove(t *testing.T) {
 	_, body = call(t, c, "GET", srv.URL+"/api/moves?source=phone", "")
 	if strings.Contains(string(body), r.MoveID) {
 		t.Fatalf("phone moves include the camera move: %s", body)
+	}
+}
+
+func TestTakePhotosNowNeedsAConnectedCamera(t *testing.T) {
+	srv, cam := newCameraServerWithFake(t, true)
+	c := srv.Client()
+	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+		t.Fatalf("PUT = %d %s", status, body)
+	}
+	waitCameraState(t, srv, gatecam.StateOnline)
+	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
+	waitCameraState(t, srv, gatecam.StateAuth)
+	if status, body := call(t, c, "POST", srv.URL+"/api/camera/capture", ""); status != 409 || errorCode(body) != "E4093" {
+		t.Fatalf("capture with a rejected password = %d %s; want 409 E4093", status, body)
+	}
+	if _, body := call(t, c, "GET", srv.URL+"/api/moves?source=camera", ""); strings.Contains(string(body), `"id"`) {
+		t.Fatalf("a refused capture made a move: %s", body)
 	}
 }
 

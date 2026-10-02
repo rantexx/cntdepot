@@ -218,9 +218,20 @@ func TestEveryStillIsReadWhenThereAreFewerThanEight(t *testing.T) {
 	}
 }
 
+// goOnline polls the camera once, as Run does when it starts, so the watcher
+// sees it online.
+func goOnline(t *testing.T, w *Watcher) {
+	t.Helper()
+	w.poll(ctx)
+	if s := w.Status(); s.State != StateOnline {
+		t.Fatalf("status = %+v; want online", s)
+	}
+}
+
 func TestManualCaptureTakesTenStills(t *testing.T) {
 	w, g, cam := newTestWatcher(t, DefaultConfig())
 	w.SetAuto(false)
+	goOnline(t, w)
 	id, err := w.startManual(ctx, at(0))
 	if err != nil || id != "m1" {
 		t.Fatalf("startManual = %q, %v", id, err)
@@ -250,6 +261,34 @@ func TestNothingStartsWithAutomaticPhotosOffOrWithoutACamera(t *testing.T) {
 	none := New(newFakeGate(), DefaultConfig())
 	if _, err := none.startManual(ctx, at(0)); !errors.Is(err, ErrNoCamera) {
 		t.Fatalf("startManual without camera = %v; want ErrNoCamera", err)
+	}
+}
+
+func TestTakePhotosNowNeedsTheCameraOnline(t *testing.T) {
+	w, g, cam := newTestWatcher(t, DefaultConfig())
+	w.SetAuto(false)
+	if _, err := w.startManual(ctx, at(0)); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("startManual while connecting = %v; want ErrNotConnected", err)
+	}
+	cam.SetDetectErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
+	w.poll(ctx)
+	if _, err := w.startManual(ctx, at(1)); w.Status().State != StateOffline || !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("startManual while %s = %v; want offline and ErrNotConnected", w.Status().State, err)
+	}
+	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
+	w.poll(ctx)
+	snaps := cam.Snaps()
+	if _, err := w.startManual(ctx, at(2)); w.Status().State != StateAuth || !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("startManual while %s = %v; want auth and ErrNotConnected", w.Status().State, err)
+	}
+	if moves, _, _, _ := g.snapshot(); len(moves) != 0 || cam.Snaps() != snaps || w.visit != nil {
+		t.Fatalf("moves = %v, stills %d; a refused capture made a move or asked the camera", moves, cam.Snaps()-snaps)
+	}
+	cam.SetDetectErr(nil)
+	w.SetCamera(cam) // the owner fixed the password: a fresh connection
+	goOnline(t, w)
+	if id, err := w.startManual(ctx, at(3)); err != nil || id != "m1" {
+		t.Fatalf("startManual once online = %q, %v", id, err)
 	}
 }
 
@@ -548,6 +587,11 @@ func TestCaptureGoesThroughRun(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { w.Run(runCtx); close(done) }()
+	for deadline := time.Now().Add(5 * time.Second); w.Status().State != StateOnline; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %+v; want Run's first poll to bring the camera online", w.Status())
+		}
+	}
 	id, err := w.Capture(ctx)
 	if err != nil || id != "m1" {
 		t.Fatalf("Capture = %q, %v", id, err)

@@ -263,9 +263,11 @@ export function Camera() {
             >
               {t("camReadFrame")}
             </button>
+            {/* An offline camera would leave an empty move, and one rejecting
+                the password must not be asked again. */}
             <button
               type="button"
-              disabled={busy !== "" || !!s.visit_move}
+              disabled={busy !== "" || !!s.visit_move || !online}
               onClick={() =>
                 void run("capture", async () => {
                   const r = await api.captureCamera();
