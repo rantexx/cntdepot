@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/*.html"
+        ],
+        "createdAt": "2026-10-22T12:32:24.330Z",
+        "reason": "Agent: decision sketches of the candidate directions (rejected ones use their own fonts by design); not product UI"
+      }
+    ]
+  }
+}
