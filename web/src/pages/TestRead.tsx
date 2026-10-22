@@ -33,7 +33,10 @@ export function TestRead() {
 
   const top = result?.frame.candidates?.[0]?.number ?? "";
   return (
-    <section>
+    <div className="page">
+      <div className="page-head">
+        <h1>{t("navTest")}</h1>
+      </div>
       <label className="shot-button">
         {t("choosePhoto")}
         <input
@@ -79,6 +82,6 @@ export function TestRead() {
           </details>
         </div>
       )}
-    </section>
+    </div>
   );
 }

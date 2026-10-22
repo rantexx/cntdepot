@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Depot Gate - Live gate (Gate Line Diagram)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@500;600;700;800&family=Overpass+Mono:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--m:#0F1C3F;--d:#0A1430;--p:#F2EFE6;--r:#D7263D;--c:#2E6FD8;--a:#F0A202;--g:#1B998B;--s:#172A57;--b:rgba(242,239,230,.14);--mu:rgba(242,239,230,.72)}
+*{box-sizing:border-box;margin:0}
+html,body{height:900px;width:1440px;overflow:hidden;background:var(--m);color:var(--p);font:400 14px/1.3 "Source Sans 3",system-ui,sans-serif}
+body{display:grid;grid-template-columns:216px 1fr}
+aside{background:var(--d);border-right:1px solid var(--b);display:flex;flex-direction:column;padding:18px 12px 16px}
+.brand{display:flex;align-items:center;gap:10px;font:700 18px "Overpass";padding:0 8px 22px;letter-spacing:.2px}
+.brand i{width:26px;height:26px;border-radius:50%;background:var(--c);display:grid;place-items:center}
+.brand i::after{content:"";width:12px;height:12px;border-radius:50%;background:var(--p);border:3px solid var(--d);box-sizing:content-box;margin:-3px}
+nav a{display:flex;align-items:center;gap:12px;height:40px;padding:0 10px;border-radius:6px;color:var(--mu);font:600 15px "Overpass";text-decoration:none;margin-bottom:2px}
+nav a::before{content:"";width:10px;height:10px;border-radius:50%;border:2px solid currentColor}
+nav a.on{background:rgba(46,111,216,.28);color:var(--p);box-shadow:inset 3px 0 0 var(--c)}
+nav a.on::before{background:var(--p);border-color:var(--p)}
+nav em{margin-left:auto;background:var(--a);color:var(--m);font:800 12px "Overpass";font-style:normal;min-width:20px;height:20px;border-radius:10px;display:grid;place-items:center}
+.stat{margin-top:auto;padding:0 8px;display:grid;gap:8px;font-size:13px;color:var(--mu)}
+.stat span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--g);margin-right:8px}
+.lang{display:flex;margin-top:14px;border:1px solid var(--b);border-radius:6px;overflow:hidden}
+.lang b{flex:1;text-align:center;padding:6px;font:700 13px "Overpass";color:var(--mu)}.lang b:first-child{background:var(--p);color:var(--m)}
+main{display:grid;grid-template-rows:56px 60px 160px 276px 1fr;gap:12px;padding:0 24px 14px;min-width:0}
+.top{display:flex;align-items:center;gap:14px}
+h1{font:800 28px "Overpass";letter-spacing:-.2px}.top small{color:var(--mu);font-size:14px}
+.clock{margin-left:auto;font:700 22px "Overpass Mono"}
+.panel{background:var(--s);border:1px solid var(--b);border-radius:8px;overflow:hidden}
+.today{display:grid;grid-template-columns:repeat(5,1fr)}
+.today>div{display:flex;align-items:center;gap:12px;padding:0 18px;border-left:1px solid var(--b);border-top:4px solid var(--k)}
+.today>div:first-child{border-left:0}
+.today b{font:800 32px "Overpass";line-height:1}.today span{font-size:13px;color:var(--mu);line-height:1.25}.today span i{display:block;font-style:normal;color:var(--p)}
+.bar{display:block;height:5px;width:100px;background:rgba(242,239,230,.18);border-radius:3px;margin-top:5px}.bar::after{content:"";display:block;height:5px;width:63%;background:var(--g);border-radius:3px}
+.ph{display:flex;align-items:center;gap:14px;height:34px;padding:0 16px;border-bottom:1px solid var(--b)}
+.ph h2{font:700 15px "Overpass";letter-spacing:.6px;text-transform:uppercase}.ph small{color:var(--mu);font-size:13px}
+.leg{margin-left:auto;display:flex;gap:16px;font-size:13px;color:var(--mu)}.leg i{display:inline-block;width:18px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle}
+svg{display:block}svg text{font-family:Overpass,sans-serif}
+.row{display:grid;grid-template-columns:1fr 488px;gap:12px}
+.cam{position:relative;background:radial-gradient(ellipse at 60% 30%,#1c2a44,#070b14 75%);border-radius:8px;border:1px solid var(--b);overflow:hidden}
+.floor{position:absolute;left:0;right:0;bottom:0;height:46px;background:linear-gradient(#0c1220,#05070c)}
+.doors{position:absolute;left:170px;top:26px;width:320px;height:196px;background:#2a5cb8;border:4px solid #1d4590;display:grid;grid-template-columns:1fr 1fr}
+.doors u{background:repeating-linear-gradient(90deg,rgba(6,16,40,.38) 0 4px,transparent 4px 24px);box-shadow:inset 0 0 0 3px rgba(6,16,40,.35)}
+.doors u+u{border-left:3px solid #0d2556}
+.doors s{position:absolute;top:60px;width:5px;height:104px;background:#9db4d9;border-radius:2px}
+.chassis{position:absolute;left:150px;top:222px;width:360px;height:14px;background:#3a4252;border-radius:2px}
+.wheel{position:absolute;top:232px;width:46px;height:46px;border-radius:50%;background:#10141c;border:5px solid #2b313d}
+.det{position:absolute;left:372px;top:46px;width:112px;height:46px;border:3px solid var(--a);border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.det b{position:absolute;top:-20px;left:-3px;background:var(--a);color:var(--m);font:700 11px "Overpass Mono";padding:2px 6px}
+.det::after{content:"";position:absolute;left:8px;top:12px;width:84px;height:6px;background:rgba(242,239,230,.85);box-shadow:0 12px 0 rgba(242,239,230,.6)}
+.tag{position:absolute;background:rgba(10,20,48,.86);border:1px solid var(--b);border-radius:5px;padding:4px 10px;font:600 13px "Overpass"}
+.tag.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--g);margin-right:7px}
+.read{padding:16px 18px;display:flex;flex-direction:column}
+.read .lab{display:flex;align-items:center;font:700 13px "Overpass";letter-spacing:.8px;text-transform:uppercase;color:var(--mu)}
+.num{font:700 40px/1.1 "Overpass Mono";letter-spacing:-.5px;margin-top:8px}.num em{font-style:normal;border:3px solid var(--g);border-radius:6px;padding:0 6px;margin-left:4px;color:#46C9B8}
+.ok{color:#46C9B8;font:600 14px "Overpass";margin-top:6px}.ok::before{content:"\2713  "}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+.facts div{border-top:2px solid var(--b);padding-top:6px;font-size:12px;color:var(--mu)}.facts b{display:block;font:700 18px "Overpass";color:var(--p);margin-top:2px}
+.facts .sw{display:inline-block;width:12px;height:12px;border-radius:3px;background:#2a5cb8;margin-right:6px;vertical-align:-1px}
+.btns{display:flex;gap:10px}.btns button{height:44px;border-radius:6px;font:700 16px "Overpass";cursor:pointer}
+.pri{flex:1.4;background:var(--g);color:#04211e;border:0}.sec{flex:1;background:transparent;color:var(--p);border:2px solid var(--p)}
+.note{margin-top:auto;font-size:13px;color:var(--mu)}
+.vis{display:flex;flex-direction:column}
+table{width:100%;border-collapse:collapse}
+th{height:26px;text-align:left;font:700 12px "Overpass";letter-spacing:.7px;text-transform:uppercase;color:var(--mu);padding:0 16px;background:rgba(10,20,48,.45)}
+td{height:27px;padding:0 16px;border-top:1px solid var(--b);font-size:14px}
+td:nth-child(2),td:nth-child(1),td:nth-child(3){font-family:"Overpass Mono";font-weight:500;font-size:13.5px}
+tr.rv td{background:rgba(240,162,2,.12)}tr.rv td:first-child{box-shadow:inset 4px 0 0 var(--a)}tr.cur td{background:rgba(46,111,216,.16)}
+.r{text-align:right}
+.ch{display:inline-block;min-width:104px;text-align:center;padding:1px 10px;border-radius:11px;font:700 12px "Overpass";margin-right:10px}
+.ch.g{background:var(--g);color:#04211e}.ch.a{background:var(--a);color:var(--m)}.ch.x{background:var(--r);color:#fff}.ch.c{background:var(--c);color:#fff}.ch.n{border:1px solid var(--mu);color:var(--mu)}
+.ch::before{margin-right:5px}.ch.g::before{content:"\2713"}.ch.a::before{content:"!"}.ch.x::before{content:"\2715"}.ch.c::before{content:"\25CF"}.ch.n::before{content:"\2013"}
+td button{height:22px;padding:0 10px;border-radius:4px;border:1.5px solid var(--a);background:transparent;color:var(--a);font:700 12px "Overpass";cursor:pointer}
+</style></head><body>
+<aside><div class="brand"><i></i>Depot Gate</div>
+<nav><a class="on">Live gate</a><a>Review queue<em>2</em></a><a>Trucks</a><a>Camera</a><a>Reports</a><a>Settings</a></nav>
+<div class="stat"><span>Camera online</span><span>Reading engine online</span></div>
+<div class="lang"><b>EN</b><b>TR</b></div></aside>
+<main>
+<div class="top"><h1>Live gate</h1><small>GATE 1 &middot; Tue 20 Oct 2026</small><div class="clock">14:32:11</div></div>
+<section class="panel today">
+<div style="--k:var(--p)"><b>47</b><span>trucks in<i>today</i></span></div>
+<div style="--k:var(--c)"><b>41</b><span>read<i>automatically</i></span></div>
+<div style="--k:var(--g)"><b>5</b><span>confirmed<i>by a person</i></span></div>
+<div style="--k:var(--r)"><b>1</b><span>refused<i>today</i></span></div>
+<div style="--k:var(--g)"><b>38 s</b><span>avg gate time<i>target 60 s</i><u class="bar"></u></span></div>
+</section>
+<section class="panel"><div class="ph"><h2>Read pipeline &middot; Gate 1</h2><small>Where each truck is on its line</small>
+<div class="leg"><span><i style="background:var(--c)"></i>Reading</span><span><i style="background:var(--a)"></i>Needs review</span><span><i style="background:var(--g)"></i>Confirmed</span><span><i style="background:var(--r)"></i>Refused</span></div></div>
+<svg width="1176" height="125" viewBox="0 0 1176 125" fill="none" stroke-linejoin="round">
+<g stroke-width="10"><path d="M34 56H690" stroke="#2E6FD8"/><path d="M770 56H810" stroke="#2E6FD8" stroke-dasharray="6 6"/><path d="M810 56H1050" stroke="#1B998B" opacity=".4"/>
+<path d="M810 56L838 84H1000" stroke="#F0A202"/><path d="M330 56L358 84H540" stroke="#D7263D"/></g>
+<path d="M1000 72V96M540 72V96" stroke="#F2EFE6" stroke-width="4"/>
+<circle cx="34" cy="56" r="19" fill="#2E6FD8" stroke="#F2EFE6" stroke-width="3"/><text x="34" y="62" text-anchor="middle" fill="#F2EFE6" stroke="none" font-size="16" font-weight="800">G1</text>
+<g stroke="#0F1C3F" stroke-width="4"><circle cx="90" cy="56" r="13" fill="#F2EFE6"/><circle cx="330" cy="56" r="13" fill="#F2EFE6"/><circle cx="570" cy="56" r="13" fill="#F2EFE6"/>
+<circle cx="810" cy="56" r="17" fill="#F0A202"/><circle cx="1050" cy="56" r="13" fill="#0F1C3F" stroke="#F2EFE6"/></g>
+<circle cx="810" cy="56" r="6" fill="#0F1C3F"/>
+<g stroke="none" fill="#F2EFE6" font-size="15" font-weight="700" text-anchor="middle"><text x="90" y="24">Detected</text><text x="330" y="24">Photographed</text><text x="570" y="24">Read</text><text x="810" y="24">Agreed</text><text x="1050" y="24">Confirmed</text></g>
+<g stroke="none" fill="#F2EFE6" fill-opacity=".72" font-size="12" text-anchor="middle"><text x="90" y="39">Truck at gate</text><text x="330" y="39">4K photo every second</text><text x="570" y="39">AI reads number</text><text x="810" y="39">Photos cross-checked</text><text x="1050" y="39">Person confirms</text></g>
+<g stroke="none"><rect x="610" y="40" width="160" height="32" rx="16" fill="#F2EFE6" stroke="#2E6FD8" stroke-width="3"/><text x="690" y="61" text-anchor="middle" fill="#0F1C3F" font-family="Overpass Mono" font-size="14" font-weight="700">CSQU 305438 3</text>
+<text x="866" y="108" fill="#F0A202" font-size="13" font-weight="700">14:21  MSCU 612480 7  stopped at Agreed</text><text x="866" y="122" fill="#F2EFE6" fill-opacity=".72" font-size="12">Photos disagree: MSCU6124807 / MSCU6124B07</text>
+<text x="366" y="108" fill="#FF6B7D" font-size="13" font-weight="700">13:56  CAIU 982264 3  refused</text><text x="366" y="122" fill="#F2EFE6" fill-opacity=".72" font-size="12">Damaged doors &middot; left the line at Photographed</text></g></svg></section>
+<div class="row">
+<section class="cam"><div class="floor"></div><div class="chassis"></div><div class="wheel" style="left:190px"></div><div class="wheel" style="left:430px"></div>
+<div class="doors"><u></u><u></u><s style="left:70px"></s><s style="left:100px"></s><s style="left:208px"></s><s style="left:238px"></s></div>
+<div class="det"><b>CSQU 305438 3</b></div>
+<span class="tag live" style="left:12px;top:12px">Vehicle detected 14:32:08</span><span class="tag" style="right:12px;top:12px">Photo 6 of 15</span>
+<span class="tag" style="left:12px;bottom:12px">Reads 2 of 8</span><span class="tag" style="right:12px;bottom:12px">GATE 1 &middot; 4K</span></section>
+<section class="panel read"><div class="lab">Current read<span class="ch c" style="margin:0 0 0 auto">Reading</span></div>
+<div class="num">CSQU 305438 <em>3</em></div><div class="ok">Check digit 3 is valid (ISO 6346)</div>
+<div class="facts"><div>Type<b>45G1</b></div><div>Colour<b><span class="sw"></span>Blue</b></div><div>Photos<b>2 agree</b></div><div>Confidence<b>95%</b></div></div>
+<div class="btns"><button class="pri">Confirm</button><button class="sec">Correct number</button></div>
+<div class="note">Camera reads are always confirmed by a person.</div></section></div>
+<section class="panel vis"><div class="ph"><h2>Recent visits</h2><small>Newest first</small></div>
+<table><tr><th>Time</th><th>Container</th><th>Type</th><th>State</th><th class="r">Gate time</th><th></th></tr>
+<tr class="cur"><td>14:32</td><td>CSQU 305438 3</td><td>45G1</td><td><span class="ch c">Reading</span>Read 2 of 8</td><td class="r">&mdash;</td><td></td></tr>
+<tr><td>14:29</td><td>TGHU 800012 8</td><td>22G1</td><td><span class="ch g">Confirmed</span></td><td class="r">41 s</td><td></td></tr>
+<tr class="rv"><td>14:21</td><td>MSCU 612480 7</td><td>45R1</td><td><span class="ch a">Needs review</span>Photos disagree (MSCU6124807 / MSCU6124B07)</td><td class="r">&mdash;</td><td class="r"><button>Review</button></td></tr>
+<tr><td>14:15</td><td>No container (forklift)</td><td>&mdash;</td><td><span class="ch n">No container</span></td><td class="r">&mdash;</td><td></td></tr>
+<tr><td>14:08</td><td>TCNU 457713 0</td><td>42G1</td><td><span class="ch g">Confirmed</span></td><td class="r">35 s</td><td></td></tr>
+<tr><td>13:56</td><td>CAIU 982264 3</td><td>22G1</td><td><span class="ch x">Refused</span>Damaged doors</td><td class="r">2 min 10 s</td><td></td></tr>
+<tr><td>13:44</td><td>SEGU 301457 9</td><td>45G1</td><td><span class="ch g">Confirmed</span></td><td class="r">33 s</td><td></td></tr>
+<tr><td>13:31</td><td>TRHU 556019 9</td><td>22T6</td><td><span class="ch g">Confirmed</span></td><td class="r">52 s</td><td></td></tr></table></section>
+</main></body></html>

@@ -32,10 +32,13 @@ var _ Camera = (*Fake)(nil)
 // NewFake serves stills in turn and reports no vehicle until SetVehicle.
 func NewFake(stills ...[]byte) *Fake { return &Fake{stills: stills, start: time.Now()} }
 
-// NewDemoFake serves a generated still and reports a vehicle for 20 seconds
-// out of every 40.
-func NewDemoFake() *Fake {
-	f := NewFake(DemoStill())
+// NewDemoFake serves stills in turn (a generated still when none are given)
+// and reports a vehicle for 20 seconds out of every 40.
+func NewDemoFake(stills ...[]byte) *Fake {
+	if len(stills) == 0 {
+		stills = [][]byte{DemoStill()}
+	}
+	f := NewFake(stills...)
 	f.cycle = 20 * time.Second
 	return f
 }

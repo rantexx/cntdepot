@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Depot Gate - Live gate</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bk:#111214;--wh:#F2F2F0;--am:#F5A623;--rd:#8B2A2A;--rt:#C95B5B;--st:#8C9096;--st2:#B7BBC0;--gr:#43B88A;--gd:#2B2E33;--ln:rgba(140,144,150,.22)}
+*{box-sizing:border-box;margin:0}
+html,body{width:1440px;height:900px;overflow:hidden;background:var(--gd);color:var(--wh);font:400 15px/1.3 Barlow,system-ui,sans-serif}
+body{display:grid;grid-template:56px 1fr/208px 1fr;background:repeating-linear-gradient(90deg,#2B2E33 0 3px,#2E3136 3px 4px)}
+.cn,.cn *{font-family:'Barlow Condensed',sans-serif}
+header{grid-column:1/3;background:var(--bk);display:flex;align-items:center;border-bottom:1px solid #3a3e44;padding:0 20px 0 0}
+.wm{width:208px;padding-left:20px;font:700 22px 'Barlow Condensed';letter-spacing:.12em;text-transform:uppercase}
+.wm b{display:inline-block;width:10px;height:10px;background:var(--am);margin-right:10px}
+h1{font:600 24px 'Barlow Condensed';letter-spacing:.06em;text-transform:uppercase;flex:1;padding-left:24px}
+h1 small{font:400 15px Barlow;letter-spacing:0;color:var(--st2);margin-left:14px;text-transform:none}
+.sx{display:flex;align-items:center;gap:8px;margin-left:22px;color:var(--st2);font-size:14px}
+.sx:before{content:'';width:8px;height:8px;border-radius:50%;background:var(--gr)}
+.lg{display:flex;margin-left:28px;border:1px solid #4a4e54;border-radius:6px;overflow:hidden}
+.lg span{padding:5px 12px;font-weight:600;font-size:14px;color:var(--st2)}.lg .on{background:var(--wh);color:var(--bk)}
+nav{background:linear-gradient(#202226,#17191c);border-right:1px solid #3a3e44;padding:16px 12px}
+nav a{display:flex;align-items:center;height:44px;padding:0 14px;margin-bottom:4px;border-radius:6px;color:var(--st2);font-weight:500;font-size:16px;border-left:3px solid transparent}
+nav a.on{background:var(--bk);color:var(--wh);border-left-color:var(--am)}
+nav .n{margin-left:auto;background:var(--am);color:var(--bk);font-weight:700;font-size:13px;border-radius:10px;padding:1px 8px}
+main{padding:20px;display:flex;flex-direction:column;gap:16px;min-height:0}
+.panel{background:var(--bk);border:1px solid #3d4147;border-radius:8px}
+.strip{display:grid;grid-template-columns:repeat(5,1fr);height:76px}
+.strip div{padding:10px 20px;border-left:1px solid var(--ln)}.strip div:first-child{border:0}
+.strip b{display:block;font:600 40px/40px 'Barlow Condensed'}
+.strip span{font-size:14px;color:var(--st2)}
+.bar{height:4px;background:#2c2f34;margin-top:4px;position:relative}.bar i{display:block;width:63%;height:100%;background:var(--wh)}
+.cols{flex:1;display:grid;grid-template-columns:480px 1fr;gap:20px;min-height:0}
+.col{display:flex;flex-direction:column;gap:16px;min-height:0}
+.hd{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 16px;font:600 18px 'Barlow Condensed';letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--ln)}
+.hd em{font:400 14px Barlow;letter-spacing:0;color:var(--st2);font-style:normal}
+.pic{position:relative;height:270px;overflow:hidden;background:radial-gradient(ellipse at 70% 0,#2a323c,#10141a 55%,#0a0c10)}
+.gnd{position:absolute;left:0;right:0;bottom:0;height:48px;background:#0c0e11;border-top:2px solid #2a2e34}
+.bed{position:absolute;left:60px;right:60px;bottom:48px;height:16px;background:#3c4148}
+.ct{position:absolute;left:90px;top:26px;width:300px;height:190px;background:#245a9f;border:3px solid #1b4379;display:flex;gap:4px;padding:4px}
+.d{flex:1;position:relative;background:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 3px,transparent 3px 15px),#2b64ae}
+.d:after{content:'';position:absolute;top:8px;bottom:8px;left:34px;width:5px;background:#9aa3ad;box-shadow:70px 0 #9aa3ad}
+.box{position:absolute;left:262px;top:38px;width:112px;height:46px;border:3px solid #FFC83D}
+.box:before{content:'';position:absolute;inset:6px 5px;background:#d6dbe0}
+.ov{position:absolute;background:rgba(10,12,14,.78);padding:4px 10px;border-radius:4px;font-size:14px;font-weight:500}
+.cur{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.cur .k{font:600 15px 'Barlow Condensed';letter-spacing:.12em;text-transform:uppercase;color:var(--st2);display:flex;justify-content:space-between}
+.cur .k span{color:var(--am)}
+.cur .c i{width:34px;height:56px;font-size:42px;line-height:56px}
+.ok{color:var(--gr);font-weight:600;font-size:15px}
+.sp{display:grid;grid-template-columns:repeat(4,auto);justify-content:space-between;border-top:1px solid var(--ln);border-bottom:1px solid var(--ln);padding:10px 0}
+.sp small{display:block;font-size:12px;color:var(--st);text-transform:uppercase;letter-spacing:.08em}
+.sp b{font:600 24px 'Barlow Condensed'}.sw{display:inline-block;width:12px;height:12px;background:#245a9f;border-radius:2px;margin-right:6px}
+.act{display:flex;gap:10px}
+button{font:600 16px Barlow;height:44px;padding:0 22px;border-radius:6px;border:1px solid #5a5f66;background:transparent;color:var(--wh)}
+button.p{background:var(--wh);color:var(--bk);border-color:var(--wh);flex:1}
+.note{font-size:13px;color:var(--st2)}
+/* the board */
+.c{display:flex;gap:2px}
+.c i{position:relative;display:block;width:28px;height:46px;border-radius:3px;font:600 34px/46px 'Barlow Condensed';font-style:normal;text-align:center;color:var(--wh);background:linear-gradient(#202226 50%,#0b0c0e 50%);border:1px solid #26282c}
+.c i:after{content:'';position:absolute;left:0;right:0;top:50%;height:1px;background:#000;box-shadow:0 1px 0 rgba(255,255,255,.1)}
+.c i:nth-child(5),.c i:nth-child(11){margin-left:10px}
+.c .m:before{content:'';position:absolute;left:0;right:0;top:50%;bottom:0;background:linear-gradient(#30333a,#0b0c0e 55%);z-index:2}
+.c .b{color:transparent}.c .q{color:var(--am);border-color:var(--am)}
+.c.x i{color:var(--rt)}.c.n i{opacity:.35;color:transparent}
+.board{flex:1;display:flex;flex-direction:column;min-height:0}
+.th,.r{display:grid;grid-template-columns:64px 342px 64px 1fr 76px;align-items:center;padding:0 16px 0 20px}
+.th{height:30px;font:600 13px Barlow;letter-spacing:.1em;color:var(--st);border-bottom:1px solid var(--ln)}
+.r{flex:1;border-bottom:1px solid var(--ln);position:relative}
+.r:before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px}
+.r.rev{background:rgba(245,166,35,.09)}.r.rev:before{background:var(--am)}
+.r.now{background:#1d1f23}.r.now:before{background:var(--wh)}
+.r.ref:before{background:var(--rd)}
+.r .t{font:600 24px 'Barlow Condensed'}.r .ty{font:500 20px 'Barlow Condensed';color:var(--st2)}
+.r .gt{font:600 22px 'Barlow Condensed';text-align:right}
+.s{font:600 20px 'Barlow Condensed';letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.s:before{content:'';width:10px;height:10px;border-radius:50%;background:var(--gr);flex:none}
+.s small{display:block;font:400 13px Barlow;text-transform:none;letter-spacing:0;color:var(--st2)}
+.s.rv{color:var(--am)}.s.rv:before{background:var(--am)}
+.s.rd{color:var(--wh)}.s.rd:before{background:none;border:2px solid var(--wh);animation:p 1.4s infinite}
+.s.rf{color:var(--rt)}.s.rf:before{background:var(--rd)}
+.s.nc{color:var(--st)}.s.nc:before{background:none;border:2px solid var(--st)}
+@keyframes p{50%{opacity:.25}}
+.lgd{display:flex;gap:26px;padding:12px 20px;font-size:14px;color:var(--st2);align-items:center}
+.lgd span{display:flex;gap:8px;align-items:center}.lgd span:before{content:'';width:10px;height:10px;border-radius:50%;background:var(--gr)}
+.lgd .a:before{background:var(--am)}.lgd .w:before{background:none;border:2px solid var(--wh)}.lgd .e:before{background:var(--rd)}.lgd .z:before{background:none;border:2px solid var(--st)}
+</style></head><body>
+<header><div class="wm"><b></b>Depot Gate</div><h1>Live gate<small>Tuesday 20 October 2026 &middot; 14:32</small></h1>
+<span class="sx">Camera online</span><span class="sx">Reading engine online</span><div class="lg"><span class="on">EN</span><span>TR</span></div></header>
+<nav><a class="on">Live gate</a><a>Review queue<span class="n">2</span></a><a>Trucks</a><a>Camera</a><a>Reports</a><a>Settings</a></nav>
+<main>
+<section class="panel strip cn"><div><b>47</b><span>Trucks in</span></div><div><b>41</b><span>Read automatically</span></div><div><b>5</b><span>Confirmed by a person</span></div><div><b style="color:var(--rt)">1</b><span>Refused</span></div><div><b>38 s</b><span>Average gate time, target 60 s</span><div class="bar"><i></i></div></div></section>
+<div class="cols">
+<div class="col">
+<section class="panel"><div class="hd">Gate 1 &middot; Live camera<em>4K, one photo per second</em></div>
+<div class="pic"><div class="gnd"></div><div class="bed"></div><div class="ct"><div class="d"></div><div class="d"></div></div><div class="box"></div>
+<span class="ov" style="left:12px;top:12px"><span style="color:var(--am)">&#9679;</span> Vehicle detected 14:32:08</span><span class="ov" style="right:12px;top:12px">LIVE</span>
+<span class="ov" style="left:12px;bottom:12px">Photo 6 of 15</span><span class="ov" style="right:12px;bottom:12px">Reads 2 of 8</span></div></section>
+<section class="panel cur"><div class="k">Current read &middot; truck at gate<span>Awaiting confirmation</span></div>
+<div class="c"><i>C</i><i>S</i><i>Q</i><i>U</i><i>3</i><i>0</i><i>5</i><i>4</i><i>3</i><i>8</i><i>3</i></div>
+<div class="ok">&#10003; Check digit 3 is valid (ISO 6346)</div>
+<div class="sp cn"><div><small>Type</small><b>45G1</b></div><div><small>Colour</small><b><span class="sw"></span>Blue</b></div><div><small>Agreement</small><b>2 photos agree</b></div><div><small>Confidence</small><b>95%</b></div></div>
+<div class="act"><button class="p">Confirm</button><button>Correct number</button></div>
+<div class="note">Camera reads are always confirmed by a person.</div></section>
+</div>
+<section class="panel board"><div class="hd">Recent visits<em>Newest first &middot; Gate 1</em></div>
+<div class="th"><span>TIME</span><span>CONTAINER</span><span>TYPE</span><span>STATUS</span><span style="text-align:right">GATE TIME</span></div>
+<div class="r now"><span class="t">14:32</span><div class="c"><i>C</i><i>S</i><i>Q</i><i>U</i><i>3</i><i>0</i><i>5</i><i>4</i><i>3</i><i class="m">8</i><i class="b">3</i></div><span class="ty">45G1</span><div class="s rd">Reading<small>Photo 6 of 15 &middot; 2 of 8 reads</small></div><span class="gt">&mdash;</span></div>
+<div class="r"><span class="t">14:29</span><div class="c"><i>T</i><i>G</i><i>H</i><i>U</i><i>8</i><i>0</i><i>0</i><i>0</i><i>1</i><i>2</i><i>8</i></div><span class="ty">22G1</span><div class="s">Confirmed</div><span class="gt">41 s</span></div>
+<div class="r rev"><span class="t">14:21</span><div class="c"><i>M</i><i>S</i><i>C</i><i>U</i><i>6</i><i>1</i><i>2</i><i>4</i><i class="q">8</i><i>0</i><i>7</i></div><span class="ty">45R1</span><div class="s rv">Needs review<small>Photos disagree: MSCU6124807 / MSCU6124B07</small></div><span class="gt">&mdash;</span></div>
+<div class="r"><span class="t">14:15</span><div class="c n"><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i><i>_</i></div><span class="ty">&mdash;</span><div class="s nc">No container<small>Forklift</small></div><span class="gt">&mdash;</span></div>
+<div class="r"><span class="t">14:08</span><div class="c"><i>T</i><i>C</i><i>N</i><i>U</i><i>4</i><i>5</i><i>7</i><i>7</i><i>1</i><i>3</i><i>0</i></div><span class="ty">42G1</span><div class="s">Confirmed</div><span class="gt">35 s</span></div>
+<div class="r ref"><span class="t">13:56</span><div class="c x"><i>C</i><i>A</i><i>I</i><i>U</i><i>9</i><i>8</i><i>2</i><i>2</i><i>6</i><i>4</i><i>3</i></div><span class="ty">22G1</span><div class="s rf">Refused<small>Damaged doors</small></div><span class="gt" style="color:var(--rt)">2 min 10 s</span></div>
+<div class="r"><span class="t">13:44</span><div class="c"><i>S</i><i>E</i><i>G</i><i>U</i><i>3</i><i>0</i><i>1</i><i>4</i><i>5</i><i>7</i><i>9</i></div><span class="ty">45G1</span><div class="s">Confirmed</div><span class="gt">33 s</span></div>
+<div class="r"><span class="t">13:31</span><div class="c"><i>T</i><i>R</i><i>H</i><i>U</i><i>5</i><i>5</i><i>6</i><i>0</i><i>1</i><i>9</i><i>9</i></div><span class="ty">22T6</span><div class="s">Confirmed</div><span class="gt">52 s</span></div>
+<div class="lgd"><span class="w">Reading</span><span class="a">Needs review</span><span>Confirmed</span><span class="e">Refused</span><span class="z">No container</span></div>
+</section>
+</div></main></body></html>

@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build && node -e \"require('fs').writeFileSync('../internal/webui/dist/.gitkeep', '')\""
   },
   "dependencies": {
+    "@fontsource/barlow-semi-condensed": "^5.3.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

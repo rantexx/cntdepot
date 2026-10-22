@@ -161,7 +161,10 @@ export function Capture() {
   const serverPhotos = (move.photos ?? []).filter((p) => !shots.some((s) => s.photoId === p.id));
   const numberClass = move.check_digit_valid ? "ok" : move.number ? "bad" : "";
   return (
-    <section>
+    <div className="page">
+      <div className="page-head">
+        <h1>{t("navCapture")}</h1>
+      </div>
       <div className="card">
         <StatusChip status={move.status} /> {move.is_test && <span className="chip">{t("testTag")}</span>}
         <div className={`big-number mono ${numberClass}`}>{move.number || t("noNumber")}</div>
@@ -242,6 +245,6 @@ export function Capture() {
         ))}
       </div>
       {error && <p className="error">{error}</p>}
-    </section>
+    </div>
   );
 }

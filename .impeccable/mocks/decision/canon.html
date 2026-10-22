@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Depot Gate · Live gate</title>
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{width:1440px;height:900px;overflow:hidden}
+body{display:flex;background:#F3F4F6;color:#111827;font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;letter-spacing:.02em}
+.muted{color:#6B7280}
+/* sidebar */
+aside{width:232px;background:#fff;border-right:1px solid #E5E7EB;display:flex;flex-direction:column;padding:20px 12px 16px}
+.brand{display:flex;align-items:center;gap:10px;padding:0 10px 22px;font-weight:650;font-size:15px;letter-spacing:-.01em}
+.brand i{width:26px;height:26px;border-radius:7px;background:#2563EB;display:grid;place-items:center}
+.brand i:after{content:"";width:10px;height:10px;border:2px solid #fff;border-radius:3px}
+nav a{display:flex;align-items:center;gap:11px;height:36px;padding:0 10px;border-radius:7px;color:#4B5563;font-weight:500;margin-bottom:2px}
+nav a svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+nav a.on{background:#EFF6FF;color:#1D4ED8}
+nav a b{margin-left:auto;background:#B45309;color:#fff;font-size:11px;min-width:20px;height:20px;border-radius:10px;display:grid;place-items:center}
+.side-foot{margin-top:auto;border-top:1px solid #E5E7EB;padding:14px 10px 0;display:grid;gap:9px;font-size:13px;color:#4B5563}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#16A34A;margin-right:9px;box-shadow:0 0 0 3px #DCFCE7}
+.seg{display:inline-flex;border:1px solid #D1D5DB;border-radius:7px;overflow:hidden;margin-top:4px;width:max-content}
+.seg span{padding:3px 11px;font-size:12px;font-weight:600;color:#6B7280}.seg .on{background:#111827;color:#fff}
+/* main */
+main{flex:1;min-width:0;padding:0 28px 20px;display:flex;flex-direction:column;gap:16px}
+header{height:60px;display:flex;align-items:center;justify-content:space-between;flex:none}
+h1{font-size:24px;font-weight:650;letter-spacing:-.02em;line-height:1.1}
+header p{font-size:13px;margin-top:3px}
+.who{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500}
+.who i{width:32px;height:32px;border-radius:50%;background:#E5E7EB;display:grid;place-items:center;font-style:normal;font-weight:650;color:#4B5563;font-size:12px}
+.card{background:#fff;border:1px solid #E5E7EB;border-radius:12px;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;flex:none}
+.kpi{padding:14px 18px;height:92px}
+.kpi small{font-size:13px;color:#6B7280;font-weight:500;display:block}
+.kpi strong{font-size:30px;font-weight:650;letter-spacing:-.025em;line-height:1.15;display:block;margin-top:2px}
+.kpi strong em{font-style:normal;font-size:14px;color:#6B7280;font-weight:500;letter-spacing:0;margin-left:5px}
+.bar{height:5px;background:#E5E7EB;border-radius:3px;margin-top:6px;overflow:hidden}.bar i{display:block;height:100%;background:#2563EB;border-radius:3px}
+.row2{display:grid;grid-template-columns:1fr 410px;gap:16px;height:344px;flex:none}
+.ch{height:50px;padding:0 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #E5E7EB;font-weight:600;font-size:14px}
+.ch .r{margin-left:auto;font-weight:500;font-size:13px;color:#6B7280}
+/* pills */
+.pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:12px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.pill:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-read{background:#DBEAFE;color:#1D4ED8}.p-ok{background:#DCFCE7;color:#15803D}.p-rev{background:#FEF3C7;color:#B45309}
+.p-ref{background:#FEE2E2;color:#B91C1C}.p-none{background:#F3F4F6;color:#4B5563}
+/* camera picture */
+.pic{position:relative;height:292px;margin:0;overflow:hidden;border-radius:0 0 11px 11px;background:linear-gradient(#0F172A,#1E293B 70%,#111827)}
+.pic div{position:absolute}
+.road{left:0;right:0;bottom:0;height:46px;background:#0B1220}
+.box{left:170px;top:20px;width:372px;height:214px;background:#1E4FA8;border-radius:3px;box-shadow:inset 0 0 0 3px #17408A}
+.ribs{inset:8px;background:repeating-linear-gradient(90deg,rgba(8,20,50,.38) 0 4px,transparent 4px 21px)}
+.seam{left:184px;top:0;bottom:0;width:4px;background:#0E2A5E}
+.bar1,.bar2{top:6px;bottom:6px;width:6px;background:#9DB3D6;border-radius:3px}.bar1{left:70px}.bar2{left:292px}
+.chassis{left:150px;top:234px;width:412px;height:22px;background:#1F2937}
+.light{top:238px;width:16px;height:10px;background:#B91C1C;border-radius:2px}
+.plate{left:236px;top:30px;width:116px;height:34px;background:rgba(255,255,255,.88);border-radius:2px}
+.det{left:398px;top:42px;width:132px;height:50px;border:2px solid #FBBF24;border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.det:before{content:"Container no.";position:absolute;top:-21px;left:-2px;background:#FBBF24;color:#111827;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px 3px 0 0}
+.chip{background:rgba(15,23,42,.78);color:#fff;font-size:12.5px;font-weight:500;padding:5px 10px;border-radius:6px;display:flex;align-items:center;gap:7px}
+.chip:before{content:"";width:7px;height:7px;border-radius:50%;background:#22C55E}
+.chip.n:before{display:none}
+/* read */
+.read{padding:0 20px 20px;display:flex;flex-direction:column}
+.num{font-size:40px;font-weight:700;letter-spacing:-.01em;line-height:1;margin-top:16px}
+.num s{text-decoration:none;color:#15803D}
+.valid{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:13px;font-weight:600;color:#15803D}
+.valid:before{content:"✓";width:18px;height:18px;border-radius:50%;background:#16A34A;color:#fff;display:grid;place-items:center;font-size:11px}
+.specs{display:grid;grid-template-columns:1fr 1fr 1.3fr;margin-top:12px;border-top:1px solid #E5E7EB;padding-top:14px}
+.specs small{display:block;font-size:12px;color:#6B7280;margin-bottom:2px}.specs b{font-size:15px;font-weight:600}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;background:#2563EB;margin-right:6px}
+.conf{margin-top:10px;font-size:13px;display:flex;justify-content:space-between;color:#4B5563}.conf b{color:#111827}
+.btns{display:flex;gap:10px;margin-top:auto}
+.btn{height:42px;border-radius:8px;font:600 14px system-ui;display:grid;place-items:center;border:1px solid #D1D5DB;background:#fff;color:#111827;padding:0 16px}
+.btn.pri{flex:1;background:#2563EB;border-color:#2563EB;color:#fff;box-shadow:0 1px 2px rgba(37,99,235,.35)}
+.note{font-size:12px;color:#6B7280;margin-top:10px}
+/* table */
+.tbl{flex:1;min-height:0;overflow:hidden}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{height:32px;background:#F9FAFB;text-align:left;font-size:12px;font-weight:600;color:#6B7280;padding:0 18px;border-bottom:1px solid #E5E7EB;letter-spacing:.02em}
+td{height:32px;padding:0 18px;border-bottom:1px solid #F0F1F3;font-size:14px;white-space:nowrap}
+tr.live td{background:#F5F9FF}
+td:last-child,th:last-child{text-align:right}
+td small{font-size:12.5px;color:#6B7280;margin-left:9px}
+</style></head><body>
+<aside>
+ <div class="brand"><i></i>Depot Gate</div>
+ <nav>
+  <a class="on"><svg viewBox="0 0 24 24"><path d="M3 7h13v10H3zM16 10l5-2v8l-5-2"/></svg>Live gate</a>
+  <a><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>Review queue<b>2</b></a>
+  <a><svg viewBox="0 0 24 24"><path d="M2 7h12v9H2zM14 10h4l3 3v3h-7zM6 18.5h.01M17 18.5h.01"/></svg>Trucks</a>
+  <a><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 16a3 3 0 100-6 3 3 0 000 6z"/></svg>Camera</a>
+  <a><svg viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>Reports</a>
+  <a><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4"/></svg>Settings</a>
+ </nav>
+ <div class="side-foot">
+  <div><span class="dot"></span>Camera online</div>
+  <div><span class="dot"></span>Reading engine online</div>
+  <div class="seg"><span class="on">EN</span><span>TR</span></div>
+ </div>
+</aside>
+<main>
+ <header>
+  <div><h1>Live gate</h1><p class="muted">Tuesday 20 October · Day shift · Gate 1</p></div>
+  <div class="who"><span class="muted">Office operator</span><i>OP</i></div>
+ </header>
+ <section class="kpis">
+  <div class="card kpi"><small>Trucks in today</small><strong>47</strong></div>
+  <div class="card kpi"><small>Read automatically</small><strong>41<em>of 47</em></strong></div>
+  <div class="card kpi"><small>Confirmed by a person</small><strong>5</strong></div>
+  <div class="card kpi"><small>Refused</small><strong>1</strong></div>
+  <div class="card kpi"><small>Average gate time</small><strong>38 s<em>target 60 s</em></strong><div class="bar"><i style="width:63%"></i></div></div>
+ </section>
+ <section class="row2">
+  <div class="card">
+   <div class="ch">Live camera · GATE 1 <span class="pill p-read">Reading</span><span class="r">4K · 1 photo per second</span></div>
+   <figure class="pic">
+    <div class="road"></div><div class="chassis"></div><div class="light" style="left:158px"></div><div class="light" style="left:540px"></div>
+    <div class="box"><div class="ribs"></div><div class="seam"></div><div class="bar1"></div><div class="bar2"></div><div class="plate"></div></div>
+    <div class="det"></div>
+    <div class="chip" style="left:14px;top:14px">Vehicle detected 14:32:08</div>
+    <div class="chip n" style="right:14px;top:14px">Photo 6 of 15</div>
+    <div class="chip n" style="left:14px;bottom:14px">Reads 2 of 8</div>
+   </figure>
+  </div>
+  <div class="card read">
+   <div class="ch" style="margin:0 -20px;padding:0 20px">Current read <span class="r">Gate 1 · 14:32</span></div>
+   <div class="num mono">CSQU 305438 <s>3</s></div>
+   <div class="valid">Check digit 3 valid (ISO 6346)</div>
+   <div class="specs"><div><small>ISO type</small><b>45G1</b></div><div><small>Colour</small><b><span class="sw"></span>Blue</b></div><div><small>Agreement</small><b>2 photos agree</b></div></div>
+   <div class="conf"><span>Confidence</span><b>95%</b></div><div class="bar" style="margin-top:6px"><i style="width:95%;background:#16A34A"></i></div>
+   <div class="btns" style="padding-top:10px"><a class="btn pri">Confirm</a><a class="btn">Correct number</a></div>
+   <p class="note">Camera reads are always confirmed by a person.</p>
+  </div>
+ </section>
+ <section class="card tbl">
+  <div class="ch" style="height:44px">Recent visits <span class="r">Newest first</span></div>
+  <table>
+   <colgroup><col style="width:100px"><col style="width:200px"><col style="width:100px"><col><col style="width:130px"></colgroup>
+   <tr><th>Time</th><th>Container</th><th>Type</th><th>Status</th><th>Gate time</th></tr>
+   <tr class="live"><td>14:32</td><td class="mono">CSQU 305438 3</td><td>45G1</td><td><span class="pill p-read">Reading</span><small>Reads 2 of 8</small></td><td class="muted">—</td></tr>
+   <tr><td>14:29</td><td class="mono">TGHU 800012 8</td><td>22G1</td><td><span class="pill p-ok">Confirmed</span></td><td>41 s</td></tr>
+   <tr><td>14:21</td><td class="mono">MSCU 612480 7</td><td>45R1</td><td><span class="pill p-rev">Needs review</span><small>Photos disagree: MSCU6124807 / MSCU6124B07</small></td><td class="muted">—</td></tr>
+   <tr><td>14:15</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill p-none">No container</span><small>Forklift</small></td><td class="muted">—</td></tr>
+   <tr><td>14:08</td><td class="mono">TCNU 457713 0</td><td>42G1</td><td><span class="pill p-ok">Confirmed</span></td><td>35 s</td></tr>
+   <tr><td>13:56</td><td class="mono">CAIU 982264 3</td><td>22G1</td><td><span class="pill p-ref">Refused</span><small>Damaged doors</small></td><td>2 min 10 s</td></tr>
+   <tr><td>13:44</td><td class="mono">SEGU 301457 9</td><td>45G1</td><td><span class="pill p-ok">Confirmed</span></td><td>33 s</td></tr>
+   <tr><td>13:31</td><td class="mono">TRHU 556019 9</td><td>22T6</td><td><span class="pill p-ok">Confirmed</span></td><td>52 s</td></tr>
+  </table>
+ </section>
+</main>
+</body></html>

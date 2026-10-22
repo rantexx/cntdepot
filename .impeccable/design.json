@@ -1,0 +1,659 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-22T12:11:05+00:00",
+  "title": "Design System: Depot Gate",
+  "extensions": {
+    "colorMeta": {
+      "porcelain-ground": {
+        "role": "neutral",
+        "displayName": "Porcelain Ground",
+        "canonical": "#f4f4f1",
+        "tonalRamp": [
+          "#0b0b09",
+          "#272724",
+          "#454543",
+          "#666664",
+          "#898987",
+          "#aeaeab",
+          "#d1d1ce",
+          "#efefec"
+        ]
+      },
+      "panel-white": {
+        "role": "neutral",
+        "displayName": "Panel White",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#262626",
+          "#454545",
+          "#666666",
+          "#898989",
+          "#aeaeae",
+          "#d1d1d1",
+          "#eeeeee"
+        ]
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "canonical": "#1e2226",
+        "tonalRamp": [
+          "#080c0f",
+          "#23272b",
+          "#41464a",
+          "#62676b",
+          "#858a8f",
+          "#a9afb4",
+          "#ccd2d7",
+          "#eaeff5"
+        ]
+      },
+      "slate-muted": {
+        "role": "neutral",
+        "displayName": "Slate Muted",
+        "canonical": "#5b6267",
+        "tonalRamp": [
+          "#070c10",
+          "#21272c",
+          "#3f464b",
+          "#60676c",
+          "#838a90",
+          "#a7afb5",
+          "#cad2d8",
+          "#e8f0f6"
+        ]
+      },
+      "warm-rule": {
+        "role": "neutral",
+        "displayName": "Warm Rule",
+        "canonical": "#cbcbc3",
+        "tonalRamp": [
+          "#0c0b07",
+          "#272721",
+          "#46453f",
+          "#67675f",
+          "#8a8a82",
+          "#aeaea7",
+          "#d2d2c9",
+          "#efefe7"
+        ]
+      },
+      "warm-rule-soft": {
+        "role": "neutral",
+        "displayName": "Warm Rule Soft",
+        "canonical": "#e2e2dc",
+        "tonalRamp": [
+          "#0b0b08",
+          "#272722",
+          "#454540",
+          "#666661",
+          "#898984",
+          "#aeaea9",
+          "#d1d1cb",
+          "#efefe9"
+        ]
+      },
+      "bar-track": {
+        "role": "neutral",
+        "displayName": "Bar Track",
+        "canonical": "#dad9d2",
+        "tonalRamp": [
+          "#0c0b07",
+          "#272721",
+          "#46453f",
+          "#676660",
+          "#8a8983",
+          "#afaea7",
+          "#d2d1ca",
+          "#f0efe8"
+        ]
+      },
+      "asphalt-rail": {
+        "role": "neutral",
+        "displayName": "Asphalt Rail",
+        "canonical": "#1e2226",
+        "tonalRamp": [
+          "#080c0f",
+          "#23272b",
+          "#41464a",
+          "#62676b",
+          "#858a8f",
+          "#a9afb4",
+          "#ccd2d7",
+          "#eaeff5"
+        ]
+      },
+      "rail-ink": {
+        "role": "neutral",
+        "displayName": "Rail Ink",
+        "canonical": "#dcddd8",
+        "tonalRamp": [
+          "#0b0c08",
+          "#262723",
+          "#454541",
+          "#666762",
+          "#898a85",
+          "#adaeaa",
+          "#d0d1cd",
+          "#eeefea"
+        ]
+      },
+      "rail-muted": {
+        "role": "neutral",
+        "displayName": "Rail Muted",
+        "canonical": "#a9ada9",
+        "tonalRamp": [
+          "#090c09",
+          "#242724",
+          "#434643",
+          "#646764",
+          "#868a86",
+          "#abafab",
+          "#ced2ce",
+          "#ecf0ec"
+        ]
+      },
+      "rail-on": {
+        "role": "neutral",
+        "displayName": "Rail On",
+        "canonical": "#2b3137",
+        "tonalRamp": [
+          "#070c11",
+          "#21272d",
+          "#3f464c",
+          "#60676e",
+          "#838a91",
+          "#a7afb6",
+          "#cad2da",
+          "#e8eff7"
+        ]
+      },
+      "rail-rule": {
+        "role": "neutral",
+        "displayName": "Rail Rule",
+        "canonical": "#353b41",
+        "tonalRamp": [
+          "#070c11",
+          "#21272d",
+          "#40464c",
+          "#60676d",
+          "#838a91",
+          "#a8afb6",
+          "#cad2d9",
+          "#e8eff7"
+        ]
+      },
+      "safe-green": {
+        "role": "secondary",
+        "displayName": "Safe Green",
+        "canonical": "#0d8045",
+        "tonalRamp": [
+          "#001600",
+          "#003700",
+          "#00581c",
+          "#007c3e",
+          "#33a160",
+          "#5ec784",
+          "#90e8ac",
+          "#aeffc9"
+        ]
+      },
+      "signal-yellow": {
+        "role": "secondary",
+        "displayName": "Signal Yellow",
+        "canonical": "#f2c200",
+        "tonalRamp": [
+          "#1d0200",
+          "#451800",
+          "#673a00",
+          "#8b5d00",
+          "#b08200",
+          "#d7a700",
+          "#efce6f",
+          "#ffec8d"
+        ]
+      },
+      "safety-blue": {
+        "role": "primary",
+        "displayName": "Safety Blue",
+        "canonical": "#1f5fa8",
+        "tonalRamp": [
+          "#00003b",
+          "#002065",
+          "#00438a",
+          "#2766b0",
+          "#4c8bd8",
+          "#71b1ff",
+          "#9ad5ff",
+          "#b7f3ff"
+        ]
+      },
+      "prohibition-red": {
+        "role": "secondary",
+        "displayName": "Prohibition Red",
+        "canonical": "#c8202a",
+        "tonalRamp": [
+          "#2d0000",
+          "#690000",
+          "#940000",
+          "#be0f21",
+          "#ea4646",
+          "#ff706a",
+          "#ffb2a9",
+          "#ffcfc6"
+        ]
+      },
+      "neutral-grey": {
+        "role": "neutral",
+        "displayName": "Neutral Grey",
+        "canonical": "#6c7378",
+        "tonalRamp": [
+          "#070c10",
+          "#21272c",
+          "#40464b",
+          "#60676c",
+          "#838a8f",
+          "#a8afb5",
+          "#cad2d8",
+          "#e8f0f5"
+        ]
+      },
+      "read-orange": {
+        "role": "tertiary",
+        "displayName": "Read Orange",
+        "canonical": "#ff9a1f",
+        "tonalRamp": [
+          "#280000",
+          "#580000",
+          "#7e2100",
+          "#a54700",
+          "#cd6c00",
+          "#f7920a",
+          "#ffc07b",
+          "#ffdd98"
+        ]
+      },
+      "camera-black": {
+        "role": "neutral",
+        "displayName": "Camera Black",
+        "canonical": "#101316",
+        "tonalRamp": [
+          "#090b0e",
+          "#24272a",
+          "#424549",
+          "#63676a",
+          "#868a8e",
+          "#aaaeb3",
+          "#cdd1d6",
+          "#ebeff4"
+        ]
+      },
+      "night-ground": {
+        "role": "neutral",
+        "displayName": "Night Ground",
+        "canonical": "#14171a",
+        "tonalRamp": [
+          "#090b0e",
+          "#24272a",
+          "#424549",
+          "#63666a",
+          "#868a8e",
+          "#aaaeb3",
+          "#cdd1d6",
+          "#ebeff3"
+        ]
+      },
+      "night-panel": {
+        "role": "neutral",
+        "displayName": "Night Panel",
+        "canonical": "#1c2024",
+        "tonalRamp": [
+          "#080c0f",
+          "#23272b",
+          "#41464a",
+          "#62676b",
+          "#858a8f",
+          "#a9afb4",
+          "#ccd2d7",
+          "#eaeff5"
+        ]
+      },
+      "night-ink": {
+        "role": "neutral",
+        "displayName": "Night Ink",
+        "canonical": "#eceee9",
+        "tonalRamp": [
+          "#0a0c09",
+          "#262723",
+          "#444642",
+          "#656762",
+          "#888a85",
+          "#adafaa",
+          "#d0d2cd",
+          "#edefea"
+        ]
+      },
+      "night-muted": {
+        "role": "neutral",
+        "displayName": "Night Muted",
+        "canonical": "#a4a9a7",
+        "tonalRamp": [
+          "#090c0b",
+          "#242726",
+          "#424644",
+          "#636765",
+          "#868a88",
+          "#aaafad",
+          "#cdd2d0",
+          "#ebf0ee"
+        ]
+      },
+      "night-rule": {
+        "role": "neutral",
+        "displayName": "Night Rule",
+        "canonical": "#353b41",
+        "tonalRamp": [
+          "#070c11",
+          "#21272d",
+          "#40464c",
+          "#60676d",
+          "#838a91",
+          "#a8afb6",
+          "#cad2d9",
+          "#e8eff7"
+        ]
+      },
+      "night-rule-soft": {
+        "role": "neutral",
+        "displayName": "Night Rule Soft",
+        "canonical": "#2a2f34",
+        "tonalRamp": [
+          "#080c10",
+          "#22272c",
+          "#40464b",
+          "#61676c",
+          "#848a90",
+          "#a8afb5",
+          "#cbd2d8",
+          "#e9eff6"
+        ]
+      },
+      "night-rail": {
+        "role": "neutral",
+        "displayName": "Night Rail",
+        "canonical": "#0d0f11",
+        "tonalRamp": [
+          "#090b0d",
+          "#242729",
+          "#434548",
+          "#646669",
+          "#87898c",
+          "#abaeb1",
+          "#ced1d4",
+          "#eceff2"
+        ]
+      },
+      "night-safety-blue": {
+        "role": "primary",
+        "displayName": "Night Safety Blue",
+        "canonical": "#2c6dbb",
+        "tonalRamp": [
+          "#00003b",
+          "#001f67",
+          "#00428d",
+          "#2466b3",
+          "#4a8bdb",
+          "#6fb1ff",
+          "#9bd5ff",
+          "#b7f3ff"
+        ]
+      },
+      "night-neutral-grey": {
+        "role": "neutral",
+        "displayName": "Night Neutral Grey",
+        "canonical": "#6c7378",
+        "tonalRamp": [
+          "#070c10",
+          "#21272c",
+          "#3f464b",
+          "#60676c",
+          "#828a90",
+          "#a7afb5",
+          "#cad2d8",
+          "#e7f0f6"
+        ]
+      },
+      "night-focus": {
+        "role": "neutral",
+        "displayName": "Night Focus",
+        "canonical": "#5b95dd",
+        "tonalRamp": [
+          "#00003b",
+          "#002260",
+          "#034485",
+          "#2e67ab",
+          "#528bd2",
+          "#76b1fb",
+          "#9ad5ff",
+          "#b7f3ff"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Container number on the sign plate."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Today strip counts; 34px on narrow screens."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title, uppercase."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section headings, uppercase."
+      },
+      "row": {
+        "displayName": "Row",
+        "purpose": "Visit rows; 18px on narrow screens."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Text, buttons, fields."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "State signs and chips, uppercase in English."
+      },
+      "column-head": {
+        "displayName": "Column head",
+        "purpose": "List column heads, uppercase muted."
+      }
+    },
+    "shadows": [
+      {
+        "name": "plate-keyline",
+        "value": "inset 0 0 0 4px var(--act), inset 0 0 0 7px var(--plate-line)",
+        "purpose": "Double inner keyline of the enamel sign plate."
+      },
+      {
+        "name": "lane-plate-keyline",
+        "value": "inset 0 0 0 2px #fff, inset 0 0 0 4px #1e2226",
+        "purpose": "Lane plate over the camera, with a 3px graphite border."
+      },
+      {
+        "name": "outline-sign",
+        "value": "inset 0 0 0 2px var(--ink)",
+        "purpose": "Reading/capturing sign and tile."
+      },
+      {
+        "name": "rail-active",
+        "value": "inset 4px 0 0 #f4f4f1",
+        "purpose": "Active nav link; inset 0 -3px 0 #f4f4f1 on narrow screens."
+      },
+      {
+        "name": "read-keyline",
+        "value": "inset 0 0 0 2px #ff9a1f",
+        "purpose": "Read crop outline."
+      }
+    ],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "900px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Act-now action: Confirm, Save, Start. Safety blue, uppercase.",
+      "html": "<button class=\"ds-btn-primary\">Confirm</button>",
+      "css": ".ds-btn-primary{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;font-weight:700;font-size:17px;min-height:44px;padding:0 18px;border-radius:6px;border:2px solid var(--act,#1f5fa8);background:var(--act,#1f5fa8);color:#fff;text-transform:uppercase;letter-spacing:.08em;cursor:pointer}.ds-btn-primary:hover{filter:brightness(1.08)}.ds-btn-primary:focus-visible{outline:3px solid var(--focus,#1f5fa8);outline-offset:2px}.ds-btn-primary:disabled{opacity:.45;filter:none}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default action: bordered in graphite, sentence case.",
+      "html": "<button class=\"ds-btn\">Correct number</button>",
+      "css": ".ds-btn{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;font-weight:700;font-size:17px;min-height:44px;padding:0 18px;border-radius:6px;border:2px solid var(--ink,#1e2226);background:var(--panel,#fff);color:var(--ink,#1e2226);cursor:pointer}.ds-btn:hover{background:var(--rule-soft,#e2e2dc)}.ds-btn:focus-visible{outline:3px solid var(--focus,#1f5fa8);outline-offset:2px}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Refuse: secondary button in prohibition red.",
+      "html": "<button class=\"ds-btn-danger\">Refuse</button>",
+      "css": ".ds-btn-danger{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;font-weight:700;font-size:17px;min-height:44px;padding:0 18px;border-radius:6px;border:2px solid var(--stop,#c8202a);background:var(--panel,#fff);color:var(--stop,#c8202a);cursor:pointer}.ds-btn-danger:hover{background:var(--rule-soft,#e2e2dc)}.ds-btn-danger:focus-visible{outline:3px solid var(--focus,#1f5fa8);outline-offset:2px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Field with an uppercase muted label above.",
+      "html": "<label class=\"ds-label\">Container number<input class=\"ds-input\" value=\"MSCU 123456\"></label>",
+      "css": ".ds-label{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:grid;gap:5px;font-size:15px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#5b6267)}.ds-input{font:inherit;font-weight:500;font-size:17px;text-transform:none;letter-spacing:0;color:var(--ink,#1e2226);background:var(--panel,#fff);border:1px solid var(--rule,#cbcbc3);border-radius:4px;min-height:44px;padding:8px 12px;caret-color:var(--act,#1f5fa8)}.ds-input:focus{border-color:var(--act,#1f5fa8)}.ds-input:focus-visible{outline:3px solid var(--focus,#1f5fa8);outline-offset:2px}"
+    },
+    {
+      "name": "State Signs",
+      "kind": "chip",
+      "refersTo": "sign-safe",
+      "description": "The ISO 3864 state vocabulary: reading, act now, needs review, accepted, refused, no container.",
+      "html": "<span class=\"ds-sign ds-reading\">Reading</span> <span class=\"ds-sign ds-act\">Act now</span> <span class=\"ds-sign ds-caution\">Needs review</span> <span class=\"ds-sign ds-safe\">Accepted</span> <span class=\"ds-sign ds-stop\">Refused</span> <span class=\"ds-sign ds-none\">No container</span>",
+      "css": ".ds-sign{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:inline-block;font-weight:700;font-size:14px;line-height:1.3;text-transform:uppercase;letter-spacing:.06em;padding:3px 9px;border-radius:3px;color:#fff;white-space:nowrap;background:var(--none,#6c7378)}.ds-safe{background:var(--safe,#0d8045)}.ds-caution{background:var(--caution,#f2c200);color:#1e2226}.ds-act{background:var(--act,#1f5fa8)}.ds-stop{background:var(--stop,#c8202a)}.ds-none{background:var(--none,#6c7378)}.ds-reading{background:var(--panel,#fff);color:var(--ink,#1e2226);box-shadow:inset 0 0 0 2px var(--ink,#1e2226)}"
+    },
+    {
+      "name": "Tag Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Neutral metadata tag; never a safety colour.",
+      "html": "<span class=\"ds-chip\">Camera</span>",
+      "css": ".ds-chip{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:inline-block;padding:2px 8px;border-radius:3px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--rule-soft,#e2e2dc);color:var(--ink,#1e2226)}"
+    },
+    {
+      "name": "Sign Plate",
+      "kind": "custom",
+      "refersTo": "sign-plate",
+      "description": "Current number on an enamel plate in its state colour, check digit boxed; safety blue while a person must act.",
+      "html": "<div class=\"ds-plate\"><span class=\"ds-plate-label\">Confirm this number</span><span class=\"ds-cn\">MSCU 123456<span class=\"ds-cd\">7</span></span></div>",
+      "css": ".ds-plate{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;background:var(--act,#1f5fa8);color:#fff;border-radius:14px;box-shadow:inset 0 0 0 4px var(--act,#1f5fa8),inset 0 0 0 7px #fff;padding:14px 20px;text-align:center;max-width:420px}.ds-plate-label{display:block;font-size:14px;letter-spacing:.1em;text-transform:uppercase;font-weight:600}.ds-cn{display:block;white-space:nowrap;font-size:clamp(30px,3.1vw,46px);font-weight:700;line-height:1.1;letter-spacing:.03em;margin-top:2px}.ds-cd{display:inline-block;border:3px solid currentColor;border-radius:2px;padding:0 .22em;margin-left:.3em;line-height:1.05}"
+    },
+    {
+      "name": "Visit Row",
+      "kind": "custom",
+      "refersTo": "visit-row",
+      "description": "One truck in fixed columns: state tile, time, number, type, sign, gate time against the target tick.",
+      "html": "<a class=\"ds-visit\" href=\"#\"><i class=\"ds-tile\"></i><span>09:41</span><span class=\"ds-vcn\">MSCU 123456<span class=\"ds-vcd\">7</span></span><span>22G1</span><span><span class=\"ds-vsign\">Accepted</span></span><span class=\"ds-gt\"><span class=\"ds-bar\"><span style=\"width:38%\"></span></span><b>46 s</b></span></a>",
+      "css": ".ds-visit{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:12px 64px 200px 64px minmax(0,1fr) 280px;gap:14px;align-items:center;min-height:48px;border-top:1px solid var(--rule,#cbcbc3);color:var(--ink,#1e2226);text-decoration:none;font-size:20px;font-weight:500;padding:4px 0}.ds-visit:hover{background:var(--rule-soft,#e2e2dc)}.ds-visit:focus-visible{outline:3px solid var(--focus,#1f5fa8);outline-offset:2px}.ds-tile{display:inline-block;width:12px;height:26px;border-radius:2px;background:var(--safe,#0d8045)}.ds-vcn{white-space:nowrap;letter-spacing:.03em;font-weight:600}.ds-vcd{display:inline-block;border:2px solid currentColor;border-radius:2px;padding:0 .22em;margin-left:.3em;line-height:1.05}.ds-vsign{display:inline-block;font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:.06em;padding:3px 9px;border-radius:3px;color:#fff;background:var(--safe,#0d8045)}.ds-gt{display:flex;align-items:center;gap:12px;justify-content:flex-end}.ds-bar{width:150px;height:8px;background:var(--track,#dad9d2);position:relative;display:block}.ds-bar>span{position:absolute;left:0;top:0;bottom:0;background:var(--safe,#0d8045)}.ds-bar::after{content:'';position:absolute;left:50%;top:-5px;bottom:-5px;width:2px;background:var(--ink,#1e2226)}.ds-gt b{min-width:92px;text-align:right;font-weight:600}"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "Graphite rail with wordmark, links, yellow review count; active link has a porcelain bar.",
+      "html": "<nav class=\"ds-rail\"><a class=\"ds-brand\" href=\"#\"><span class=\"ds-mark\"></span>Depot Gate</a><a class=\"ds-link\" aria-current=\"page\" href=\"#\">Live gate</a><a class=\"ds-link\" href=\"#\">Review <span class=\"ds-count\">3</span></a><a class=\"ds-link\" href=\"#\">Camera</a></nav>",
+      "css": ".ds-rail{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;background:#1e2226;color:#dcddd8;width:216px;display:flex;flex-direction:column;padding-bottom:10px}.ds-brand{height:60px;display:flex;align-items:center;gap:10px;padding:0 20px;font-size:22px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#fff;text-decoration:none;border-bottom:1px solid #353b41;margin-bottom:10px}.ds-mark{width:16px;height:16px;border-radius:3px;background:#f4f4f1;box-shadow:inset 0 0 0 4px #1e2226,inset 0 0 0 8px #f4f4f1}.ds-link{display:flex;justify-content:space-between;align-items:center;min-height:46px;padding:0 20px;font-size:19px;font-weight:500;color:#a9ada9;text-decoration:none}.ds-link:hover{color:#fff;background:#2b3137}.ds-link:focus-visible{outline:3px solid #5b95dd;outline-offset:-3px}.ds-link[aria-current=page]{color:#fff;background:#2b3137;font-weight:700;box-shadow:inset 4px 0 0 #f4f4f1}.ds-count{background:#f2c200;color:#1e2226;font-weight:700;font-size:15px;min-width:26px;padding:1px 6px;border-radius:3px;text-align:center}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Plain panel: white, 1px warm rule, 4px corner, no shadow.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-h\">Camera</h3><p>Gate 1 is reading.</p></div>",
+      "css": ".ds-card{font-family:\"Barlow Semi Condensed\",system-ui,sans-serif;font-variant-numeric:tabular-nums;background:var(--panel,#fff);border:1px solid var(--rule,#cbcbc3);border-radius:4px;padding:18px;font-size:17px;font-weight:500;line-height:1.35;color:var(--ink,#1e2226)}.ds-h{margin:0 0 8px;font-size:22px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;line-height:1.1}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Terminal Safety Signage",
+    "overview": "The app reads like the terminal's own signs. A graphite asphalt rail and a porcelain work ground carry everything, divided by 1px warm-grey rules that form the grid. Colour appears only when it means something: every truck's state wears the ISO 3864 safety colour the yard already obeys. Green means confirmed, signal yellow means a person is needed, safety blue means act now, red means refused, grey means no container, and an outlined sign means the system is still reading.\n\nOne condensed sign face, Barlow Semi Condensed with tabular numerals, sets both display and data. Container numbers are set the way they are painted on the doors: owner code, serial, and the check digit in its own box. Enamel sign plates with a double inner keyline and rounded corners carry the lane and the current number. The surface is flat and dense, with fixed row furniture: each column of a list sits in the same place on every row, and each truck's gate time is drawn against the target.\n\nDay and Night are the same signs on two grounds. Night re-keys the neutrals and slightly lifts safety blue and grey; the state colours keep their meaning.",
+    "keyCharacteristics": [
+      "Safety colours are reserved for state; the chrome is graphite, porcelain and warm-grey rules.",
+      "One family (Barlow Semi Condensed 500/600/700), tabular numerals everywhere.",
+      "Boxed check digit on every 11-character container number.",
+      "Enamel plates with a double inset keyline; flat everywhere else.",
+      "Fixed-column rows with a state tile on the left and a gate-time bar on the right.",
+      "English labels are uppercase and letter-spaced; Turkish labels stay in normal case."
+    ],
+    "rules": [
+      {
+        "name": "The State-Only Rule",
+        "body": "Safety colours mark state and nothing else. No safety colour is used for decoration, branding, section accents or charts that are not about a truck's state.",
+        "section": "colors"
+      },
+      {
+        "name": "The Yellow-Means-You Rule",
+        "body": "Signal yellow appears only where a person is needed (review state, review count, warnings). Text on it is graphite ink.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Grounds Rule",
+        "body": "Night follows `prefers-color-scheme` unless the person chose Day or Night in the rail, which is stored per browser as `data-theme`. Every new colour must be a custom property with a Night value, or a state colour that holds in both.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Face Rule",
+        "body": "Barlow Semi Condensed is the only family. Hierarchy comes from size, weight (500/600/700), case and tracking, never from a second face.",
+        "section": "typography"
+      },
+      {
+        "name": "The Dotted-İ Rule",
+        "body": "Uppercase with letter-spacing is for English labels. Under `lang=\"tr\"` all text-transform is switched off, so Turkish labels keep normal case and never gain a dot on every capital İ. Never hard-code capitals in the strings themselves.",
+        "section": "typography"
+      },
+      {
+        "name": "The Painted Number Rule",
+        "body": "An 11-character container number is set as owner code, a space, the six-digit serial, then the check digit in its own 2px box (3px on plates), as painted on the doors.",
+        "section": "typography"
+      },
+      {
+        "name": "The Keyline Not Lift Rule",
+        "body": "A shadow is only ever an inset line. Nothing floats above the page.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** give every truck state its ISO colour through the sign, tile and plate mapping: green confirmed, yellow needs a person, blue act now, red refused, grey no container, outlined for reading.",
+      "**Do** set every 11-character container number with its check digit boxed.",
+      "**Do** keep rows in fixed columns and draw gate time against the 60 s target tick.",
+      "**Do** declare new colours as custom properties with a Night value.",
+      "**Do** use uppercase with tracking for English labels and leave the strings in normal case, so `lang=\"tr\"` can switch it off.",
+      "**Do** keep controls at least 44px tall and keep the 3px focus outline."
+    ],
+    "donts": [
+      "**Don't** use a safety colour for decoration, branding or emphasis that is not a state.",
+      "**Don't** put white text on signal yellow.",
+      "**Don't** add drop shadows, gradients or glows; depth is rules and inset keylines.",
+      "**Don't** add a second typeface or a monospace for numbers; tabular Barlow Semi Condensed already aligns them.",
+      "**Don't** use read orange for anything but the machine's read box and crop.",
+      "**Don't** use round dots for status lights; status markers are small squares with 2px corners."
+    ]
+  }
+}

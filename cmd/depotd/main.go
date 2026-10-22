@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -134,8 +135,12 @@ func runHub(args []string) error {
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
 	accessCode := fs.String("access-code", os.Getenv("DEPOT_ACCESS_CODE"), "code people must enter to use the app (empty: none)")
 	fakeCamera := fs.Bool("fake-camera", false, "use a simulated camera (try the Camera page without one)")
+	fakePhotos := fs.String("fake-camera-photos", "", "folder of JPEG photos the simulated camera serves in turn (implies -fake-camera)")
 	go2rtcPath := fs.String("go2rtc", defaultGo2rtc(), "go2rtc executable for live video")
 	_ = fs.Parse(args)
+	if *fakePhotos != "" {
+		*fakeCamera = true
+	}
 
 	rec, err := eng.build()
 	if err != nil {
@@ -166,7 +171,11 @@ func runHub(args []string) error {
 	liveVideo := live.New(live.Config{Binary: *go2rtcPath, DataDir: data.dir})
 	cams := gatecam.NewManager(st, watcher, liveVideo, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) })
 	if *fakeCamera {
-		cams.UseFixed(camera.NewDemoFake())
+		stills, err := loadStills(*fakePhotos)
+		if err != nil {
+			return err
+		}
+		cams.UseFixed(camera.NewDemoFake(stills...))
 	}
 	if err := cams.Load(ctx); err != nil {
 		return err
@@ -200,7 +209,11 @@ func runHub(args []string) error {
 	log.Printf("depotd %s · engine %s (%s) · data %s · auto-accept %v", Version, name, model, data.dir, *autoAccept)
 	switch s := cams.Settings(); {
 	case *fakeCamera:
-		log.Print("camera: simulated (-fake-camera)")
+		if *fakePhotos != "" {
+			log.Printf("camera: simulated, serving the photos in %s", *fakePhotos)
+		} else {
+			log.Print("camera: simulated (-fake-camera)")
+		}
 	case s.Configured():
 		log.Printf("camera: %s (automatic photos %v)", s.Host, s.Auto)
 	default:
@@ -327,4 +340,32 @@ func defaultGo2rtc() string {
 		return name
 	}
 	return filepath.Join(filepath.Dir(exe), name)
+}
+
+// loadStills reads the JPEG photos in dir, in name order; an empty dir means none.
+func loadStills(dir string) ([][]byte, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("-fake-camera-photos: %w", err)
+	}
+	var stills [][]byte
+	for _, e := range entries {
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".jpg", ".jpeg":
+		default:
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("-fake-camera-photos: %w", err)
+		}
+		stills = append(stills, b)
+	}
+	if len(stills) == 0 {
+		return nil, fmt.Errorf("-fake-camera-photos: no .jpg photos in %s", dir)
+	}
+	return stills, nil
 }

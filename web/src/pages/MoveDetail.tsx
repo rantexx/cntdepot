@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, blobUrl, typedNumber, type Attempt, type CameraView, type MoveDetail as Detail, type Photo } from "../api";
 import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
-import { CandidateList, CheckDigitMath, PhotoWithBox, StatusChip } from "../components";
+import { CandidateList, CheckDigitMath, GateTime, PhotoWithBox, ReadCrop, SignPlate, StatusChip, gateSeconds } from "../components";
 import { useT } from "../i18n";
 import { useMoveEvents } from "../live";
 import { readLocal, writeLocal } from "../storage";
@@ -116,22 +116,47 @@ export function MoveDetail({ id }: { id: string }) {
   else if (live) livePanel = <LiveVideo videoAvailable={live.live.state === "running"} />;
 
   return (
-    <section>
-      <a href="#/queue">← {t("back")}</a>
-      <div className="card">
-        <StatusChip status={move.status} /> {isCamera && <span className="chip">{t("cameraTag")}</span>}{" "}
-        {move.is_test && <span className="chip">{t("testTag")}</span>}{" "}
+    <div className="page">
+      <div className="page-head">
+        <a className="back" href="#/queue">
+          {t("backToQueue")}
+        </a>
+        <div className="row" style={{ marginTop: 0, alignItems: "center" }}>
+          <StatusChip status={move.status} />
+          {isCamera && <span className="chip">{t("cameraTag")}</span>}
+          {move.is_test && <span className="chip">{t("testTag")}</span>}
+          <GateTime seconds={gateSeconds(move)} />
+        </div>
+      </div>
+      <div className="card" style={{ marginTop: 16 }}>
+        <SignPlate status={move.status} number={move.number} />
+        <ReadCrop photos={move.photos} attempts={move.attempts} />
         {isCamera && (
-          <button type="button" onClick={() => void toggleLive()}>
-            {t("camLive")}
-          </button>
+          <div className="row">
+            <button type="button" onClick={() => void toggleLive()}>
+              {t("camLive")}
+            </button>
+          </div>
         )}
         {livePanel}
-        <div className={`big-number mono ${move.check_digit_valid ? "ok" : "bad"}`}>{move.number || t("noNumber")}</div>
-        <p>
-          {t("typeCode")}: <b>{move.type_code || "–"}</b> · {t("color")}: <b>{move.color || "–"}</b> ·{" "}
-          {t("confidence")}: {Math.round(move.confidence * 100)}%
-        </p>
+        <div className="facts" style={{ marginTop: 14 }}>
+          <div>
+            <span>{t("typeCode")}</span>
+            <b>{move.type_code || "—"}</b>
+          </div>
+          <div>
+            <span>{t("color")}</span>
+            <b>{move.color || "—"}</b>
+          </div>
+          <div>
+            <span>{t("photosRead")}</span>
+            <b>{readPhotos.length}</b>
+          </div>
+          <div>
+            <span>{t("confidence")}</span>
+            <b>{Math.round(move.confidence * 100)}%</b>
+          </div>
+        </div>
         {move.reason && (
           <p className="muted">
             {t("reason")}: {move.reason}
@@ -139,7 +164,9 @@ export function MoveDetail({ id }: { id: string }) {
         )}
         {resolved ? (
           <div>
-            <p>{move.verified ? `✅ ${t("verified")}` : `⚠️ ${t("unverified")}`}</p>
+            <p>
+              <span className={`sign ${move.verified ? "safe" : "caution"}`}>{move.verified ? t("verified") : t("unverified")}</span>
+            </p>
             {move.corrected_from && (
               <p>
                 {t("correctedFrom")} <span className="mono">{move.corrected_from}</span>
@@ -204,7 +231,7 @@ export function MoveDetail({ id }: { id: string }) {
           </div>
         </details>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -227,8 +254,13 @@ function PhotoCard({ photo, attempt, chosen }: { photo: Photo; attempt: Attempt 
               t("noNumber")}
             {reading?.type_code && ` · ${reading.type_code}`}
             {reading?.color && ` · ${reading.color}`}
-            {` · ${attempt.engine}/${attempt.model} · ${attempt.latency_ms} ms`}
           </p>
+        )}
+        {attempt && (
+          <details className="small muted">
+            <summary>{t("engineDetails")}</summary>
+            {attempt.engine}/{attempt.model} · {attempt.latency_ms} ms
+          </details>
         )}
         <a href={blobUrl(photo.sha256)} target="_blank" rel="noreferrer" className="small">
           {t("original")}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Depot Gate - Live gate (Terminal Safety Signage)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--g:#0F8A4B;--y:#F2C200;--b:#1F5FA8;--r:#C8202A;--ink:#1E2226;--p:#F4F4F1;--rule:#CBCBC3;--n:#6C7378}
+*{box-sizing:border-box}
+html,body{margin:0;width:1440px;height:900px;overflow:hidden}
+body{display:grid;grid-template-columns:216px 1fr;font:500 18px/1.2 'Barlow Semi Condensed',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink);background:var(--p)}
+b,strong{font-weight:700}
+/* rail */
+.rail{background:var(--ink);color:#DCDDD8;display:flex;flex-direction:column;padding:0 0 18px}
+.brand{height:56px;display:flex;align-items:center;gap:10px;padding:0 20px;font-size:22px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#fff;border-bottom:1px solid #353B41}
+.brand i{width:16px;height:16px;background:var(--p);border-radius:3px;box-shadow:inset 0 0 0 4px var(--ink),inset 0 0 0 8px var(--p)}
+.rail nav{padding-top:12px}
+.rail a{display:flex;justify-content:space-between;align-items:center;height:46px;padding:0 20px;font-size:21px;border-left:4px solid transparent;color:#B9BCB8}
+.rail a.on{background:#2B3137;color:#fff;border-left-color:var(--p);font-weight:700}
+.rail a em{font-style:normal;background:var(--y);color:var(--ink);font-weight:700;font-size:18px;min-width:26px;text-align:center;padding:2px 0;border-radius:3px}
+.rail .sp{flex:1}
+.lang{display:flex;margin:0 20px 16px;border:1px solid #4A5158;border-radius:4px;overflow:hidden}
+.lang span{flex:1;text-align:center;padding:7px 0;font-size:18px;font-weight:700;color:#B9BCB8}.lang .on{background:var(--p);color:var(--ink)}
+.stat{padding:5px 20px;font-size:17px;display:flex;gap:10px;align-items:center;color:#B9BCB8}.stat i{width:10px;height:10px;background:var(--g);border-radius:2px}
+/* work area */
+main{display:grid;grid-template-rows:56px 88px 392px 1fr;min-height:0;min-width:0}
+.top{display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--rule)}
+h1{margin:0;font-size:30px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+h1 small{font-size:19px;color:var(--n);font-weight:500;letter-spacing:0;text-transform:none;margin-left:12px}
+.key{display:flex;gap:6px;align-items:center;font-size:15px;color:var(--n);text-transform:uppercase;letter-spacing:.06em}.key span{margin-right:6px}
+.k{display:inline-block;font-style:normal;font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:.06em;padding:4px 9px;border-radius:3px;background:var(--c);color:#fff;white-space:nowrap}
+.y{--c:var(--y)}.y .k,.k.y{color:var(--ink)}.g{--c:var(--g)}.rd{--c:var(--r)}.bl{--c:var(--b)}.n{--c:var(--n)}.k.rs{background:#fff;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+.strip{display:grid;grid-template-columns:repeat(4,1fr) 1.6fr;border-bottom:1px solid var(--rule)}
+.strip>div{padding:10px 24px;border-left:1px solid var(--rule);display:flex;flex-direction:column;justify-content:center}.strip>div:first-child{border-left:0}
+.strip b{font-size:46px;line-height:1;display:flex;align-items:center;gap:10px}.strip b i{width:12px;height:30px;background:var(--c,var(--ink));border-radius:2px}
+.strip span{font-size:17px;color:var(--n);margin-top:4px}
+.tgt{display:flex;align-items:center;gap:14px}.tgt s{flex:1;height:10px;background:#DAD9D2;position:relative;text-decoration:none;margin-right:6px}.tgt s:before{content:"";position:absolute;left:0;top:0;bottom:0;width:63%;background:var(--g)}.tgt s:after{content:"";position:absolute;left:100%;top:-6px;bottom:-6px;width:3px;background:var(--ink)}
+/* live */
+.live{display:grid;grid-template-columns:1fr 408px;gap:16px;padding:14px 24px;border-bottom:1px solid var(--rule)}
+.cam{position:relative;background:#101316;overflow:hidden;border-radius:4px}
+.asph{position:absolute;left:0;right:0;bottom:0;height:98px;background:#23282C}
+.asph:before,.asph:after{content:"";position:absolute;top:0;bottom:0;width:8px;background:#E8E8E2;transform:skewX(-20deg)}.asph:before{left:70px}.asph:after{right:70px;transform:skewX(20deg)}
+.cont{position:absolute;left:120px;top:58px;width:500px;height:208px;background:#2B5E96;border:6px solid #1E4A78;display:flex;gap:6px;padding:0 6px}
+.door{flex:1;background:repeating-linear-gradient(90deg,#2F68A5 0 22px,#1E4A78 22px 28px)}
+.cont b{position:absolute;right:46px;top:30px;border:4px solid #FF9A1F;width:176px;height:58px;display:flex;align-items:center;justify-content:center;font-size:23px;color:#F4F4F1;letter-spacing:.04em;background:rgba(16,19,22,.25)}
+.cont b:before{content:"NUMBER 95%";position:absolute;left:-4px;top:-26px;background:#FF9A1F;color:var(--ink);font-size:14px;padding:2px 7px;letter-spacing:.06em}
+.trl{position:absolute;left:84px;top:270px;width:560px;height:22px;background:#3A4147}.trl:before,.trl:after{content:"";position:absolute;top:20px;width:52px;height:52px;border-radius:50%;background:#0B0D0F;box-shadow:inset 0 0 0 10px #2A3036}.trl:before{left:360px}.trl:after{left:420px}
+.lane{position:absolute;left:14px;top:14px;width:158px;height:56px;background:#fff;border:3px solid var(--ink);box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 4px var(--ink);display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:700;letter-spacing:.05em;border-radius:6px}
+.lane:before{content:"";position:absolute;left:9px;top:50%;margin-top:-3px;width:6px;height:6px;border-radius:50%;background:var(--ink);box-shadow:128px 0 var(--ink)}
+.liv{position:absolute;right:14px;top:14px;background:rgba(16,19,22,.85);color:#fff;padding:7px 12px;font-size:17px;font-weight:700;letter-spacing:.06em;display:flex;gap:8px;align-items:center;border-radius:3px}.liv i{width:10px;height:10px;background:var(--g);border-radius:2px}
+.ov{position:absolute;left:14px;right:14px;bottom:14px;display:flex;gap:8px;align-items:center}
+.ov span{background:rgba(16,19,22,.88);color:#fff;font-size:20px;padding:8px 13px;border-radius:3px}
+.ov .ph{margin-left:auto;display:flex;gap:3px;padding:12px 10px}.ph u{width:9px;height:18px;background:#4A5158}.ph u.d{background:#fff}
+/* read panel */
+.read{background:#fff;border:1px solid var(--rule);border-radius:4px;padding:14px;display:flex;flex-direction:column;justify-content:space-between}
+.lbl{font-size:16px;text-transform:uppercase;letter-spacing:.07em;color:var(--n);font-weight:600}
+.plate{background:var(--b);color:#fff;border-radius:14px;box-shadow:inset 0 0 0 4px var(--b),inset 0 0 0 7px #fff;padding:16px 20px 14px;text-align:center}
+.plate small{display:block;font-size:15px;letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+.plate strong{display:block;font-size:56px;line-height:1.05;letter-spacing:.03em;white-space:nowrap;margin-top:2px}
+.plate u{text-decoration:none;border:3px solid #fff;border-radius:3px;padding:0 7px;margin-left:8px}
+.ok{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:600}.ok .k{font-size:14px}
+.facts{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.facts div{padding:7px 8px;border-left:1px solid var(--rule)}.facts div:first-child{border-left:0;padding-left:0}
+.facts span{display:block;font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--n);font-weight:600}.facts b{font-size:28px;line-height:1.1;display:flex;align-items:center;gap:6px}.facts i{width:16px;height:16px;background:#2B5E96;border-radius:2px}
+.btns{display:grid;grid-template-columns:1.25fr 1fr;gap:10px}
+button{font:700 24px 'Barlow Semi Condensed',sans-serif;height:52px;border-radius:6px;border:2px solid var(--ink);background:#fff;color:var(--ink);letter-spacing:.02em}
+button.p{background:var(--b);border-color:var(--b);color:#fff;text-transform:uppercase;letter-spacing:.08em}
+.note{font-size:16px;color:var(--n)}
+/* visits */
+.vis{padding:0 24px;min-height:0}
+.vh{height:38px;display:flex;align-items:center;justify-content:space-between}.vh h2{margin:0;font-size:22px;text-transform:uppercase;letter-spacing:.05em}.vh span{font-size:16px;color:var(--n)}
+.r{display:grid;grid-template-columns:76px 218px 76px 1fr 300px;align-items:center;height:40px;border-top:1px solid var(--rule);position:relative;padding-left:14px;font-size:22px}
+.r:before{content:"";position:absolute;left:0;top:-1px;bottom:0;width:6px;background:var(--c,var(--rule))}
+.r.h{height:26px;font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--n);font-weight:600;border-top:1px solid var(--ink)}.r.h:before{display:none}
+.r u{text-decoration:none;border:2px solid currentColor;border-radius:2px;padding:0 4px;margin-left:6px;font-size:19px}
+.r small{font-size:17px;color:var(--n);margin-left:12px;font-weight:500}.r .s{display:flex;align-items:center}
+.t{display:flex;align-items:center;gap:12px;justify-content:flex-end}
+.t s{width:150px;height:8px;background:#DAD9D2;position:relative;text-decoration:none;flex:none}.t s:before{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--w,0);background:var(--c)}.t s:after{content:"";position:absolute;left:50%;top:-5px;bottom:-5px;width:2px;background:var(--ink)}
+.t b{width:84px;text-align:right}.dim{color:var(--n)}
+</style></head><body>
+<aside class="rail"><div class="brand"><i></i>Depot Gate</div>
+<nav><a class="on">Live gate</a><a>Review queue <em>2</em></a><a>Trucks</a><a>Camera</a><a>Reports</a><a>Settings</a></nav><div class="sp"></div>
+<div class="lang"><span class="on">EN</span><span>TR</span></div>
+<div class="stat"><i></i>Camera online</div><div class="stat"><i></i>Reading engine online</div></aside>
+<main>
+<div class="top"><h1>Live gate<small>Today, 20 Oct 2026</small></h1>
+<div class="key"><span>States</span><i class="k n rs">Reading</i><i class="k bl">Act now</i><i class="k y">Needs review</i><i class="k g">Confirmed</i><i class="k rd">Refused</i><i class="k n">No container</i></div></div>
+<div class="strip"><div><b>47</b><span>trucks in</span></div><div style="--c:var(--g)"><b><i></i>41</b><span>read automatically</span></div><div style="--c:var(--g)"><b><i></i>5</b><span>confirmed by a person</span></div><div style="--c:var(--r)"><b><i></i>1</b><span>refused</span></div>
+<div><div class="tgt"><b style="font-size:46px;line-height:1">38 s</b><s></s></div><span>average gate time against a 60 s target</span></div></div>
+<section class="live">
+<div class="cam"><div class="asph"></div><div class="trl"></div><div class="cont"><div class="door"></div><div class="door"></div><b>CSQU 305438 3</b></div>
+<div class="lane">GATE 1</div><div class="liv"><i></i>LIVE &middot; 4K</div>
+<div class="ov"><span><b>Vehicle detected</b> 14:32:08</span><span>Photo 6 of 15</span><span>Reads 2 of 8</span><span class="ph"><u class="d"></u><u class="d"></u><u class="d"></u><u class="d"></u><u class="d"></u><u class="d"></u><u></u><u></u><u></u><u></u><u></u><u></u><u></u><u></u><u></u></span></div></div>
+<div class="read"><div class="lbl">Current read &middot; waiting for you</div>
+<div class="plate"><small>Container number</small><strong>CSQU 305438<u>3</u></strong></div>
+<div class="ok"><i class="k g">Valid</i>Check digit 3 matches ISO 6346</div>
+<div class="facts"><div><span>ISO type</span><b>45G1</b></div><div><span>Colour</span><b><i></i>Blue</b></div><div><span>Photos agree</span><b>2</b></div><div><span>Confidence</span><b>95%</b></div></div>
+<div class="btns"><button class="p">Confirm</button><button>Correct number</button></div>
+<div class="note">Camera reads are always confirmed by a person.</div></div>
+</section>
+<section class="vis"><div class="vh"><h2>Recent visits</h2><span>Newest first &middot; tick marks the 60 s target</span></div>
+<div class="r h"><span>Time</span><span>Container</span><span>Type</span><span>State</span><span style="text-align:right">Gate time</span></div>
+<div class="r g"><span>14:29</span><span>TGHU 800012<u>8</u></span><span>22G1</span><span class="s"><i class="k">Confirmed</i></span><span class="t" style="--w:34%"><s></s><b>41 s</b></span></div>
+<div class="r y"><span>14:21</span><span>MSCU 612480<u>7</u></span><span>45R1</span><span class="s"><i class="k">Needs review</i><small>photos disagree: MSCU6124807 / MSCU6124B07</small></span><span class="t dim"><s></s><b>&mdash;</b></span></div>
+<div class="r n"><span>14:15</span><span class="dim">no container</span><span class="dim">&mdash;</span><span class="s"><i class="k">No container</i><small>forklift</small></span><span class="t dim"><s></s><b>&mdash;</b></span></div>
+<div class="r g"><span>14:08</span><span>TCNU 457713<u>0</u></span><span>42G1</span><span class="s"><i class="k">Confirmed</i></span><span class="t" style="--w:29%"><s></s><b>35 s</b></span></div>
+<div class="r rd"><span>13:56</span><span>CAIU 982264<u>3</u></span><span>22G1</span><span class="s"><i class="k">Refused</i><small>damaged doors</small></span><span class="t" style="--w:100%"><s></s><b>2 min 10 s</b></span></div>
+<div class="r g"><span>13:44</span><span>SEGU 301457<u>9</u></span><span>45G1</span><span class="s"><i class="k">Confirmed</i></span><span class="t" style="--w:28%"><s></s><b>33 s</b></span></div>
+<div class="r g"><span>13:31</span><span>TRHU 556019<u>9</u></span><span>22T6</span><span class="s"><i class="k">Confirmed</i></span><span class="t" style="--w:43%"><s></s><b>52 s</b></span></div>
+</section></main></body></html>

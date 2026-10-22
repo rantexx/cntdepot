@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, blobUrl, type Move } from "../api";
-import { StatusChip } from "../components";
+import { api, type Move } from "../api";
+import { VisitHead, VisitRow } from "../components";
 import { useT, type Key } from "../i18n";
 import { useMoveEvents } from "../live";
 
@@ -36,7 +36,10 @@ export function Queue() {
   );
 
   return (
-    <section>
+    <div className="page">
+      <div className="page-head">
+        <h1>{t("navQueue")}</h1>
+      </div>
       <div className="tabs">
         {FILTERS.map((f) => (
           <button
@@ -51,26 +54,16 @@ export function Queue() {
       </div>
       {error && <p className="error">{error}</p>}
       {moves.length === 0 && <p className="muted">{t("noMoves")}</p>}
-      <ul className="queue">
-        {moves.map((m) => {
-          const first = m.photos?.find((p) => !p.deferred) ?? m.photos?.[0];
-          return (
+      {moves.length > 0 && (
+        <ul className="visits">
+          <VisitHead />
+          {moves.map((m) => (
             <li key={m.id}>
-              <a href={`#/moves/${m.id}`} className="queue-row">
-                {first ? <img src={blobUrl(first.ai_sha256, 320)} alt="" loading="lazy" /> : <div className="noimg" />}
-                <div>
-                  <div className="mono strong">{m.number || t("noNumber")}</div>
-                  <StatusChip status={m.status} /> {m.source === "camera" && <span className="chip">{t("cameraTag")}</span>}{" "}
-                  {m.is_test && <span className="chip">{t("testTag")}</span>}
-                  <div className="muted small">
-                    {new Date(m.created_at).toLocaleString()} · {m.reason}
-                  </div>
-                </div>
-              </a>
+              <VisitRow move={m} />
             </li>
-          );
-        })}
-      </ul>
-    </section>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

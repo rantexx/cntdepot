@@ -175,7 +175,11 @@ func Reconcile(frames []Frame, autoAccept float64) Result {
 		res.Reason = fmt.Sprintf("confidence %.2f below auto-accept threshold", conf)
 	case agreeingRoles >= 2 || framesRead <= 1:
 		res.Confidence, res.Decision = conf, DecisionAutoAccept
-		res.Reason = fmt.Sprintf("check digit valid, %d side(s) agree", max(agreeingRoles, 1))
+		if n := max(agreeingRoles, 1); n == 1 {
+			res.Reason = "check digit valid, read on 1 side"
+		} else {
+			res.Reason = fmt.Sprintf("check digit valid, %d sides agree", n)
+		}
 	default:
 		res.Confidence, res.Decision = conf, DecisionReview
 		res.Reason = "only one side of the container confirmed the number"

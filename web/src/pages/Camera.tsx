@@ -144,7 +144,10 @@ export function Camera() {
     (form.host.trim() !== view.settings.host || form.user.trim() !== view.settings.user);
 
   return (
-    <section>
+    <div className="page">
+      <div className="page-head">
+        <h1>{t("navCamera")}</h1>
+      </div>
       {pollError && <p className="error">{pollError}</p>}
       <div className="card">
         <h3>{t("camSetup")}</h3>
@@ -309,7 +312,7 @@ export function Camera() {
           </ul>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

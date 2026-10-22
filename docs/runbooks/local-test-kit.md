@@ -157,6 +157,16 @@ A simulated camera "sees" a vehicle for 20 s out of every 40. The demo uses its 
 folder and port 8090 (open `http://localhost:8090`), so it never mixes fake trucks or settings into
 the real `depot-data`, and it can run next to the real hub.
 
+To test with photos you took yourself, put the `.jpg` files in a folder and point the simulated
+camera at it. Each truck visit takes the next photos in name order, so the real engine reads your
+real containers without a camera at the gate:
+
+```
+bin/depotd.exe hub -fake-camera-photos C:\gate-photos -data demo-data -addr :8090
+```
+
+Leave out `-engine fake` to read them with Gemini (it needs `GEMINI_API_KEY`, as for the real hub).
+
 ### Camera troubleshooting
 
 | Symptom | Fix |
