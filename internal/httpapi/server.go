@@ -57,6 +57,9 @@ const (
 	// cannot make a visitor's browser change gate records.
 	clientHeader = "X-Depot-Client"
 	clientValue  = "web"
+	// scopeHeader is "<companyId>:<depotId>" as the sending tab shows it. It
+	// only checks that the tab is up to date; the scope comes from the session.
+	scopeHeader = "X-Depot-Scope"
 )
 
 // New builds the server. broker must be the one the gate service notifies.
@@ -115,7 +118,7 @@ func (s *Server) routes() {
 
 	// Only the API and sign-in need sessions (and so the database): the app
 	// shell must load while the database is down.
-	withSession := s.opts.Sessions.Middleware(apiMux)
+	withSession := s.opts.Sessions.Middleware(checkScope(apiMux))
 	s.mux.Handle("/api/", withSession)
 	s.mux.Handle("/auth/", withSession)
 	s.mux.Handle("/", s.static())
@@ -138,6 +141,24 @@ func (s *Server) guardAPI(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Header.Get(clientHeader) != clientValue {
 			writeError(w, http.StatusForbidden, "E5004", "missing client header")
 			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// checkScope refuses a request from a tab that still shows a company or depot
+// the session has since left (another tab of the browser switched it), so its
+// writes cannot land in the wrong depot. Requests without the header (other
+// clients) and the session's own endpoints are not checked.
+func checkScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		shown := r.Header.Get(scopeHeader)
+		if shown != "" && r.URL.Path != "/api/session" && !strings.HasPrefix(r.URL.Path, "/api/session/") {
+			sc, _ := tenancy.From(r.Context())
+			if shown != sc.CompanyID+":"+sc.DepotID {
+				writeError(w, http.StatusConflict, "E4097", "your company or depot changed in another tab")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

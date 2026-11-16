@@ -194,7 +194,7 @@ func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg ga
 func runAPI(args []string) error {
 	fs := newFlags("api")
 	dbURL := fs.String("db", "", "depot_app database URL (env DATABASE_URL)")
-	addr := fs.String("addr", ":8080", "listen address")
+	addr := fs.String("addr", "", "listen address (default 127.0.0.1:8080 with dev login, :8080 without)")
 	env := fs.String("env", "development", "development | production")
 	devLogin := fs.Bool("dev-login", true, "allow dev login (default: on in development; refused in production)")
 	blobs := fs.String("blobs", filepath.Join("depot-data", "blobs"), "folder for photos")
@@ -206,7 +206,11 @@ func runAPI(args []string) error {
 		return err
 	}
 	envFallback(dbURL, "DATABASE_URL")
-	production := strings.EqualFold(strings.TrimSpace(*env), "production")
+	// Anything but these two is refused: a typo must not leave dev login on.
+	if *env != "development" && *env != "production" {
+		return fmt.Errorf("-env must be development or production, not %q", *env)
+	}
+	production := *env == "production"
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if !set["dev-login"] {
@@ -215,6 +219,7 @@ func runAPI(args []string) error {
 	if err := auth.CheckDevLogin(*env, *devLogin); err != nil {
 		return err
 	}
+	*addr = apiAddr(*addr, *devLogin)
 	if *dbURL == "" {
 		return errors.New("api needs -db (DATABASE_URL), the depot_app database URL")
 	}
@@ -240,6 +245,18 @@ func runAPI(args []string) error {
 	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider()}, nil)
 }
 
+// apiAddr is the api's listen address: loopback while dev login (which signs
+// anyone in) is on, unless an address was given.
+func apiAddr(addr string, devLogin bool) string {
+	switch {
+	case addr != "":
+		return addr
+	case devLogin:
+		return hubDefaultAddr
+	}
+	return ":8080"
+}
+
 // serve starts the gate service and the HTTP server and blocks until ctx ends.
 // background funcs run alongside and must return when ctx ends.
 func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, background []func(context.Context)) error {
@@ -250,6 +267,9 @@ func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, backgro
 		return err
 	}
 	defer ln.Close()
+	// A failed Serve must end the workers too, or the waits below never return.
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if err := a.svc.Start(ctx); err != nil {
 		return err
 	}
@@ -289,6 +309,7 @@ func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, backgro
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
+	cancelRun()
 	bg.Wait()
 	a.svc.Wait()
 	return serveErr

@@ -113,3 +113,29 @@ func TestHubListensOnLoopbackByDefault(t *testing.T) {
 		t.Fatalf("hub default address is not loopback: %s", buf.String())
 	}
 }
+
+func TestApiRefusesAnUnknownEnv(t *testing.T) {
+	for _, env := range []string{"staging", "prod", "Production", ""} {
+		err := run([]string{"api", "-env", env, "-db", "postgres://unused"})
+		if err == nil || !strings.Contains(err.Error(), "-env must be development or production") {
+			t.Errorf("-env %q: err = %v, want a refusal", env, err)
+		}
+	}
+}
+
+func TestApiListensOnLoopbackWhileDevLoginIsOn(t *testing.T) {
+	cases := []struct {
+		addr     string
+		devLogin bool
+		want     string
+	}{
+		{"", true, "127.0.0.1:8080"},
+		{"", false, ":8080"},
+		{":9000", true, ":9000"},
+	}
+	for _, c := range cases {
+		if got := apiAddr(c.addr, c.devLogin); got != c.want {
+			t.Errorf("apiAddr(%q, %v) = %q; want %q", c.addr, c.devLogin, got, c.want)
+		}
+	}
+}

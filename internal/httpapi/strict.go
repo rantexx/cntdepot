@@ -368,7 +368,19 @@ func (s *Server) session(ctx context.Context, cur *auth.Current) (api.Session, e
 }
 
 func (s *Server) GetSession(ctx context.Context, _ api.GetSessionRequestObject) (api.GetSessionResponseObject, error) {
-	out, err := s.session(ctx, current(ctx))
+	cur := current(ctx)
+	n, err := s.opts.Sessions.AcceptInvitations(ctx, cur)
+	if err != nil {
+		return nil, err
+	}
+	if n > 0 { // new companies: read the memberships again
+		again, err := s.opts.Sessions.Resolve(ctx, sessionCookie(ctx))
+		if err != nil {
+			return nil, err
+		}
+		cur = &again
+	}
+	out, err := s.session(ctx, cur)
 	return api.GetSession200JSONResponse(out), err
 }
 

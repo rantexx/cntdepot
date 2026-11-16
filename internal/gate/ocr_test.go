@@ -247,3 +247,72 @@ func TestStartContinuesPastAFailingCompany(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func (h *harness) ocrReads(t *testing.T) int64 {
+	t.Helper()
+	var n int64
+	if err := h.ownerQueryRow(t, `SELECT COALESCE(sum(count), 0) FROM usage_counters WHERE company_id = 'A' AND kind = 'ocr_read'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestTestReadAndReadStillObeyTheModuleAndCount(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, true)
+	h.setModules(t, "A", "{}")
+	if _, err := h.svc.TestRead(ctx, []byte("x"), "image/jpeg"); !errors.Is(err, ErrOCROff) {
+		t.Fatalf("TestRead off = %v; want ErrOCROff", err)
+	}
+	if _, err := h.svc.ReadStill(ctx, still("off")); !errors.Is(err, ErrOCROff) {
+		t.Fatalf("ReadStill off = %v; want ErrOCROff", err)
+	}
+	if fake.Calls() != 0 || h.ocrReads(t) != 0 {
+		t.Fatalf("off: calls = %d, ocr_read = %d; want 0 and 0", fake.Calls(), h.ocrReads(t))
+	}
+	h.setModules(t, "A", "{ocr}")
+	if _, err := h.svc.TestRead(ctx, []byte("x"), "image/jpeg"); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.ocrReads(t); n != 1 {
+		t.Fatalf("after TestRead ocr_read = %d; want 1", n)
+	}
+	if _, err := h.svc.ReadStill(ctx, still("on")); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.ocrReads(t); n != 2 || fake.Calls() != 2 {
+		t.Fatalf("after ReadStill ocr_read = %d, calls = %d; want 2 and 2", n, fake.Calls())
+	}
+}
+
+func TestPhotoSkippedWhileOffIsNotReadAfterARestart(t *testing.T) {
+	rec := &blockingRec{started: make(chan struct{}), release: make(chan struct{})}
+	h := newHarness(t, rec, Config{Workers: 1}, false)
+	reads := startWithHook(t, h)
+	m1, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	m2, _ := h.svc.NewMove(ctx, "2", false, "clerk")
+	h.photo(t, m1.ID, "rear", "a")
+	h.photo(t, m2.ID, "rear", "b")
+	<-rec.started
+	h.setModules(t, "A", "{}")
+	close(rec.release)
+	nextRead(t, reads)
+	nextRead(t, reads) // m2's photo, skipped
+	got, err := h.store.GetMove(ctx, m2.ID)
+	if err != nil || len(got.Photos) != 1 || got.Photos[0].ReadEnabled {
+		t.Fatalf("move 2 = %+v, %v; want its skipped photo with ReadEnabled=false", got, err)
+	}
+	h.setModules(t, "A", "{ocr}")
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	again := New(h.store, h.blobs, fake, Config{}, func(string, string) {})
+	runCtx, cancel := context.WithCancel(context.Background())
+	if err := again.Start(runCtx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	again.Wait()
+	if fake.Calls() != 0 {
+		t.Fatalf("calls after restart = %d; want 0", fake.Calls())
+	}
+}

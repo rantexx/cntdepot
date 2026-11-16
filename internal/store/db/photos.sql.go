@@ -27,6 +27,20 @@ func (q *Queries) ChoosePhoto(ctx context.Context, arg ChoosePhotoParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const disableRead = `-- name: DisableRead :exec
+UPDATE photos SET read_enabled = false WHERE company_id = $1 AND id = $2
+`
+
+type DisableReadParams struct {
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) DisableRead(ctx context.Context, arg DisableReadParams) error {
+	_, err := q.db.Exec(ctx, disableRead, arg.CompanyID, arg.ID)
+	return err
+}
+
 const getPhoto = `-- name: GetPhoto :one
 SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
 JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id

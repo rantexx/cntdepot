@@ -26,6 +26,9 @@ WHERE p.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depo
 -- name: ChoosePhoto :execrows
 UPDATE photos SET deferred = false WHERE company_id = @company_id AND id = @id AND deferred;
 
+-- name: DisableRead :exec
+UPDATE photos SET read_enabled = false WHERE company_id = @company_id AND id = @id;
+
 -- name: PhotosWithoutAttempts :many
 SELECT sqlc.embed(p), m.depot_id FROM photos p
 JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id

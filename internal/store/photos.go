@@ -121,6 +121,14 @@ func (s *Store) MarkForReading(ctx context.Context, id, actor string) error {
 	})
 }
 
+// DisableRead marks a photo as never to be read (its read was skipped while
+// the ocr module was off).
+func (s *Store) DisableRead(ctx context.Context, id string) error {
+	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		return q.DisableRead(ctx, sqlcdb.DisableReadParams{CompanyID: sc.CompanyID, ID: id})
+	})
+}
+
 // PhotosWithoutAttempts returns read-enabled photos of open moves that have
 // not been read yet, e.g. because the depot service stopped mid-read. Start
 // re-queues them. Deferred photos are left alone: nobody chose them for

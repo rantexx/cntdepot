@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"depot/internal/db"
@@ -57,6 +58,12 @@ type Sessions struct {
 // turn it on in production. Off by default so local dev over http works.
 func (s *Sessions) SetSecureCookies(on bool) { s.secure = on }
 
+// Secure reports whether cookies set in answer to r are marked Secure.
+func (s *Sessions) Secure(r *http.Request) bool { return s.secure || r.TLS != nil }
+
+// unverifiedPrefix starts the users.email placeholder of an unverified login.
+const unverifiedPrefix = "unverified|"
+
 // NewSessions keeps sessions for ttl (30 days when ttl <= 0).
 func NewSessions(pool *pgxpool.Pool, ttl time.Duration) *Sessions {
 	if ttl <= 0 {
@@ -77,7 +84,7 @@ func (s *Sessions) Login(ctx context.Context, id Identity) (string, error) {
 	if !verified {
 		// users.email is what invitations and platform_admins match, so it only
 		// ever holds a verified email; '|' keeps the placeholder off real addresses.
-		stored = "unverified|" + id.Subject
+		stored = unverifiedPrefix + id.Subject
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -149,6 +156,20 @@ func (s *Sessions) Resolve(ctx context.Context, cookie string) (Current, error) 
 	return cur, nil
 }
 
+// AcceptInvitations turns the open invitations for cur's email into
+// memberships, so an invitation sent after sign-in counts without signing in
+// again. It reports how many were accepted.
+func (s *Sessions) AcceptInvitations(ctx context.Context, cur *Current) (int, error) {
+	if strings.HasPrefix(cur.User.Email, unverifiedPrefix) { // users.email holds only verified emails otherwise
+		return 0, nil
+	}
+	var n int
+	err := db.Global(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT accept_invitations($1, $2)", cur.User.ID, cur.User.Email).Scan(&n)
+	})
+	return n, err
+}
+
 // SetScope chooses the session's company and depot ("" = all depots, only
 // for members of all depots). The user must be a member there.
 func (s *Sessions) SetScope(ctx context.Context, cookie, companyID, depotID string) error {
@@ -198,7 +219,7 @@ func (s *Sessions) SetCookie(w http.ResponseWriter, r *http.Request, value strin
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secure || r.TLS != nil,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.Secure(r),
 	})
 }
 

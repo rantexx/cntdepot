@@ -405,7 +405,13 @@ func (s *Service) TestRead(ctx context.Context, ai []byte, aiType string) (TestR
 }
 
 func (s *Service) testRead(ctx context.Context, img recognition.Image) (TestReadResult, error) {
+	if !s.ocrOn(ctx) {
+		return TestReadResult{}, ErrOCROff
+	}
 	att, err := s.rec.Read(ctx, img)
+	if uerr := s.store.AddUsage(context.WithoutCancel(ctx), "ocr_read", 1); uerr != nil {
+		log.Printf("gate: count test read: %v", uerr)
+	}
 	res := TestReadResult{Attempt: att}
 	if err != nil {
 		res.Error = err.Error()
@@ -468,6 +474,10 @@ func (s *Service) process(j job) {
 		// hook still hears of it, so a camera visit does not wait for ever.
 		if ctx.Err() != nil {
 			return
+		}
+		// Skipped for good: a restart with the module on must not read it.
+		if err := s.store.DisableRead(ctx, j.photoID); err != nil {
+			log.Printf("gate: mark photo %s unread: %v", j.photoID, err)
 		}
 		if err := s.settleOff(ctx, j.moveID); err != nil {
 			log.Printf("gate: settle move %s: %v", j.moveID, err)

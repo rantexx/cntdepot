@@ -101,7 +101,7 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	state := base64.RawURLEncoding.EncodeToString(raw)
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/auth/", MaxAge: 600,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil})
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.opts.Sessions.Secure(r)})
 	http.Redirect(w, r, s.opts.Provider.LoginURL(state), http.StatusFound)
 }
 
@@ -118,7 +118,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, code, state
 		http.Error(w, "This sign-in was not started in this browser or has expired. Sign in again.", http.StatusBadRequest)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: stateCookie, Path: "/auth/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Path: "/auth/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.opts.Sessions.Secure(r)})
 	id, err := s.opts.Provider.Exchange(r.Context(), code)
 	if err != nil {
 		log.Printf("httpapi: sign-in exchange: %v", err)

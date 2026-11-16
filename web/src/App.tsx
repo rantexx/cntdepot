@@ -79,7 +79,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { route: "", href: "#/", label: "navLiveGate", perm: "gate", ocr: true },
   { route: "queue", href: "#/queue", label: "navQueue", perm: "office", ocr: true },
-  { route: "camera", href: "#/camera", label: "navCamera", perm: "manage" },
+  { route: "camera", href: "#/camera", label: "navCamera", perm: "manage", ocr: true },
   { route: "capture", href: "#/capture", label: "navCapture", perm: "gate" },
   { route: "test", href: "#/test", label: "navTest", perm: "office", ocr: true },
 ];

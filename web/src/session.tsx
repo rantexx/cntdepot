@@ -1,8 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getSession, logout, setScope, type Session, type SessionCurrent } from "./gen/api";
-import { onUnauthorized } from "./http";
+import { onScopeChanged, onUnauthorized, setShownScope } from "./http";
 import { ok } from "./hubApi";
 import { useT } from "./i18n";
+import { writeLocal } from "./storage";
+
+// Written after a scope choice; the other tabs of the browser share the session, so they reload it.
+const SCOPE_KEY = "scope-changed";
+
+// The scope this tab shows, sent with every call so a stale tab is refused instead of writing elsewhere.
+function shown(session: Session): Session {
+  setShownScope(`${session.current?.companyId ?? ""}:${session.current?.depotId ?? ""}`);
+  return session;
+}
 
 type State = { status: "loading" | "anon" | "down" } | { status: "ready"; session: Session };
 
@@ -21,7 +31,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const reload = useCallback(async () => {
     try {
-      setState({ status: "ready", session: await ok(getSession()) });
+      setState({ status: "ready", session: shown(await ok(getSession())) });
     } catch {
       // A 401 already flipped the state to "anon" through onUnauthorized.
       setState((s) => (s.status === "anon" ? s : { status: "down" }));
@@ -30,12 +40,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     onUnauthorized(() => setState({ status: "anon" }));
+    onScopeChanged(() => void reload());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SCOPE_KEY) void reload();
+    };
+    window.addEventListener("storage", onStorage);
     void reload();
-    return () => onUnauthorized(undefined);
+    return () => {
+      onUnauthorized(undefined);
+      onScopeChanged(undefined);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [reload]);
 
   const choose = useCallback(async (companyId: string, depotId: string) => {
-    setState({ status: "ready", session: await ok(setScope({ companyId, depotId })) });
+    setState({ status: "ready", session: shown(await ok(setScope({ companyId, depotId }))) });
+    writeLocal(SCOPE_KEY, `${companyId}:${depotId}:${Date.now()}`); // a new value, so the event fires every time
   }, []);
 
   const signOut = useCallback(async () => {

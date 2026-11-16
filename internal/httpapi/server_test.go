@@ -305,6 +305,14 @@ func TestRereadWithOCROffIs409(t *testing.T) {
 	if status != http.StatusConflict || !strings.Contains(string(body), "OCR") {
 		t.Fatalf("reread with ocr off = %d %s; want 409", status, body)
 	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("ai", "ai.jpg")
+	_, _ = fw.Write([]byte("\xff\xd8\xff\xe0test"))
+	mw.Close()
+	if status, body := do(t, office.request("POST", "/api/test-read", &buf, mw.FormDataContentType())); status != http.StatusConflict || errorCode(body) != "E4094" {
+		t.Fatalf("test read with ocr off = %d %s; want 409 E4094", status, body)
+	}
 	if _, body := office.call("GET", "/api/company", ""); !strings.Contains(string(body), `"modules":[]`) {
 		t.Fatalf("company = %s", body)
 	}
@@ -996,4 +1004,67 @@ func TestOwnerSessionListsEveryPermission(t *testing.T) {
 	if d := s.Companies[0].Depots; len(d) != 1 || d[0].Id != "d1" {
 		t.Fatalf("an unlimited member sees every depot: %+v", d)
 	}
+}
+
+// A tab that still shows an old company or depot (another tab switched the
+// browser's session) is refused instead of writing into the new scope.
+func TestStaleTabScopeIs409(t *testing.T) {
+	e := newEnv(t, nil)
+	e.exec(t, "A", `INSERT INTO depots (company_id, id, name) VALUES ('A', 'd2', 'Second')`)
+	u := e.as(t, "A", "office")
+	withScope := func(method, path, scope string) (int, []byte) {
+		req := u.request(method, path, nil, "")
+		if scope != "" {
+			req.Header.Set("X-Depot-Scope", scope)
+		}
+		return do(t, req)
+	}
+	if status, body := withScope("GET", "/api/moves", "A:d1"); status != 200 {
+		t.Fatalf("matching scope = %d %s; want 200", status, body)
+	}
+	if status, body := withScope("GET", "/api/moves", ""); status != 200 {
+		t.Fatalf("no scope header = %d %s; want 200", status, body)
+	}
+	if status, body := withScope("GET", "/api/moves", "A:d2"); status != 409 || errorCode(body) != "E4097" {
+		t.Fatalf("other depot = %d %s; want 409 E4097", status, body)
+	}
+	if status, body := withScope("POST", "/api/moves", "B:d1"); status != 409 || errorCode(body) != "E4097" {
+		t.Fatalf("other company = %d %s; want 409 E4097", status, body)
+	}
+	if status, body := withScope("GET", "/api/session", "A:d2"); status != 200 {
+		t.Fatalf("session with a stale scope = %d %s; want 200", status, body)
+	}
+}
+
+func TestInvitationAfterSignInCountsOnTheNextSessionRead(t *testing.T) {
+	e := newEnv(t, nil)
+	u := e.as(t, "A", "office")
+	e.exec(t, "B", `INSERT INTO invitations (company_id, id, email, role, created_by) VALUES ('B', 'late', 'office@a.test', 'gate', 't')`)
+	status, body := u.call("GET", "/api/session", "")
+	var s api.Session
+	if err := json.Unmarshal(body, &s); status != 200 || err != nil || len(s.Companies) != 2 {
+		t.Fatalf("session = %d %s; want companies A and B", status, body)
+	}
+	if status, body := u.call("POST", "/api/session/scope", `{"companyId":"B","depotId":""}`); status != 200 {
+		t.Fatalf("scope into the new company = %d %s", status, body)
+	}
+}
+
+func TestStateCookieFollowsTheSecureSetting(t *testing.T) {
+	e := newEnv(t, func(o *Options, _ *gate.Service) { o.Sessions.SetSecureCookies(true) })
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Get(e.srv.URL + "/auth/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	for _, ck := range resp.Cookies() {
+		if ck.Name == stateCookie {
+			if !ck.Secure {
+				t.Fatal("state cookie is not Secure with secure cookies on")
+			}
+			return
+		}
+	}
+	t.Fatalf("no state cookie in %v", resp.Header["Set-Cookie"])
 }
