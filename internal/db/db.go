@@ -65,7 +65,7 @@ func Migrate(ctx context.Context, ownerURL string, o MigrateOptions) error {
 			return fmt.Errorf("create role: %w", err)
 		}
 		var alter string
-		if err := tx.QueryRow(ctx, "SELECT format('ALTER ROLE depot_app WITH PASSWORD %L', $1::text)", o.AppPassword).Scan(&alter); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT format('ALTER ROLE depot_app WITH LOGIN PASSWORD %L', $1::text)", o.AppPassword).Scan(&alter); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, alter); err != nil {
@@ -139,9 +139,9 @@ func Open(ctx context.Context, appURL string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
 	var ok bool
-	err = pool.QueryRow(ctx, "SELECT current_user = '"+AppRole+"' AND NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname = current_user").Scan(&ok)
+	err = pool.QueryRow(ctx, "SELECT current_user = '"+AppRole+"' AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication FROM pg_roles WHERE rolname = current_user").Scan(&ok)
 	if err == nil && !ok {
-		err = errors.New("connected role is not " + AppRole + ", or can bypass row-level security")
+		err = errors.New("connected role is not " + AppRole + ", or has more power than it needs (superuser, BYPASSRLS, CREATEROLE, CREATEDB or REPLICATION)")
 	}
 	if err != nil {
 		pool.Close()

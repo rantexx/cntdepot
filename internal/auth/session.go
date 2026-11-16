@@ -104,10 +104,6 @@ func (s *Sessions) Login(ctx context.Context, id Identity) (string, error) {
 				return err
 			}
 		}
-		// Each sign-in also clears out expired sessions, so the table cannot grow without bound.
-		if _, err := tx.Exec(ctx, "DELETE FROM sessions WHERE expires_at < now()"); err != nil {
-			return err
-		}
 		_, err = tx.Exec(ctx, "INSERT INTO sessions (id_hash, user_id, expires_at) VALUES ($1, $2, $3)",
 			hashCookie(cookie), userID, time.Now().Add(s.ttl))
 		return err
@@ -115,6 +111,12 @@ func (s *Sessions) Login(ctx context.Context, id Identity) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("auth: login: %w", err)
 	}
+	// Each sign-in also clears out expired sessions, so the table cannot grow
+	// without bound. It is housekeeping: a failure here never fails the sign-in.
+	_ = db.Global(ctx, s.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "DELETE FROM sessions WHERE expires_at < now()")
+		return err
+	})
 	return cookie, nil
 }
 

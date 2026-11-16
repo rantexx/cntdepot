@@ -270,3 +270,32 @@ func TestAppURLUnparseableNeverConnects(t *testing.T) {
 		t.Fatalf("Open(%q) connected", app)
 	}
 }
+
+func TestOpenRefusesAnOverPoweredAppRole(t *testing.T) {
+	owner := pgtest.NewDB(t)
+	if err := db.Migrate(ctx, owner, db.MigrateOptions{AppPassword: appPassword}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	// The role is cluster-wide: leave it as the other tests expect.
+	t.Cleanup(func() { _, _ = conn.Exec(context.Background(), "ALTER ROLE depot_app NOCREATEROLE LOGIN") })
+	// A role left behind with extra power and without LOGIN.
+	if _, err := conn.Exec(ctx, "ALTER ROLE depot_app CREATEROLE NOLOGIN"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, owner, db.MigrateOptions{AppPassword: appPassword}); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := db.Open(ctx, db.AppURL(owner, appPassword))
+	if err == nil {
+		pool.Close()
+		t.Fatal("Open accepted a depot_app role with CREATEROLE")
+	}
+	if !strings.Contains(err.Error(), "more power") {
+		t.Fatalf("Open failed for another reason (LOGIN not restored?): %v", err)
+	}
+}

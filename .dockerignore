@@ -11,3 +11,6 @@ graphify-out
 web/node_modules
 internal/webui/dist
 *.exe
+.env*
+*.pem
+*.key

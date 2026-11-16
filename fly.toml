@@ -1,15 +1,21 @@
 # Fly.io app for the cloud version of depotd (Part 0b).
+# Not deployable yet: `api -env production` refuses to start until a real
+# identity provider (WorkOS) is wired in. Before the first deploy, create the
+# photo volume: fly volumes create depot_data -r fra
 # Secrets are set with `fly secrets set`, never written here:
 #   DATABASE_URL           depot_app connection URL (used by `api`)
 #   DATABASE_OWNER_URL     owner connection URL (used only by the release `migrate`)
 #   DATABASE_APP_PASSWORD  password migrate gives the depot_app role
 #   GEMINI_API_KEY         OCR engine key
-#   PUBLIC_HOST            the domain name(s) the app is reached by
 #   PLATFORM_ADMIN_EMAIL   the product owner's email (made platform admin by migrate)
 app = "cntdepot"
 primary_region = "fra"
 
 [build]
+
+# Domain names the API answers to (not secret). Add the custom domain here.
+[env]
+  PUBLIC_HOST = "cntdepot.fly.dev"
 
 [deploy]
   release_command = "migrate"
