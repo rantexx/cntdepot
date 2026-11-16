@@ -109,7 +109,7 @@ function Gate() {
   if (status === "down") return <p className="boot error">{t("networkError")}</p>;
   if (status === "anon" || !session) return <Login />;
   if (!current && session.companies.length === 0 && !session.platformAdmin) return <NoMembership />;
-  return <Shell />;
+  return <Shell key={`${current?.companyId ?? ""}:${current?.depotId ?? ""}`} />;
 }
 
 function Shell() {

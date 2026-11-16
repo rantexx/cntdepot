@@ -308,11 +308,39 @@ func (s *Server) TestRead(ctx context.Context, req api.TestReadRequestObject) (a
 
 // ---- session ----
 
+// memberDepots lists the depots m may use, read under that company (the session may
+// be scoped to another one), so a limited member can pick a depot before any scope exists.
+func (s *Server) memberDepots(ctx context.Context, m auth.Membership) ([]map[string]string, error) {
+	out := []map[string]string{}
+	err := db.InCompany(tenancy.With(ctx, tenancy.Scope{CompanyID: m.CompanyID}), s.opts.Pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, "SELECT id, name FROM depots ORDER BY name, id")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, name string
+			if err := rows.Scan(&id, &name); err != nil {
+				return err
+			}
+			if m.DepotIDs == nil || slices.Contains(m.DepotIDs, id) {
+				out = append(out, map[string]string{"id": id, "name": name})
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // session describes cur; current is set when cur has a scope.
 func (s *Server) session(ctx context.Context, cur *auth.Current) (api.Session, error) {
 	companies := []map[string]any{}
 	for _, m := range cur.Memberships {
-		companies = append(companies, map[string]any{"id": m.CompanyID, "name": m.CompanyName, "role": m.Role})
+		depots, err := s.memberDepots(ctx, m)
+		if err != nil {
+			return api.Session{}, err
+		}
+		companies = append(companies, map[string]any{"id": m.CompanyID, "name": m.CompanyName, "role": m.Role, "depots": depots})
 	}
 	v := map[string]any{
 		"user":      map[string]string{"id": cur.User.ID, "email": cur.User.Email, "name": cur.User.Name},

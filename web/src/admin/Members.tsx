@@ -20,6 +20,7 @@ function DepotAccess({
   const { t } = useT();
   return (
     <fieldset className="depot-access">
+      <legend className="sr-only">{t("depots")}</legend>
       <label className="check">
         <input type="checkbox" checked={value === null} onChange={(e) => onChange(e.target.checked ? null : depots.slice(0, 1).map((d) => d.id))} />
         {t("allDepots")}
@@ -82,7 +83,7 @@ export function Members() {
       <div className="page-head">
         <h1>{t("navMembers")}</h1>
       </div>
-      {message && <p className="error">{message}</p>}
+      {message && <p className="error" role="alert">{message}</p>}
       <form className="card admin-form" onSubmit={sendInvite}>
         <label>
           {t("email")}
@@ -120,7 +121,7 @@ export function Members() {
               <tr key={m.id}>
                 <td>{m.email}</td>
                 <td>
-                  <select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value as Role })}>
+                  <select autoFocus aria-label={t("role")} value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value as Role })}>
                     {ROLES.map((r) => (
                       <option key={r} value={r}>
                         {t(`role_${r}`)}

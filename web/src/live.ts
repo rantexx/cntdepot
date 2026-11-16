@@ -1,9 +1,14 @@
 import { useEffect, useRef } from "react";
+import { useSession } from "./session";
 
 // useMoveEvents calls onMove with a move ID whenever the hub reports a change.
 // EventSource reconnects by itself after network drops; onOpen fires on every
 // (re)connect, so a page can reload what it missed while the link was down.
 export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void) {
+  // The stream belongs to the session's company and depot: open it only with a scope, and again when it changes.
+  const { current } = useSession();
+  const companyId = current?.companyId;
+  const depotId = current?.depotId ?? "";
   const handler = useRef(onMove);
   const openHandler = useRef(onOpen);
   useEffect(() => {
@@ -11,6 +16,7 @@ export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void)
     openHandler.current = onOpen;
   });
   useEffect(() => {
+    if (!companyId) return;
     const source = new EventSource("/api/stream");
     const listener = (e: MessageEvent<string>) => {
       try {
@@ -28,5 +34,5 @@ export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void)
       source.removeEventListener("open", opened);
       source.close();
     };
-  }, []);
+  }, [companyId, depotId]);
 }

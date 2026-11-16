@@ -308,5 +308,6 @@ figcaption { padding-top: 8px; display: grid; gap: 4px; }
 .admin-table tr.off td { color: var(--muted); }
 .admin-table .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .admin-table input, .admin-table select { width: 100%; min-height: 38px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .depot-access { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
 .depot-access label.check { margin: 0; }

@@ -224,6 +224,7 @@ const tr = {
   typeNumber: "Konteyner numarası",
   saveNumber: "Numarayı kaydet",
   waitForPhotos: "Fotoğrafların yüklenmesi bekleniyor",
+  pickDepotFirst: "Telefonla giriş için önce soldan bir depo seçin",
   camNeedsBox: "Kamera yalnızca depodaki kutuda çalışır; bu sunucuda kullanılamaz",
 };
 
@@ -452,6 +453,7 @@ const en: Record<Key, string> = {
   typeNumber: "Container number",
   saveNumber: "Save number",
   waitForPhotos: "Waiting for the photos to upload",
+  pickDepotFirst: "Pick a depot on the left before capturing a truck",
   camNeedsBox: "The camera only works on the box at the depot; it is not available on this server",
 };
 

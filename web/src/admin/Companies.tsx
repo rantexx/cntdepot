@@ -66,7 +66,7 @@ export function Companies() {
           {t("add")}
         </button>
       </form>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       <table className="admin-table">
         <thead>
           <tr>

@@ -313,20 +313,28 @@ func (s *Service) ManualEntry(ctx context.Context, moveID, number, by string) (s
 	if n == "" {
 		return store.Move{}, ErrNumberRequired
 	}
-	if iso6346.IsValid(n) {
-		return s.Resolve(ctx, moveID, Resolution{Action: "correct", Number: n, By: by})
+	valid := iso6346.IsValid(n)
+	out := store.ReadOutcome{
+		Status: store.StatusNeedsReview, Number: n, CheckDigitValid: valid,
+		Actor: cmp.Or(strings.TrimSpace(by), "operator"),
 	}
+	if !valid {
+		out.Decision, out.Reason = string(recognition.DecisionReview), "typed number fails its check digit"
+	}
+	// The stored read follows what was typed last: a repeated entry replaces the check
+	// digit flag and the reason, so a corrected number does not keep the old complaint.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, err := s.openMove(ctx, moveID); err != nil {
+		s.mu.Unlock()
 		return store.Move{}, err
 	}
-	err := s.store.SetResult(ctx, moveID, store.ReadOutcome{
-		Status: store.StatusNeedsReview, Number: n, Decision: string(recognition.DecisionReview),
-		Reason: "typed number fails its check digit", Actor: cmp.Or(strings.TrimSpace(by), "operator"),
-	})
+	err := s.store.SetResult(ctx, moveID, out)
+	s.mu.Unlock()
 	if err != nil {
 		return store.Move{}, err
+	}
+	if valid {
+		return s.Resolve(ctx, moveID, Resolution{Action: "accept", By: by})
 	}
 	s.notifyMove(ctx, moveID)
 	return s.store.GetMove(ctx, moveID)

@@ -241,10 +241,17 @@ export type SessionUser = {
   name: string;
 };
 
+export type SessionCompaniesItemDepotsItem = {
+  id: string;
+  name: string;
+};
+
 export type SessionCompaniesItem = {
   id: string;
   name: string;
   role: Role;
+  /** The depots this member may use (all of the company's depots when the membership is not limited). */
+  depots: SessionCompaniesItemDepotsItem[];
 };
 
 /**

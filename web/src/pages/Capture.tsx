@@ -33,7 +33,8 @@ interface Shot {
 
 export function Capture() {
   const { t } = useT();
-  const { hasModule } = useSession();
+  const { hasModule, current } = useSession();
+  const hasDepot = !!current?.depotId;
   const ocr = hasModule("ocr");
   const [typed, setTyped] = useState("");
   const [saving, setSaving] = useState(false);
@@ -176,7 +177,8 @@ export function Capture() {
           <input value={lane} onChange={(e) => setLane(e.target.value)} inputMode="numeric" />
         </label>
         {practiceCheck}
-        <button type="button" className="primary big" onClick={() => void start()}>
+        {!hasDepot && <p className="warn">{t("pickDepotFirst")}</p>}
+        <button type="button" className="primary big" disabled={!hasDepot} onClick={() => void start()}>
           {t("startMove")}
         </button>
         {error && <p className="error">{error}</p>}
@@ -186,8 +188,7 @@ export function Capture() {
 
   const open = move.resolved_by === "";
   const serverPhotos = (move.photos ?? []).filter((p) => !shots.some((s) => s.photoId === p.id));
-  // A typed number the clerk saved and the hub accepted carries no reading to check, so it is not shown as failed.
-  const numberClass = move.check_digit_valid || move.status === "accepted" ? "ok" : move.number ? "bad" : "";
+  const numberClass = move.check_digit_valid ? "ok" : move.number ? "bad" : "";
   return (
     <div className="page">
       <div className="page-head">

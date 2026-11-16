@@ -140,7 +140,7 @@ export function ListPage({ resource, canEdit }: { resource: ListResource; canEdi
           </button>
         </form>
       )}
-      {(message || query.error) && <p className="error">{message || query.error?.message}</p>}
+      {(message || query.error) && <p className="error" role="alert">{message || query.error?.message}</p>}
       {rows.length === 0 && !query.isLoading && <p className="muted">{t("noRows")}</p>}
       {rows.length > 0 && (
         <table className="admin-table">
@@ -158,13 +158,13 @@ export function ListPage({ resource, canEdit }: { resource: ListResource; canEdi
               editing === r.id ? (
                 <tr key={r.id}>
                   <td>
-                    <input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
+                    <input autoFocus aria-label={t("colCode")} value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
                   </td>
                   <td>
-                    <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                    <input aria-label={t("colName")} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
                   </td>
                   <td>
-                    <input value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} />
+                    <input aria-label={t("colContact")} value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} />
                   </td>
                   <td />
                   <td className="actions">

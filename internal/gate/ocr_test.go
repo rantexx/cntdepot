@@ -156,7 +156,8 @@ func TestManualEntryValidAcceptsInvalidGoesToReview(t *testing.T) {
 	h := newHarness(t, &recognition.Fake{}, Config{}, false)
 	m1, _ := h.svc.NewMove(ctx, "1", false, "clerk")
 	got, err := h.svc.ManualEntry(ctx, m1.ID, "mscu 123456-6", "ayse")
-	if err != nil || got.Status != store.StatusAccepted || !got.Verified || got.Number != "MSCU1234566" {
+	if err != nil || got.Status != store.StatusAccepted || !got.Verified || got.Number != "MSCU1234566" ||
+		!got.CheckDigitValid || got.Reason != "" {
 		t.Fatalf("valid: %+v, %v", got, err)
 	}
 	m2, _ := h.svc.NewMove(ctx, "1", false, "clerk")
@@ -171,6 +172,15 @@ func TestManualEntryValidAcceptsInvalidGoesToReview(t *testing.T) {
 	}
 	if _, err := h.svc.ManualEntry(ctx, m2.ID, " - ", "ayse"); err != ErrNumberRequired {
 		t.Fatalf("empty = %v; want ErrNumberRequired", err)
+	}
+	// Typing a second, wrong number updates the reason; typing the right one clears it.
+	got, err = h.svc.ManualEntry(ctx, m2.ID, "MSCU1234560", "ayse")
+	if err != nil || got.Number != "MSCU1234560" || got.CheckDigitValid || got.Reason != "typed number fails its check digit" {
+		t.Fatalf("repeat invalid: %+v, %v", got, err)
+	}
+	got, err = h.svc.ManualEntry(ctx, m2.ID, "MSCU1234566", "ayse")
+	if err != nil || got.Status != store.StatusAccepted || !got.CheckDigitValid || got.Reason != "" || got.Decision != "" {
+		t.Fatalf("repeat valid: %+v, %v", got, err)
 	}
 }
 

@@ -465,6 +465,11 @@ type Role string
 // Session defines model for Session.
 type Session struct {
 	Companies []struct {
+		// Depots The depots this member may use (all of the company's depots when the membership is not limited).
+		Depots []struct {
+			Id   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"depots"`
 		Id   string `json:"id"`
 		Name string `json:"name"`
 		Role Role   `json:"role"`

@@ -46,12 +46,13 @@ export function Company() {
       await ok(createDepot(fresh));
       setFresh({ name: "", country: "", timezone: "" });
       await load();
+      await reload(); // the switcher lists the new depot
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (!company) return <p>{error || t("loading")}</p>;
+  if (!company) return <p role={error ? "alert" : undefined}>{error || t("loading")}</p>;
   return (
     <div className="page">
       <div className="page-head">
@@ -60,7 +61,7 @@ export function Company() {
           <small>{company.country}</small>
         </h1>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       <div className="card">
         <h3>{t("modules")}</h3>
         {MODULES.map((m) => (

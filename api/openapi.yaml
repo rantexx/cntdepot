@@ -585,8 +585,18 @@ components:
           type: array
           items:
             type: object
-            required: [id, name, role]
-            properties: {id: {type: string}, name: {type: string}, role: {$ref: "#/components/schemas/Role"}}
+            required: [id, name, role, depots]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              role: {$ref: "#/components/schemas/Role"}
+              depots:
+                description: The depots this member may use (all of the company's depots when the membership is not limited).
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties: {id: {type: string}, name: {type: string}}
         platformAdmin: {type: boolean}
         current:
           description: Present only when a scope (company and depot) is set.

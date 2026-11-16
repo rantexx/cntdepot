@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { getSession, listDepots, logout, setScope, type Depot, type Session, type SessionCurrent } from "./gen/api";
+import { getSession, logout, setScope, type Session, type SessionCurrent } from "./gen/api";
 import { onUnauthorized } from "./http";
 import { ok } from "./hubApi";
 import { useT } from "./i18n";
@@ -79,27 +79,30 @@ export function Switcher() {
   const { t } = useT();
   const { session, current } = useSession();
   const { choose, signOut } = useCtx();
-  const [depots, setDepots] = useState<Depot[]>([]);
   const [error, setError] = useState("");
-  const companyId = current?.companyId;
-
-  useEffect(() => {
-    if (!companyId) return;
-    let live = true;
-    ok(listDepots()).then(
-      (d) => live && setDepots(d),
-      () => live && setDepots([]),
-    );
-    return () => {
-      live = false;
-    };
-  }, [companyId]);
 
   if (!session) return null;
-  const pick = async (company: string, depot: string) => {
+  const company = session.companies.find((c) => c.id === current?.companyId);
+  // A new company: try all depots first (members who are not limited to some depots may use them);
+  // a limited member is refused, so take the first depot the session says they may use.
+  const pickCompany = async (id: string) => {
     setError("");
     try {
-      await choose(company, depot);
+      await choose(id, "");
+    } catch {
+      const first = session.companies.find((c) => c.id === id)?.depots[0];
+      try {
+        if (!first) throw new Error("no depot");
+        await choose(id, first.id);
+      } catch {
+        setError(t("scopeRefused"));
+      }
+    }
+  };
+  const pickDepot = async (companyId: string, depotId: string) => {
+    setError("");
+    try {
+      await choose(companyId, depotId);
     } catch {
       setError(t("scopeRefused"));
     }
@@ -109,26 +112,26 @@ export function Switcher() {
       <div className="who small">{session.user.email}</div>
       {session.companies.length > 0 && (
         <>
-          <select
-            aria-label={t("company")}
-            value={companyId ?? ""}
-            onChange={(e) => void pick(e.target.value, "")}
-          >
-            {!companyId && <option value="">{t("chooseCompany")}</option>}
+          <select aria-label={t("company")} value={current?.companyId ?? ""} onChange={(e) => void pickCompany(e.target.value)}>
+            {!current && (
+              <option value="" disabled>
+                {t("chooseCompany")}
+              </option>
+            )}
             {session.companies.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
           </select>
-          {companyId && (
+          {current && company && (
             <select
               aria-label={t("depot")}
-              value={current?.depotId ?? ""}
-              onChange={(e) => void pick(companyId, e.target.value)}
+              value={current.depotId ?? ""}
+              onChange={(e) => void pickDepot(current.companyId, e.target.value)}
             >
               <option value="">{t("allDepots")}</option>
-              {depots.map((d) => (
+              {company.depots.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>
@@ -137,7 +140,11 @@ export function Switcher() {
           )}
         </>
       )}
-      {error && <p className="error small">{error}</p>}
+      {error && (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      )}
       <button type="button" onClick={() => void signOut()}>
         {t("signOut")}
       </button>

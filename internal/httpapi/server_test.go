@@ -420,6 +420,7 @@ func TestUnauthenticatedApiIs401(t *testing.T) {
 
 func TestSessionScopeAndLogout(t *testing.T) {
 	e := newEnv(t, nil)
+	e.exec(t, "B", `INSERT INTO depots (company_id, id, name) VALUES ('B', 'd2', 'Second')`)
 	e.exec(t, "B", `INSERT INTO invitations (company_id, id, email, role, depot_ids, created_by) VALUES ('B', 'i1', 'ali@x.com', 'office', '{d1}', 't')`)
 	u := &user{t: t, e: e, cookie: e.signIn(t, "ali@x.com")}
 	if status, body := u.call("POST", "/api/session/scope", `{"companyId":"A","depotId":""}`); status != 403 {
@@ -438,6 +439,10 @@ func TestSessionScopeAndLogout(t *testing.T) {
 		!reflect.DeepEqual(c.Permissions, []string{"gate", "office"}) || !reflect.DeepEqual(c.Modules, []string{"ocr"}) ||
 		len(s.Companies) != 1 || s.User.Email != "ali@x.com" || s.PlatformAdmin {
 		t.Fatalf("session = %s", body)
+	}
+	// The picker data: only the depots this member may use, known before any scope is set.
+	if d := s.Companies[0].Depots; len(d) != 1 || d[0].Id != "d1" {
+		t.Fatalf("companies[0].depots = %+v; want only d1", d)
 	}
 	req := u.request("POST", "/api/session/logout", nil, "")
 	resp, err := http.DefaultClient.Do(req)
@@ -976,5 +981,19 @@ func TestCallbackEmailHeldByAnotherSignInIs409(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 409 || !strings.Contains(string(body), "already") {
 		t.Fatalf("callback = %d %s; want 409", resp.StatusCode, body)
+	}
+}
+
+// The client's can() is an exact match, so an owner's list must hold every permission up to owner.
+func TestOwnerSessionListsEveryPermission(t *testing.T) {
+	u := newEnv(t, nil).as(t, "A", "owner")
+	var s api.Session
+	_, body := u.call("GET", "/api/session", "")
+	if err := json.Unmarshal(body, &s); err != nil || s.Current == nil ||
+		!reflect.DeepEqual(s.Current.Permissions, []string{"gate", "office", "manage", "owner"}) {
+		t.Fatalf("owner session = %s", body)
+	}
+	if d := s.Companies[0].Depots; len(d) != 1 || d[0].Id != "d1" {
+		t.Fatalf("an unlimited member sees every depot: %+v", d)
 	}
 }
