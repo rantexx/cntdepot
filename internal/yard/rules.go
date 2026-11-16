@@ -11,13 +11,14 @@ type Facts struct {
 	Direction                   string // "in" or "out"
 	Number, TypeCode, FullEmpty string
 	LineID                      string
-	Now                         time.Time
-	Orders                      []OrderFact
-	OpenVisit                   *VisitFact
-	Blocked                     *BlockFact
-	OpenHolds                   []HoldFact
-	WalkinsAllowed              bool
-	ChosenOrderItemID           string
+	// Now must be depot-local time: valid_until is a calendar date compared to its local date.
+	Now               time.Time
+	Orders            []OrderFact
+	OpenVisit         *VisitFact
+	Blocked           *BlockFact
+	OpenHolds         []HoldFact
+	WalkinsAllowed    bool
+	ChosenOrderItemID string
 }
 
 type OrderFact struct {
@@ -66,9 +67,17 @@ func itemMatches(f Facts, o OrderFact, it ItemFact) bool {
 		return false
 	}
 	if it.Number != "" {
-		return norm(it.Number) == norm(f.Number)
+		return iso6346.Normalize(it.Number) == iso6346.Normalize(f.Number)
 	}
 	return TypeMatches(it.TypeCode, f.TypeCode)
+}
+
+// pick: a named item beats a quantity item.
+func pick(named, qty []MatchedItem) []MatchedItem {
+	if len(named) > 0 {
+		return named
+	}
+	return qty
 }
 
 // Decide applies the gate rules (spec 3.2, 3.8). It never drops a move: every
@@ -95,10 +104,10 @@ func Decide(f Facts) Decision {
 	if out {
 		kind = "release"
 	}
+	// Calendar-date compare in Now's own (depot-local) zone.
 	today := time.Date(f.Now.Year(), f.Now.Month(), f.Now.Day(), 0, 0, 0, 0, time.UTC)
-	var named, qty []MatchedItem
+	var openNamed, openQty, otherNamed, otherQty []MatchedItem
 	var expired, usedUp bool
-	notOpen := map[string]bool{}
 	for _, o := range f.Orders {
 		if o.Kind != kind {
 			continue
@@ -107,31 +116,32 @@ func Decide(f Facts) Decision {
 			if !itemMatches(f, o, it) {
 				continue
 			}
-			if o.ValidUntil != nil {
-				v := o.ValidUntil
-				if time.Date(v.Year(), v.Month(), v.Day(), 0, 0, 0, 0, time.UTC).Before(today) {
-					expired = true
-					continue
-				}
+			if v := o.ValidUntil; v != nil &&
+				time.Date(v.Year(), v.Month(), v.Day(), 0, 0, 0, 0, time.UTC).Before(today) {
+				expired = true
+				continue
 			}
 			if it.Remaining <= 0 {
 				usedUp = true
 				continue
 			}
 			m := MatchedItem{o.OrderID, it.ItemID, it.Number, it.TypeCode, it.FullEmpty, it.Remaining}
-			if o.Status != "open" {
-				notOpen[it.ItemID] = true
-			}
-			if it.Number != "" {
-				named = append(named, m)
-			} else {
-				qty = append(qty, m)
+			switch {
+			case o.Status == "open" && it.Number != "":
+				openNamed = append(openNamed, m)
+			case o.Status == "open":
+				openQty = append(openQty, m)
+			case it.Number != "":
+				otherNamed = append(otherNamed, m)
+			default:
+				otherQty = append(otherQty, m)
 			}
 		}
 	}
-	matches := qty
-	if len(named) > 0 { // a named item beats a quantity item
-		matches = named
+	// Items of open orders are never shadowed by non-open orders.
+	matches, notOpen := pick(openNamed, openQty), false
+	if len(matches) == 0 {
+		matches, notOpen = pick(otherNamed, otherQty), true
 	}
 	if len(matches) > 1 && f.ChosenOrderItemID != "" {
 		for _, m := range matches {
@@ -144,7 +154,7 @@ func Decide(f Facts) Decision {
 	switch {
 	case len(matches) == 1:
 		d.Item = &matches[0]
-		if notOpen[matches[0].ItemID] {
+		if notOpen {
 			d.Flags = append(d.Flags, Reason{Code: "order_not_open"})
 		}
 	case len(matches) > 1:
@@ -154,10 +164,14 @@ func Decide(f Facts) Decision {
 			d.Flags = append(d.Flags, Reason{Code: "item_used_up"})
 		}
 		switch {
+		case !out && f.WalkinsAllowed: // gate-in with no live redelivery is a walk-in
+			detail := ""
+			if expired {
+				detail = "order expired"
+			}
+			d.Flags = append(d.Flags, Reason{"walkin", detail})
 		case expired:
 			d.Refusals = append(d.Refusals, Reason{Code: "order_expired"})
-		case !out && f.WalkinsAllowed:
-			d.Flags = append(d.Flags, Reason{Code: "walkin"})
 		default:
 			d.Refusals = append(d.Refusals, Reason{Code: "no_order"})
 		}

@@ -132,3 +132,51 @@ func TestTypeMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestDecideFixRound1(t *testing.T) {
+	ist, err := time.LoadLocation("Europe/Istanbul")
+	if err != nil {
+		t.Skip("no tzdata:", err)
+	}
+	qty := ItemFact{ItemID: "qty", TypeCode: "45G0", FullEmpty: "empty", Remaining: 2}
+	until := day(17)
+
+	f := out(qty)
+	f.Orders[0].ValidUntil = until
+	f.Now = time.Date(2026, 11, 18, 0, 30, 0, 0, ist) // 21:30 UTC on the 17th, but 18th locally
+	if d := Decide(f); !has(d.Refusals, "order_expired") {
+		t.Errorf("00:30 local next day should be expired: %+v", d)
+	}
+	f.Now = time.Date(2026, 11, 17, 23, 30, 0, 0, ist)
+	if d := Decide(f); len(d.Refusals) > 0 || d.Item == nil {
+		t.Errorf("23:30 local on valid_until should be valid: %+v", d)
+	}
+
+	in := Facts{Direction: "in", Number: "MSKU1234565", TypeCode: "45G1", FullEmpty: "empty", Now: now,
+		Orders: []OrderFact{order("redelivery", day(10), qty)}}
+	if d := Decide(in); !has(d.Refusals, "order_expired") || has(d.Flags, "walkin") {
+		t.Errorf("walk-ins off: want order_expired, got %+v", d)
+	}
+	in.WalkinsAllowed = true
+	d := Decide(in)
+	if len(d.Refusals) > 0 || len(d.Flags) != 1 || d.Flags[0] != (Reason{"walkin", "order expired"}) {
+		t.Errorf("walk-ins on: want walkin/order expired, got %+v", d)
+	}
+
+	n := out(ItemFact{ItemID: "named", Number: "MSKU 123456-5", FullEmpty: "empty", Remaining: 1})
+	if d := Decide(n); d.Item == nil || d.Item.ItemID != "named" {
+		t.Errorf("normalised number should match: %+v", d)
+	}
+
+	cancelled := order("release", day(20), ItemFact{ItemID: "named", Number: "MSKU1234565", FullEmpty: "empty", Remaining: 1})
+	cancelled.OrderID, cancelled.Status = "o2", "cancelled"
+	g := out(qty)
+	g.Orders = append(g.Orders, cancelled)
+	if d := Decide(g); d.Item == nil || d.Item.ItemID != "qty" || has(d.Flags, "order_not_open") {
+		t.Errorf("open order must win over cancelled named item: %+v", d)
+	}
+	g.Orders = g.Orders[1:]
+	if d := Decide(g); d.Item == nil || d.Item.ItemID != "named" || !has(d.Flags, "order_not_open") {
+		t.Errorf("only non-open match should flag: %+v", d)
+	}
+}
