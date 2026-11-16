@@ -19,6 +19,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for BlockKind.
+const (
+	BlockKindContainer BlockKind = "container"
+	BlockKindLine      BlockKind = "line"
+)
+
+// Valid indicates whether the value is a known member of the BlockKind enum.
+func (e BlockKind) Valid() bool {
+	switch e {
+	case BlockKindContainer:
+		return true
+	case BlockKindLine:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MoveSource.
 const (
 	MoveSourceCamera MoveSource = "camera"
@@ -49,6 +67,45 @@ func (e MoveDetailSource) Valid() bool {
 	case MoveDetailSourceCamera:
 		return true
 	case MoveDetailSourcePhone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrderKind.
+const (
+	Redelivery OrderKind = "redelivery"
+	Release    OrderKind = "release"
+)
+
+// Valid indicates whether the value is a known member of the OrderKind enum.
+func (e OrderKind) Valid() bool {
+	switch e {
+	case Redelivery:
+		return true
+	case Release:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrderStatus.
+const (
+	Cancelled OrderStatus = "cancelled"
+	Done      OrderStatus = "done"
+	Open      OrderStatus = "open"
+)
+
+// Valid indicates whether the value is a known member of the OrderStatus enum.
+func (e OrderStatus) Valid() bool {
+	switch e {
+	case Cancelled:
+		return true
+	case Done:
+		return true
+	case Open:
 		return true
 	default:
 		return false
@@ -130,6 +187,59 @@ func (e Status) Valid() bool {
 	}
 }
 
+// Defines values for VisitStatus.
+const (
+	InYard VisitStatus = "in_yard"
+	Out    VisitStatus = "out"
+)
+
+// Valid indicates whether the value is a known member of the VisitStatus enum.
+func (e VisitStatus) Valid() bool {
+	switch e {
+	case InYard:
+		return true
+	case Out:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListApprovalsParamsStatus.
+const (
+	Approved ListApprovalsParamsStatus = "approved"
+	Denied   ListApprovalsParamsStatus = "denied"
+	Pending  ListApprovalsParamsStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ListApprovalsParamsStatus enum.
+func (e ListApprovalsParamsStatus) Valid() bool {
+	switch e {
+	case Approved:
+		return true
+	case Denied:
+		return true
+	case Pending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Approval defines model for Approval.
+type Approval struct {
+	DecidedAt   *time.Time `json:"decidedAt"`
+	DecidedBy   string     `json:"decidedBy"`
+	Id          string     `json:"id"`
+	MoveId      string     `json:"moveId"`
+	Reasons     []Reason   `json:"reasons"`
+	RequestedAt time.Time  `json:"requestedAt"`
+	RequestedBy string     `json:"requestedBy"`
+
+	// Status pending, approved or denied
+	Status string `json:"status"`
+}
+
 // Attempt defines model for Attempt.
 type Attempt struct {
 	CreatedAt     time.Time `json:"created_at"`
@@ -146,6 +256,20 @@ type Attempt struct {
 	Raw           string    `json:"raw"`
 	Reading       Reading   `json:"reading"`
 }
+
+// Block defines model for Block.
+type Block struct {
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"createdAt"`
+	CreatedBy string    `json:"createdBy"`
+	Id        string    `json:"id"`
+	Kind      BlockKind `json:"kind"`
+	Reason    string    `json:"reason"`
+	Value     string    `json:"value"`
+}
+
+// BlockKind defines model for BlockKind.
+type BlockKind string
 
 // Box defines model for Box.
 type Box struct {
@@ -218,6 +342,14 @@ type Depot struct {
 // DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
 type DepotIds = []string
 
+// EirLink defines model for EirLink.
+type EirLink struct {
+	ExpiresAt time.Time `json:"expiresAt"`
+
+	// Url relative: /eir/{token}
+	Url string `json:"url"`
+}
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error struct {
@@ -235,6 +367,94 @@ type Frame struct {
 	Role       string       `json:"role"`
 	TypeCode   string       `json:"type_code"`
 	Visible    string       `json:"visible"`
+}
+
+// GateFlag defines model for GateFlag.
+type GateFlag struct {
+	Code       string     `json:"code"`
+	Detail     string     `json:"detail"`
+	Id         string     `json:"id"`
+	MoveId     string     `json:"moveId"`
+	ResolvedAt *time.Time `json:"resolvedAt"`
+	ResolvedBy string     `json:"resolvedBy"`
+}
+
+// GateForm defines model for GateForm.
+type GateForm struct {
+	// ApprovalId the manager approval of a 409 E4098 (refusal mode manager_approval)
+	ApprovalId *string `json:"approvalId,omitempty"`
+
+	// ChosenOrderItemId the clerk's pick among the candidates of a 409 E4098
+	ChosenOrderItemId *string `json:"chosenOrderItemId,omitempty"`
+
+	// Condition sound, damaged or empty
+	Condition  *string `json:"condition,omitempty"`
+	CustomerId *string `json:"customerId,omitempty"`
+	Damages    *[]struct {
+		Description *string `json:"description,omitempty"`
+		Location    string  `json:"location"`
+
+		// PhotoIds 1 to 3 photos of this move
+		PhotoIds []string `json:"photoIds"`
+	} `json:"damages,omitempty"`
+
+	// Direction in or out
+	Direction  string  `json:"direction"`
+	DriverName *string `json:"driverName,omitempty"`
+
+	// FullEmpty E or F; empty means E
+	FullEmpty *string `json:"fullEmpty,omitempty"`
+	HaulierId *string `json:"haulierId,omitempty"`
+	LineId    *string `json:"lineId,omitempty"`
+	Number    string  `json:"number"`
+
+	// Override The clerk passes the refusals with a reason (refusal mode clerk_override).
+	Override *struct {
+		Reason string `json:"reason"`
+	} `json:"override,omitempty"`
+	Seal             *string `json:"seal,omitempty"`
+	SignaturePhotoId *string `json:"signaturePhotoId,omitempty"`
+	TrailerPlate     *string `json:"trailerPlate,omitempty"`
+	TruckPlate       *string `json:"truckPlate,omitempty"`
+	TypeCode         *string `json:"typeCode,omitempty"`
+}
+
+// GateRefusal defines model for GateRefusal.
+type GateRefusal struct {
+	ApprovalId *string `json:"approvalId,omitempty"`
+
+	// ApprovalStatus pending or denied
+	ApprovalStatus *string           `json:"approvalStatus,omitempty"`
+	Candidates     *[]OrderCandidate `json:"candidates,omitempty"`
+	Error          struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	Refusals []Reason `json:"refusals"`
+}
+
+// GateResult defines model for GateResult.
+type GateResult struct {
+	Flags   []Reason `json:"flags"`
+	Move    Move     `json:"move"`
+	VisitId string   `json:"visitId"`
+}
+
+// GateSnapshot defines model for GateSnapshot.
+type GateSnapshot struct {
+	At time.Time `json:"at"`
+
+	// Blocks the company's active block list
+	Blocks []Block `json:"blocks"`
+
+	// Holds open holds on the depot's visits
+	Holds        []Hold       `json:"holds"`
+	InYard       []Visit      `json:"inYard"`
+	LinePrefixes []LinePrefix `json:"linePrefixes"`
+
+	// Orders the depot's open orders
+	Orders   []OrderDetail `json:"orders"`
+	Settings YardSettings  `json:"settings"`
 }
 
 // Haulier defines model for Haulier.
@@ -276,6 +496,17 @@ type Health struct {
 	Version      string `json:"version"`
 }
 
+// Hold defines model for Hold.
+type Hold struct {
+	Id         string     `json:"id"`
+	PlacedAt   time.Time  `json:"placedAt"`
+	PlacedBy   string     `json:"placedBy"`
+	Reason     string     `json:"reason"`
+	ReleasedAt *time.Time `json:"releasedAt"`
+	ReleasedBy string     `json:"releasedBy"`
+	VisitId    string     `json:"visitId"`
+}
+
 // Invitation defines model for Invitation.
 type Invitation struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -315,6 +546,12 @@ type LinePatch struct {
 	Code    *string `json:"code,omitempty"`
 	Contact *string `json:"contact,omitempty"`
 	Name    *string `json:"name,omitempty"`
+}
+
+// LinePrefix defines model for LinePrefix.
+type LinePrefix struct {
+	LineId string `json:"lineId"`
+	Prefix string `json:"prefix"`
 }
 
 // Liner defines model for Liner.
@@ -404,6 +641,83 @@ type MoveDetail struct {
 // MoveDetailSource defines model for MoveDetail.Source.
 type MoveDetailSource string
 
+// Order defines model for Order.
+type Order struct {
+	CreatedAt  time.Time           `json:"createdAt"`
+	CreatedBy  string              `json:"createdBy"`
+	CustomerId *string             `json:"customerId"`
+	DepotId    string              `json:"depotId"`
+	Id         string              `json:"id"`
+	Kind       OrderKind           `json:"kind"`
+	LineId     *string             `json:"lineId"`
+	Note       string              `json:"note"`
+	Reference  string              `json:"reference"`
+	Status     OrderStatus         `json:"status"`
+	ValidUntil *openapi_types.Date `json:"validUntil"`
+}
+
+// OrderCandidate defines model for OrderCandidate.
+type OrderCandidate struct {
+	FullEmpty string `json:"fullEmpty"`
+	ItemId    string `json:"itemId"`
+	Number    string `json:"number"`
+	OrderId   string `json:"orderId"`
+	Remaining int    `json:"remaining"`
+	TypeCode  string `json:"typeCode"`
+}
+
+// OrderCreate defines model for OrderCreate.
+type OrderCreate struct {
+	CustomerId *string `json:"customerId,omitempty"`
+	Items      []struct {
+		// FullEmpty E or F; empty means E
+		FullEmpty *string `json:"fullEmpty,omitempty"`
+		Number    *string `json:"number,omitempty"`
+
+		// Quantity default 1
+		Quantity *int    `json:"quantity,omitempty"`
+		TypeCode *string `json:"typeCode,omitempty"`
+	} `json:"items"`
+	Kind       OrderKind           `json:"kind"`
+	LineId     *string             `json:"lineId,omitempty"`
+	Note       *string             `json:"note,omitempty"`
+	Reference  string              `json:"reference"`
+	ValidUntil *openapi_types.Date `json:"validUntil,omitempty"`
+}
+
+// OrderDetail defines model for OrderDetail.
+type OrderDetail struct {
+	CreatedAt  time.Time           `json:"createdAt"`
+	CreatedBy  string              `json:"createdBy"`
+	CustomerId *string             `json:"customerId"`
+	DepotId    string              `json:"depotId"`
+	Id         string              `json:"id"`
+	Items      []OrderItem         `json:"items"`
+	Kind       OrderKind           `json:"kind"`
+	LineId     *string             `json:"lineId"`
+	Note       string              `json:"note"`
+	Reference  string              `json:"reference"`
+	Status     OrderStatus         `json:"status"`
+	ValidUntil *openapi_types.Date `json:"validUntil"`
+}
+
+// OrderItem defines model for OrderItem.
+type OrderItem struct {
+	FullEmpty string  `json:"fullEmpty"`
+	Id        string  `json:"id"`
+	Number    *string `json:"number"`
+	OrderId   string  `json:"orderId"`
+	Quantity  int     `json:"quantity"`
+	TypeCode  *string `json:"typeCode"`
+	Used      int     `json:"used"`
+}
+
+// OrderKind defines model for OrderKind.
+type OrderKind string
+
+// OrderStatus defines model for OrderStatus.
+type OrderStatus string
+
 // Photo defines model for Photo.
 type Photo struct {
 	AiMediaType string    `json:"ai_media_type"`
@@ -433,6 +747,17 @@ type Reading struct {
 	Notes    *string `json:"notes,omitempty"`
 	TypeCode *string `json:"type_code,omitempty"`
 	Visible  *string `json:"visible,omitempty"`
+}
+
+// Reason defines model for Reason.
+type Reason struct {
+	Code   string  `json:"code"`
+	Detail *string `json:"detail,omitempty"`
+}
+
+// ReasonBody defines model for ReasonBody.
+type ReasonBody struct {
+	Reason string `json:"reason"`
 }
 
 // ResolveRequest defines model for ResolveRequest.
@@ -535,6 +860,93 @@ type Validation struct {
 	WellFormed         bool    `json:"well_formed"`
 }
 
+// Visit defines model for Visit.
+type Visit struct {
+	Block       string      `json:"block"`
+	CloseReason string      `json:"closeReason"`
+	CustomerId  *string     `json:"customerId"`
+	DepotId     string      `json:"depotId"`
+	FullEmpty   string      `json:"fullEmpty"`
+	Grade       string      `json:"grade"`
+	Id          string      `json:"id"`
+	Imported    bool        `json:"imported"`
+	InAt        time.Time   `json:"inAt"`
+	InMoveId    *string     `json:"inMoveId"`
+	LineId      *string     `json:"lineId"`
+	Number      string      `json:"number"`
+	OutAt       *time.Time  `json:"outAt"`
+	OutMoveId   *string     `json:"outMoveId"`
+	RowNo       string      `json:"rowNo"`
+	Status      VisitStatus `json:"status"`
+	Tier        string      `json:"tier"`
+	TypeCode    string      `json:"typeCode"`
+}
+
+// VisitDetail defines model for VisitDetail.
+type VisitDetail struct {
+	Block       string      `json:"block"`
+	CloseReason string      `json:"closeReason"`
+	CustomerId  *string     `json:"customerId"`
+	DepotId     string      `json:"depotId"`
+	FullEmpty   string      `json:"fullEmpty"`
+	Grade       string      `json:"grade"`
+	Holds       []Hold      `json:"holds"`
+	Id          string      `json:"id"`
+	Imported    bool        `json:"imported"`
+	InAt        time.Time   `json:"inAt"`
+	InMoveId    *string     `json:"inMoveId"`
+	LineId      *string     `json:"lineId"`
+	Number      string      `json:"number"`
+	OutAt       *time.Time  `json:"outAt"`
+	OutMoveId   *string     `json:"outMoveId"`
+	RowNo       string      `json:"rowNo"`
+	Status      VisitStatus `json:"status"`
+	Tier        string      `json:"tier"`
+	TypeCode    string      `json:"typeCode"`
+}
+
+// VisitList defines model for VisitList.
+type VisitList struct {
+	Items []VisitListItem `json:"items"`
+	Total int             `json:"total"`
+}
+
+// VisitListItem defines model for VisitListItem.
+type VisitListItem struct {
+	Block       string      `json:"block"`
+	CloseReason string      `json:"closeReason"`
+	CustomerId  *string     `json:"customerId"`
+	DepotId     string      `json:"depotId"`
+	FullEmpty   string      `json:"fullEmpty"`
+	Grade       string      `json:"grade"`
+	Id          string      `json:"id"`
+	Imported    bool        `json:"imported"`
+	InAt        time.Time   `json:"inAt"`
+	InMoveId    *string     `json:"inMoveId"`
+	LineId      *string     `json:"lineId"`
+	Number      string      `json:"number"`
+	OnHold      bool        `json:"onHold"`
+	OutAt       *time.Time  `json:"outAt"`
+	OutMoveId   *string     `json:"outMoveId"`
+	RowNo       string      `json:"rowNo"`
+	Status      VisitStatus `json:"status"`
+	Tier        string      `json:"tier"`
+	TypeCode    string      `json:"typeCode"`
+}
+
+// VisitStatus defines model for VisitStatus.
+type VisitStatus string
+
+// YardSettings defines model for YardSettings.
+type YardSettings struct {
+	// EirTtlDays at least 1
+	EirTtlDays int `json:"eirTtlDays"`
+
+	// RefusalMode clerk_override, manager_approval or none
+	RefusalMode    string `json:"refusalMode"`
+	WalkinsAllowed bool   `json:"walkinsAllowed"`
+}
+
 // Id defines model for Id.
 type Id = string
 
@@ -549,6 +961,31 @@ type Q = string
 
 // Error defines model for Error.
 type Error = ErrorResponse
+
+// ListApprovalsParams defines parameters for ListApprovals.
+type ListApprovalsParams struct {
+	Status *ListApprovalsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// ListApprovalsParamsStatus defines parameters for ListApprovals.
+type ListApprovalsParamsStatus string
+
+// DecideApprovalJSONBody defines parameters for DecideApproval.
+type DecideApprovalJSONBody struct {
+	Approve bool `json:"approve"`
+}
+
+// CreateBlockJSONBody defines parameters for CreateBlock.
+type CreateBlockJSONBody struct {
+	Kind   BlockKind `json:"kind"`
+	Reason string    `json:"reason"`
+	Value  string    `json:"value"`
+}
+
+// SetBlockActiveJSONBody defines parameters for SetBlockActive.
+type SetBlockActiveJSONBody struct {
+	Active bool `json:"active"`
+}
 
 // SetModulesJSONBody defines parameters for SetModules.
 type SetModulesJSONBody struct {
@@ -567,6 +1004,13 @@ type CreateDepotJSONBody struct {
 	Country  string `json:"country"`
 	Name     string `json:"name"`
 	Timezone string `json:"timezone"`
+}
+
+// ListGateFlagsParams defines parameters for ListGateFlags.
+type ListGateFlagsParams struct {
+	// Open true lists only unresolved flags
+	Open   *bool   `form:"open,omitempty" json:"open,omitempty"`
+	MoveId *string `form:"moveId,omitempty" json:"moveId,omitempty"`
 }
 
 // ListHauliersParams defines parameters for ListHauliers.
@@ -599,6 +1043,12 @@ type ListMovesParams struct {
 	Before *string `form:"before,omitempty" json:"before,omitempty"`
 }
 
+// CorrectMoveJSONBody defines parameters for CorrectMove.
+type CorrectMoveJSONBody struct {
+	Form   GateForm `json:"form"`
+	Reason string   `json:"reason"`
+}
+
 // EnterNumberJSONBody defines parameters for EnterNumber.
 type EnterNumberJSONBody struct {
 	Number string `json:"number"`
@@ -614,6 +1064,13 @@ type AddPhotoMultipartBody struct {
 	Original openapi_types.File `json:"original"`
 	Role     *string            `json:"role,omitempty"`
 	Width    *int               `json:"width,omitempty"`
+}
+
+// ListOrdersParams defines parameters for ListOrders.
+type ListOrdersParams struct {
+	Kind   *OrderKind   `form:"kind,omitempty" json:"kind,omitempty"`
+	Status *OrderStatus `form:"status,omitempty" json:"status,omitempty"`
+	Q      *Q           `form:"q,omitempty" json:"q,omitempty"`
 }
 
 // CreateCompanyJSONBody defines parameters for CreateCompany.
@@ -644,6 +1101,47 @@ type SetScopeJSONBody struct {
 type TestReadMultipartBody struct {
 	Ai openapi_types.File `json:"ai"`
 }
+
+// ListVisitsParams defines parameters for ListVisits.
+type ListVisitsParams struct {
+	Status     *VisitStatus `form:"status,omitempty" json:"status,omitempty"`
+	LineId     *string      `form:"lineId,omitempty" json:"lineId,omitempty"`
+	CustomerId *string      `form:"customerId,omitempty" json:"customerId,omitempty"`
+
+	// Type ISO type code prefix
+	Type  *string `form:"type,omitempty" json:"type,omitempty"`
+	Grade *string `form:"grade,omitempty" json:"grade,omitempty"`
+
+	// Hold true lists only visits with an open hold
+	Hold *bool `form:"hold,omitempty" json:"hold,omitempty"`
+
+	// MinDays at least this many days in the yard
+	MinDays *int     `form:"minDays,omitempty" json:"minDays,omitempty"`
+	Page    *Page    `form:"page,omitempty" json:"page,omitempty"`
+	PerPage *PerPage `form:"perPage,omitempty" json:"perPage,omitempty"`
+}
+
+// SetVisitGradeJSONBody defines parameters for SetVisitGrade.
+type SetVisitGradeJSONBody struct {
+	// Grade one of '', A, B, C, FOOD
+	Grade string `json:"grade"`
+}
+
+// SetVisitPositionJSONBody defines parameters for SetVisitPosition.
+type SetVisitPositionJSONBody struct {
+	Block string `json:"block"`
+	Row   string `json:"row"`
+	Tier  string `json:"tier"`
+}
+
+// DecideApprovalJSONRequestBody defines body for DecideApproval for application/json ContentType.
+type DecideApprovalJSONRequestBody DecideApprovalJSONBody
+
+// CreateBlockJSONRequestBody defines body for CreateBlock for application/json ContentType.
+type CreateBlockJSONRequestBody CreateBlockJSONBody
+
+// SetBlockActiveJSONRequestBody defines body for SetBlockActive for application/json ContentType.
+type SetBlockActiveJSONRequestBody SetBlockActiveJSONBody
 
 // SetModulesJSONRequestBody defines body for SetModules for application/json ContentType.
 type SetModulesJSONRequestBody SetModulesJSONBody
@@ -678,6 +1176,12 @@ type UpdateMemberJSONRequestBody = MemberUpdate
 // CreateMoveJSONRequestBody defines body for CreateMove for application/json ContentType.
 type CreateMoveJSONRequestBody = CreateMoveRequest
 
+// CorrectMoveJSONRequestBody defines body for CorrectMove for application/json ContentType.
+type CorrectMoveJSONRequestBody CorrectMoveJSONBody
+
+// SaveGateFormJSONRequestBody defines body for SaveGateForm for application/json ContentType.
+type SaveGateFormJSONRequestBody = GateForm
+
 // EnterNumberJSONRequestBody defines body for EnterNumber for application/json ContentType.
 type EnterNumberJSONRequestBody EnterNumberJSONBody
 
@@ -687,17 +1191,50 @@ type AddPhotoMultipartRequestBody AddPhotoMultipartBody
 // ResolveMoveJSONRequestBody defines body for ResolveMove for application/json ContentType.
 type ResolveMoveJSONRequestBody = ResolveRequest
 
+// VoidMoveJSONRequestBody defines body for VoidMove for application/json ContentType.
+type VoidMoveJSONRequestBody = ReasonBody
+
+// CreateOrderJSONRequestBody defines body for CreateOrder for application/json ContentType.
+type CreateOrderJSONRequestBody = OrderCreate
+
 // CreateCompanyJSONRequestBody defines body for CreateCompany for application/json ContentType.
 type CreateCompanyJSONRequestBody CreateCompanyJSONBody
 
 // SetScopeJSONRequestBody defines body for SetScope for application/json ContentType.
 type SetScopeJSONRequestBody SetScopeJSONBody
 
+// SetYardSettingsJSONRequestBody defines body for SetYardSettings for application/json ContentType.
+type SetYardSettingsJSONRequestBody = YardSettings
+
 // TestReadMultipartRequestBody defines body for TestRead for multipart/form-data ContentType.
 type TestReadMultipartRequestBody TestReadMultipartBody
 
+// SetVisitGradeJSONRequestBody defines body for SetVisitGrade for application/json ContentType.
+type SetVisitGradeJSONRequestBody SetVisitGradeJSONBody
+
+// PlaceHoldJSONRequestBody defines body for PlaceHold for application/json ContentType.
+type PlaceHoldJSONRequestBody = ReasonBody
+
+// SetVisitPositionJSONRequestBody defines body for SetVisitPosition for application/json ContentType.
+type SetVisitPositionJSONRequestBody SetVisitPositionJSONBody
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (GET /api/approvals)
+	ListApprovals(w http.ResponseWriter, r *http.Request, params ListApprovalsParams)
+
+	// (POST /api/approvals/{id})
+	DecideApproval(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/blocks)
+	ListBlocks(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/blocks)
+	CreateBlock(w http.ResponseWriter, r *http.Request)
+
+	// (PATCH /api/blocks/{id})
+	SetBlockActive(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /api/company)
 	GetCompany(w http.ResponseWriter, r *http.Request)
@@ -723,6 +1260,15 @@ type ServerInterface interface {
 	// (POST /api/depots)
 	CreateDepot(w http.ResponseWriter, r *http.Request)
 
+	// (GET /api/gate-flags)
+	ListGateFlags(w http.ResponseWriter, r *http.Request, params ListGateFlagsParams)
+
+	// (POST /api/gate-flags/{id}/resolve)
+	ResolveGateFlag(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/gate/snapshot)
+	GateSnapshot(w http.ResponseWriter, r *http.Request)
+
 	// (GET /api/hauliers)
 	ListHauliers(w http.ResponseWriter, r *http.Request, params ListHauliersParams)
 
@@ -737,6 +1283,9 @@ type ServerInterface interface {
 
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/holds/{id}/release)
+	ReleaseHold(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /api/invitations)
 	ListInvitations(w http.ResponseWriter, r *http.Request)
@@ -777,6 +1326,15 @@ type ServerInterface interface {
 	// (GET /api/moves/{id})
 	GetMove(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (POST /api/moves/{id}/correct)
+	CorrectMove(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/moves/{id}/eir)
+	CreateEirLink(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/moves/{id}/gate)
+	SaveGateForm(w http.ResponseWriter, r *http.Request, id Id)
+
 	// (POST /api/moves/{id}/number)
 	EnterNumber(w http.ResponseWriter, r *http.Request, id Id)
 
@@ -788,6 +1346,21 @@ type ServerInterface interface {
 
 	// (POST /api/moves/{id}/resolve)
 	ResolveMove(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/moves/{id}/void)
+	VoidMove(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/orders)
+	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+
+	// (POST /api/orders)
+	CreateOrder(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/orders/{id})
+	GetOrder(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/orders/{id}/cancel)
+	CancelOrder(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /api/platform/companies)
 	ListCompanies(w http.ResponseWriter, r *http.Request)
@@ -810,11 +1383,32 @@ type ServerInterface interface {
 	// (POST /api/session/scope)
 	SetScope(w http.ResponseWriter, r *http.Request)
 
+	// (GET /api/settings/yard)
+	GetYardSettings(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /api/settings/yard)
+	SetYardSettings(w http.ResponseWriter, r *http.Request)
+
 	// (POST /api/test-read)
 	TestRead(w http.ResponseWriter, r *http.Request)
 
 	// (GET /api/validate/{number})
 	ValidateNumber(w http.ResponseWriter, r *http.Request, number string)
+
+	// (GET /api/visits)
+	ListVisits(w http.ResponseWriter, r *http.Request, params ListVisitsParams)
+
+	// (GET /api/visits/{id})
+	GetVisit(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PATCH /api/visits/{id}/grade)
+	SetVisitGrade(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/visits/{id}/holds)
+	PlaceHold(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PATCH /api/visits/{id}/position)
+	SetVisitPosition(w http.ResponseWriter, r *http.Request, id Id)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -825,6 +1419,119 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListApprovals operation middleware
+func (siw *ServerInterfaceWrapper) ListApprovals(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListApprovalsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListApprovals(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DecideApproval operation middleware
+func (siw *ServerInterfaceWrapper) DecideApproval(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DecideApproval(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBlocks operation middleware
+func (siw *ServerInterfaceWrapper) ListBlocks(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBlocks(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBlock operation middleware
+func (siw *ServerInterfaceWrapper) CreateBlock(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBlock(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetBlockActive operation middleware
+func (siw *ServerInterfaceWrapper) SetBlockActive(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetBlockActive(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetCompany operation middleware
 func (siw *ServerInterfaceWrapper) GetCompany(w http.ResponseWriter, r *http.Request) {
@@ -1007,6 +1714,92 @@ func (siw *ServerInterfaceWrapper) CreateDepot(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListGateFlags operation middleware
+func (siw *ServerInterfaceWrapper) ListGateFlags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListGateFlagsParams
+
+	// ------------- Optional query parameter "open" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "open", r.URL.Query(), &params.Open, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "open"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "open", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "moveId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "moveId", r.URL.Query(), &params.MoveId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "moveId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "moveId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGateFlags(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveGateFlag operation middleware
+func (siw *ServerInterfaceWrapper) ResolveGateFlag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveGateFlag(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GateSnapshot operation middleware
+func (siw *ServerInterfaceWrapper) GateSnapshot(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GateSnapshot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListHauliers operation middleware
 func (siw *ServerInterfaceWrapper) ListHauliers(w http.ResponseWriter, r *http.Request) {
 
@@ -1137,6 +1930,32 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReleaseHold operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseHold(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseHold(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1503,6 +2322,84 @@ func (siw *ServerInterfaceWrapper) GetMove(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// CorrectMove operation middleware
+func (siw *ServerInterfaceWrapper) CorrectMove(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CorrectMove(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateEirLink operation middleware
+func (siw *ServerInterfaceWrapper) CreateEirLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEirLink(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveGateForm operation middleware
+func (siw *ServerInterfaceWrapper) SaveGateForm(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveGateForm(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // EnterNumber operation middleware
 func (siw *ServerInterfaceWrapper) EnterNumber(w http.ResponseWriter, r *http.Request) {
 
@@ -1598,6 +2495,157 @@ func (siw *ServerInterfaceWrapper) ResolveMove(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResolveMove(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VoidMove operation middleware
+func (siw *ServerInterfaceWrapper) VoidMove(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VoidMove(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrders operation middleware
+func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrdersParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateOrder operation middleware
+func (siw *ServerInterfaceWrapper) CreateOrder(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateOrder(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrder operation middleware
+func (siw *ServerInterfaceWrapper) GetOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrder(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOrder operation middleware
+func (siw *ServerInterfaceWrapper) CancelOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOrder(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1743,6 +2791,34 @@ func (siw *ServerInterfaceWrapper) SetScope(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// GetYardSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetYardSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetYardSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetYardSettings operation middleware
+func (siw *ServerInterfaceWrapper) SetYardSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetYardSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // TestRead operation middleware
 func (siw *ServerInterfaceWrapper) TestRead(w http.ResponseWriter, r *http.Request) {
 
@@ -1774,6 +2850,247 @@ func (siw *ServerInterfaceWrapper) ValidateNumber(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ValidateNumber(w, r, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListVisits operation middleware
+func (siw *ServerInterfaceWrapper) ListVisits(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListVisitsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lineId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lineId", r.URL.Query(), &params.LineId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lineId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lineId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "customerId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "customerId", r.URL.Query(), &params.CustomerId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "customerId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "customerId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "grade" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "grade", r.URL.Query(), &params.Grade, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "grade"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grade", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "hold" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "hold", r.URL.Query(), &params.Hold, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "hold"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hold", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "minDays" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "minDays", r.URL.Query(), &params.MinDays, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "minDays"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "minDays", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "perPage" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "perPage", r.URL.Query(), &params.PerPage, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "perPage"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "perPage", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVisits(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVisit operation middleware
+func (siw *ServerInterfaceWrapper) GetVisit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVisit(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetVisitGrade operation middleware
+func (siw *ServerInterfaceWrapper) SetVisitGrade(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetVisitGrade(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlaceHold operation middleware
+func (siw *ServerInterfaceWrapper) PlaceHold(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlaceHold(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetVisitPosition operation middleware
+func (siw *ServerInterfaceWrapper) SetVisitPosition(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetVisitPosition(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1942,11 +3259,225 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/hauliers", wrapper.CreateHaulier)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/hauliers/{id}", wrapper.DeactivateHaulier)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/hauliers/{id}", wrapper.UpdateHaulier)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/gate", wrapper.SaveGateForm)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/eir", wrapper.CreateEirLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/correct", wrapper.CorrectMove)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/void", wrapper.VoidMove)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/gate/snapshot", wrapper.GateSnapshot)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/orders", wrapper.ListOrders)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/orders", wrapper.CreateOrder)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/orders/{id}", wrapper.GetOrder)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/orders/{id}/cancel", wrapper.CancelOrder)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/visits", wrapper.ListVisits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/visits/{id}", wrapper.GetVisit)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/visits/{id}/position", wrapper.SetVisitPosition)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/visits/{id}/grade", wrapper.SetVisitGrade)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/visits/{id}/holds", wrapper.PlaceHold)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/holds/{id}/release", wrapper.ReleaseHold)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/blocks", wrapper.ListBlocks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/blocks", wrapper.CreateBlock)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/blocks/{id}", wrapper.SetBlockActive)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/approvals", wrapper.ListApprovals)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/approvals/{id}", wrapper.DecideApproval)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/gate-flags", wrapper.ListGateFlags)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/gate-flags/{id}/resolve", wrapper.ResolveGateFlag)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/settings/yard", wrapper.GetYardSettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/settings/yard", wrapper.SetYardSettings)
 
 	return m
 }
 
 type ErrorJSONResponse ErrorResponse
+
+type ListApprovalsRequestObject struct {
+	Params ListApprovalsParams
+}
+
+type ListApprovalsResponseObject interface {
+	VisitListApprovalsResponse(w http.ResponseWriter) error
+}
+
+type ListApprovals200JSONResponse []Approval
+
+func (response ListApprovals200JSONResponse) VisitListApprovalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListApprovalsdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListApprovalsdefaultJSONResponse) VisitListApprovalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DecideApprovalRequestObject struct {
+	Id   Id `json:"id"`
+	Body *DecideApprovalJSONRequestBody
+}
+
+type DecideApprovalResponseObject interface {
+	VisitDecideApprovalResponse(w http.ResponseWriter) error
+}
+
+type DecideApproval204Response struct {
+}
+
+func (response DecideApproval204Response) VisitDecideApprovalResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DecideApprovaldefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response DecideApprovaldefaultJSONResponse) VisitDecideApprovalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListBlocksRequestObject struct {
+}
+
+type ListBlocksResponseObject interface {
+	VisitListBlocksResponse(w http.ResponseWriter) error
+}
+
+type ListBlocks200JSONResponse []Block
+
+func (response ListBlocks200JSONResponse) VisitListBlocksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListBlocksdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListBlocksdefaultJSONResponse) VisitListBlocksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBlockRequestObject struct {
+	Body *CreateBlockJSONRequestBody
+}
+
+type CreateBlockResponseObject interface {
+	VisitCreateBlockResponse(w http.ResponseWriter) error
+}
+
+type CreateBlock201JSONResponse Block
+
+func (response CreateBlock201JSONResponse) VisitCreateBlockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateBlockdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response CreateBlockdefaultJSONResponse) VisitCreateBlockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetBlockActiveRequestObject struct {
+	Id   Id `json:"id"`
+	Body *SetBlockActiveJSONRequestBody
+}
+
+type SetBlockActiveResponseObject interface {
+	VisitSetBlockActiveResponse(w http.ResponseWriter) error
+}
+
+type SetBlockActive200JSONResponse Block
+
+func (response SetBlockActive200JSONResponse) VisitSetBlockActiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetBlockActivedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetBlockActivedefaultJSONResponse) VisitSetBlockActiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type GetCompanyRequestObject struct {
 }
@@ -2253,6 +3784,116 @@ func (response CreateDepotdefaultJSONResponse) VisitCreateDepotResponse(w http.R
 	return err
 }
 
+type ListGateFlagsRequestObject struct {
+	Params ListGateFlagsParams
+}
+
+type ListGateFlagsResponseObject interface {
+	VisitListGateFlagsResponse(w http.ResponseWriter) error
+}
+
+type ListGateFlags200JSONResponse []GateFlag
+
+func (response ListGateFlags200JSONResponse) VisitListGateFlagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListGateFlagsdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListGateFlagsdefaultJSONResponse) VisitListGateFlagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResolveGateFlagRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type ResolveGateFlagResponseObject interface {
+	VisitResolveGateFlagResponse(w http.ResponseWriter) error
+}
+
+type ResolveGateFlag204Response struct {
+}
+
+func (response ResolveGateFlag204Response) VisitResolveGateFlagResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ResolveGateFlagdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ResolveGateFlagdefaultJSONResponse) VisitResolveGateFlagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GateSnapshotRequestObject struct {
+}
+
+type GateSnapshotResponseObject interface {
+	VisitGateSnapshotResponse(w http.ResponseWriter) error
+}
+
+type GateSnapshot200JSONResponse GateSnapshot
+
+func (response GateSnapshot200JSONResponse) VisitGateSnapshotResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GateSnapshotdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GateSnapshotdefaultJSONResponse) VisitGateSnapshotResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListHauliersRequestObject struct {
 	Params ListHauliersParams
 }
@@ -2421,6 +4062,39 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReleaseHoldRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type ReleaseHoldResponseObject interface {
+	VisitReleaseHoldResponse(w http.ResponseWriter) error
+}
+
+type ReleaseHold204Response struct {
+}
+
+func (response ReleaseHold204Response) VisitReleaseHoldResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ReleaseHolddefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ReleaseHolddefaultJSONResponse) VisitReleaseHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2916,6 +4590,153 @@ func (response GetMovedefaultJSONResponse) VisitGetMoveResponse(w http.ResponseW
 	return err
 }
 
+type CorrectMoveRequestObject struct {
+	Id   Id `json:"id"`
+	Body *CorrectMoveJSONRequestBody
+}
+
+type CorrectMoveResponseObject interface {
+	VisitCorrectMoveResponse(w http.ResponseWriter) error
+}
+
+type CorrectMove200JSONResponse GateResult
+
+func (response CorrectMove200JSONResponse) VisitCorrectMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CorrectMove409JSONResponse GateRefusal
+
+func (response CorrectMove409JSONResponse) VisitCorrectMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CorrectMovedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response CorrectMovedefaultJSONResponse) VisitCorrectMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEirLinkRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type CreateEirLinkResponseObject interface {
+	VisitCreateEirLinkResponse(w http.ResponseWriter) error
+}
+
+type CreateEirLink200JSONResponse EirLink
+
+func (response CreateEirLink200JSONResponse) VisitCreateEirLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEirLinkdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response CreateEirLinkdefaultJSONResponse) VisitCreateEirLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveGateFormRequestObject struct {
+	Id   Id `json:"id"`
+	Body *SaveGateFormJSONRequestBody
+}
+
+type SaveGateFormResponseObject interface {
+	VisitSaveGateFormResponse(w http.ResponseWriter) error
+}
+
+type SaveGateForm200JSONResponse GateResult
+
+func (response SaveGateForm200JSONResponse) VisitSaveGateFormResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveGateForm409JSONResponse GateRefusal
+
+func (response SaveGateForm409JSONResponse) VisitSaveGateFormResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveGateFormdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SaveGateFormdefaultJSONResponse) VisitSaveGateFormResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type EnterNumberRequestObject struct {
 	Id   Id `json:"id"`
 	Body *EnterNumberJSONRequestBody
@@ -3064,6 +4885,190 @@ type ResolveMovedefaultJSONResponse struct {
 }
 
 func (response ResolveMovedefaultJSONResponse) VisitResolveMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type VoidMoveRequestObject struct {
+	Id   Id `json:"id"`
+	Body *VoidMoveJSONRequestBody
+}
+
+type VoidMoveResponseObject interface {
+	VisitVoidMoveResponse(w http.ResponseWriter) error
+}
+
+type VoidMove204Response struct {
+}
+
+func (response VoidMove204Response) VisitVoidMoveResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type VoidMovedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response VoidMovedefaultJSONResponse) VisitVoidMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrdersRequestObject struct {
+	Params ListOrdersParams
+}
+
+type ListOrdersResponseObject interface {
+	VisitListOrdersResponse(w http.ResponseWriter) error
+}
+
+type ListOrders200JSONResponse []Order
+
+func (response ListOrders200JSONResponse) VisitListOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrdersdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListOrdersdefaultJSONResponse) VisitListOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrderRequestObject struct {
+	Body *CreateOrderJSONRequestBody
+}
+
+type CreateOrderResponseObject interface {
+	VisitCreateOrderResponse(w http.ResponseWriter) error
+}
+
+type CreateOrder201JSONResponse OrderDetail
+
+func (response CreateOrder201JSONResponse) VisitCreateOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOrderdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response CreateOrderdefaultJSONResponse) VisitCreateOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOrderRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetOrderResponseObject interface {
+	VisitGetOrderResponse(w http.ResponseWriter) error
+}
+
+type GetOrder200JSONResponse OrderDetail
+
+func (response GetOrder200JSONResponse) VisitGetOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOrderdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetOrderdefaultJSONResponse) VisitGetOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type CancelOrderResponseObject interface {
+	VisitCancelOrderResponse(w http.ResponseWriter) error
+}
+
+type CancelOrder204Response struct {
+}
+
+func (response CancelOrder204Response) VisitCancelOrderResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CancelOrderdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response CancelOrderdefaultJSONResponse) VisitCancelOrderResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -3339,6 +5344,83 @@ func (response SetScopedefaultJSONResponse) VisitSetScopeResponse(w http.Respons
 	return err
 }
 
+type GetYardSettingsRequestObject struct {
+}
+
+type GetYardSettingsResponseObject interface {
+	VisitGetYardSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetYardSettings200JSONResponse YardSettings
+
+func (response GetYardSettings200JSONResponse) VisitGetYardSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetYardSettingsdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetYardSettingsdefaultJSONResponse) VisitGetYardSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetYardSettingsRequestObject struct {
+	Body *SetYardSettingsJSONRequestBody
+}
+
+type SetYardSettingsResponseObject interface {
+	VisitSetYardSettingsResponse(w http.ResponseWriter) error
+}
+
+type SetYardSettings200JSONResponse YardSettings
+
+func (response SetYardSettings200JSONResponse) VisitSetYardSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetYardSettingsdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetYardSettingsdefaultJSONResponse) VisitSetYardSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type TestReadRequestObject struct {
 	Body *multipart.Reader
 }
@@ -3400,8 +5482,221 @@ func (response ValidateNumber200JSONResponse) VisitValidateNumberResponse(w http
 	return err
 }
 
+type ListVisitsRequestObject struct {
+	Params ListVisitsParams
+}
+
+type ListVisitsResponseObject interface {
+	VisitListVisitsResponse(w http.ResponseWriter) error
+}
+
+type ListVisits200JSONResponse VisitList
+
+func (response ListVisits200JSONResponse) VisitListVisitsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVisitsdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListVisitsdefaultJSONResponse) VisitListVisitsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVisitRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetVisitResponseObject interface {
+	VisitGetVisitResponse(w http.ResponseWriter) error
+}
+
+type GetVisit200JSONResponse VisitDetail
+
+func (response GetVisit200JSONResponse) VisitGetVisitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVisitdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetVisitdefaultJSONResponse) VisitGetVisitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetVisitGradeRequestObject struct {
+	Id   Id `json:"id"`
+	Body *SetVisitGradeJSONRequestBody
+}
+
+type SetVisitGradeResponseObject interface {
+	VisitSetVisitGradeResponse(w http.ResponseWriter) error
+}
+
+type SetVisitGrade200JSONResponse Visit
+
+func (response SetVisitGrade200JSONResponse) VisitSetVisitGradeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetVisitGradedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetVisitGradedefaultJSONResponse) VisitSetVisitGradeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PlaceHoldRequestObject struct {
+	Id   Id `json:"id"`
+	Body *PlaceHoldJSONRequestBody
+}
+
+type PlaceHoldResponseObject interface {
+	VisitPlaceHoldResponse(w http.ResponseWriter) error
+}
+
+type PlaceHold201JSONResponse Hold
+
+func (response PlaceHold201JSONResponse) VisitPlaceHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PlaceHolddefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response PlaceHolddefaultJSONResponse) VisitPlaceHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetVisitPositionRequestObject struct {
+	Id   Id `json:"id"`
+	Body *SetVisitPositionJSONRequestBody
+}
+
+type SetVisitPositionResponseObject interface {
+	VisitSetVisitPositionResponse(w http.ResponseWriter) error
+}
+
+type SetVisitPosition200JSONResponse Visit
+
+func (response SetVisitPosition200JSONResponse) VisitSetVisitPositionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetVisitPositiondefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetVisitPositiondefaultJSONResponse) VisitSetVisitPositionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+
+	// (GET /api/approvals)
+	ListApprovals(ctx context.Context, request ListApprovalsRequestObject) (ListApprovalsResponseObject, error)
+
+	// (POST /api/approvals/{id})
+	DecideApproval(ctx context.Context, request DecideApprovalRequestObject) (DecideApprovalResponseObject, error)
+
+	// (GET /api/blocks)
+	ListBlocks(ctx context.Context, request ListBlocksRequestObject) (ListBlocksResponseObject, error)
+
+	// (POST /api/blocks)
+	CreateBlock(ctx context.Context, request CreateBlockRequestObject) (CreateBlockResponseObject, error)
+
+	// (PATCH /api/blocks/{id})
+	SetBlockActive(ctx context.Context, request SetBlockActiveRequestObject) (SetBlockActiveResponseObject, error)
 
 	// (GET /api/company)
 	GetCompany(ctx context.Context, request GetCompanyRequestObject) (GetCompanyResponseObject, error)
@@ -3427,6 +5722,15 @@ type StrictServerInterface interface {
 	// (POST /api/depots)
 	CreateDepot(ctx context.Context, request CreateDepotRequestObject) (CreateDepotResponseObject, error)
 
+	// (GET /api/gate-flags)
+	ListGateFlags(ctx context.Context, request ListGateFlagsRequestObject) (ListGateFlagsResponseObject, error)
+
+	// (POST /api/gate-flags/{id}/resolve)
+	ResolveGateFlag(ctx context.Context, request ResolveGateFlagRequestObject) (ResolveGateFlagResponseObject, error)
+
+	// (GET /api/gate/snapshot)
+	GateSnapshot(ctx context.Context, request GateSnapshotRequestObject) (GateSnapshotResponseObject, error)
+
 	// (GET /api/hauliers)
 	ListHauliers(ctx context.Context, request ListHauliersRequestObject) (ListHauliersResponseObject, error)
 
@@ -3441,6 +5745,9 @@ type StrictServerInterface interface {
 
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+
+	// (POST /api/holds/{id}/release)
+	ReleaseHold(ctx context.Context, request ReleaseHoldRequestObject) (ReleaseHoldResponseObject, error)
 
 	// (GET /api/invitations)
 	ListInvitations(ctx context.Context, request ListInvitationsRequestObject) (ListInvitationsResponseObject, error)
@@ -3481,6 +5788,15 @@ type StrictServerInterface interface {
 	// (GET /api/moves/{id})
 	GetMove(ctx context.Context, request GetMoveRequestObject) (GetMoveResponseObject, error)
 
+	// (POST /api/moves/{id}/correct)
+	CorrectMove(ctx context.Context, request CorrectMoveRequestObject) (CorrectMoveResponseObject, error)
+
+	// (POST /api/moves/{id}/eir)
+	CreateEirLink(ctx context.Context, request CreateEirLinkRequestObject) (CreateEirLinkResponseObject, error)
+
+	// (POST /api/moves/{id}/gate)
+	SaveGateForm(ctx context.Context, request SaveGateFormRequestObject) (SaveGateFormResponseObject, error)
+
 	// (POST /api/moves/{id}/number)
 	EnterNumber(ctx context.Context, request EnterNumberRequestObject) (EnterNumberResponseObject, error)
 
@@ -3492,6 +5808,21 @@ type StrictServerInterface interface {
 
 	// (POST /api/moves/{id}/resolve)
 	ResolveMove(ctx context.Context, request ResolveMoveRequestObject) (ResolveMoveResponseObject, error)
+
+	// (POST /api/moves/{id}/void)
+	VoidMove(ctx context.Context, request VoidMoveRequestObject) (VoidMoveResponseObject, error)
+
+	// (GET /api/orders)
+	ListOrders(ctx context.Context, request ListOrdersRequestObject) (ListOrdersResponseObject, error)
+
+	// (POST /api/orders)
+	CreateOrder(ctx context.Context, request CreateOrderRequestObject) (CreateOrderResponseObject, error)
+
+	// (GET /api/orders/{id})
+	GetOrder(ctx context.Context, request GetOrderRequestObject) (GetOrderResponseObject, error)
+
+	// (POST /api/orders/{id}/cancel)
+	CancelOrder(ctx context.Context, request CancelOrderRequestObject) (CancelOrderResponseObject, error)
 
 	// (GET /api/platform/companies)
 	ListCompanies(ctx context.Context, request ListCompaniesRequestObject) (ListCompaniesResponseObject, error)
@@ -3514,11 +5845,32 @@ type StrictServerInterface interface {
 	// (POST /api/session/scope)
 	SetScope(ctx context.Context, request SetScopeRequestObject) (SetScopeResponseObject, error)
 
+	// (GET /api/settings/yard)
+	GetYardSettings(ctx context.Context, request GetYardSettingsRequestObject) (GetYardSettingsResponseObject, error)
+
+	// (PUT /api/settings/yard)
+	SetYardSettings(ctx context.Context, request SetYardSettingsRequestObject) (SetYardSettingsResponseObject, error)
+
 	// (POST /api/test-read)
 	TestRead(ctx context.Context, request TestReadRequestObject) (TestReadResponseObject, error)
 
 	// (GET /api/validate/{number})
 	ValidateNumber(ctx context.Context, request ValidateNumberRequestObject) (ValidateNumberResponseObject, error)
+
+	// (GET /api/visits)
+	ListVisits(ctx context.Context, request ListVisitsRequestObject) (ListVisitsResponseObject, error)
+
+	// (GET /api/visits/{id})
+	GetVisit(ctx context.Context, request GetVisitRequestObject) (GetVisitResponseObject, error)
+
+	// (PATCH /api/visits/{id}/grade)
+	SetVisitGrade(ctx context.Context, request SetVisitGradeRequestObject) (SetVisitGradeResponseObject, error)
+
+	// (POST /api/visits/{id}/holds)
+	PlaceHold(ctx context.Context, request PlaceHoldRequestObject) (PlaceHoldResponseObject, error)
+
+	// (PATCH /api/visits/{id}/position)
+	SetVisitPosition(ctx context.Context, request SetVisitPositionRequestObject) (SetVisitPositionResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -3558,6 +5910,153 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListApprovals operation middleware
+func (sh *strictHandler) ListApprovals(w http.ResponseWriter, r *http.Request, params ListApprovalsParams) {
+	var request ListApprovalsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListApprovals(ctx, request.(ListApprovalsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListApprovals")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListApprovalsResponseObject); ok {
+		if err := validResponse.VisitListApprovalsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DecideApproval operation middleware
+func (sh *strictHandler) DecideApproval(w http.ResponseWriter, r *http.Request, id Id) {
+	var request DecideApprovalRequestObject
+
+	request.Id = id
+
+	var body DecideApprovalJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DecideApproval(ctx, request.(DecideApprovalRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DecideApproval")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DecideApprovalResponseObject); ok {
+		if err := validResponse.VisitDecideApprovalResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListBlocks operation middleware
+func (sh *strictHandler) ListBlocks(w http.ResponseWriter, r *http.Request) {
+	var request ListBlocksRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListBlocks(ctx, request.(ListBlocksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListBlocks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListBlocksResponseObject); ok {
+		if err := validResponse.VisitListBlocksResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateBlock operation middleware
+func (sh *strictHandler) CreateBlock(w http.ResponseWriter, r *http.Request) {
+	var request CreateBlockRequestObject
+
+	var body CreateBlockJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateBlock(ctx, request.(CreateBlockRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateBlock")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateBlockResponseObject); ok {
+		if err := validResponse.VisitCreateBlockResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetBlockActive operation middleware
+func (sh *strictHandler) SetBlockActive(w http.ResponseWriter, r *http.Request, id Id) {
+	var request SetBlockActiveRequestObject
+
+	request.Id = id
+
+	var body SetBlockActiveJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetBlockActive(ctx, request.(SetBlockActiveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetBlockActive")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetBlockActiveResponseObject); ok {
+		if err := validResponse.VisitSetBlockActiveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetCompany operation middleware
@@ -3786,6 +6285,82 @@ func (sh *strictHandler) CreateDepot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListGateFlags operation middleware
+func (sh *strictHandler) ListGateFlags(w http.ResponseWriter, r *http.Request, params ListGateFlagsParams) {
+	var request ListGateFlagsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListGateFlags(ctx, request.(ListGateFlagsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListGateFlags")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListGateFlagsResponseObject); ok {
+		if err := validResponse.VisitListGateFlagsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResolveGateFlag operation middleware
+func (sh *strictHandler) ResolveGateFlag(w http.ResponseWriter, r *http.Request, id Id) {
+	var request ResolveGateFlagRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResolveGateFlag(ctx, request.(ResolveGateFlagRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResolveGateFlag")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResolveGateFlagResponseObject); ok {
+		if err := validResponse.VisitResolveGateFlagResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GateSnapshot operation middleware
+func (sh *strictHandler) GateSnapshot(w http.ResponseWriter, r *http.Request) {
+	var request GateSnapshotRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GateSnapshot(ctx, request.(GateSnapshotRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GateSnapshot")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GateSnapshotResponseObject); ok {
+		if err := validResponse.VisitGateSnapshotResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListHauliers operation middleware
 func (sh *strictHandler) ListHauliers(w http.ResponseWriter, r *http.Request, params ListHauliersParams) {
 	var request ListHauliersRequestObject
@@ -3919,6 +6494,32 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReleaseHold operation middleware
+func (sh *strictHandler) ReleaseHold(w http.ResponseWriter, r *http.Request, id Id) {
+	var request ReleaseHoldRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReleaseHold(ctx, request.(ReleaseHoldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReleaseHold")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReleaseHoldResponseObject); ok {
+		if err := validResponse.VisitReleaseHoldResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4289,6 +6890,98 @@ func (sh *strictHandler) GetMove(w http.ResponseWriter, r *http.Request, id Id) 
 	}
 }
 
+// CorrectMove operation middleware
+func (sh *strictHandler) CorrectMove(w http.ResponseWriter, r *http.Request, id Id) {
+	var request CorrectMoveRequestObject
+
+	request.Id = id
+
+	var body CorrectMoveJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CorrectMove(ctx, request.(CorrectMoveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CorrectMove")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CorrectMoveResponseObject); ok {
+		if err := validResponse.VisitCorrectMoveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateEirLink operation middleware
+func (sh *strictHandler) CreateEirLink(w http.ResponseWriter, r *http.Request, id Id) {
+	var request CreateEirLinkRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateEirLink(ctx, request.(CreateEirLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateEirLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateEirLinkResponseObject); ok {
+		if err := validResponse.VisitCreateEirLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaveGateForm operation middleware
+func (sh *strictHandler) SaveGateForm(w http.ResponseWriter, r *http.Request, id Id) {
+	var request SaveGateFormRequestObject
+
+	request.Id = id
+
+	var body SaveGateFormJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaveGateForm(ctx, request.(SaveGateFormRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaveGateForm")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaveGateFormResponseObject); ok {
+		if err := validResponse.VisitSaveGateFormResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // EnterNumber operation middleware
 func (sh *strictHandler) EnterNumber(w http.ResponseWriter, r *http.Request, id Id) {
 	var request EnterNumberRequestObject
@@ -4407,6 +7100,148 @@ func (sh *strictHandler) ResolveMove(w http.ResponseWriter, r *http.Request, id 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ResolveMoveResponseObject); ok {
 		if err := validResponse.VisitResolveMoveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// VoidMove operation middleware
+func (sh *strictHandler) VoidMove(w http.ResponseWriter, r *http.Request, id Id) {
+	var request VoidMoveRequestObject
+
+	request.Id = id
+
+	var body VoidMoveJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.VoidMove(ctx, request.(VoidMoveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "VoidMove")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(VoidMoveResponseObject); ok {
+		if err := validResponse.VisitVoidMoveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListOrders operation middleware
+func (sh *strictHandler) ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams) {
+	var request ListOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOrders(ctx, request.(ListOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOrders")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOrdersResponseObject); ok {
+		if err := validResponse.VisitListOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateOrder operation middleware
+func (sh *strictHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
+	var request CreateOrderRequestObject
+
+	var body CreateOrderJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateOrder(ctx, request.(CreateOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateOrderResponseObject); ok {
+		if err := validResponse.VisitCreateOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOrder operation middleware
+func (sh *strictHandler) GetOrder(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetOrderRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOrder(ctx, request.(GetOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOrderResponseObject); ok {
+		if err := validResponse.VisitGetOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelOrder operation middleware
+func (sh *strictHandler) CancelOrder(w http.ResponseWriter, r *http.Request, id Id) {
+	var request CancelOrderRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelOrder(ctx, request.(CancelOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelOrderResponseObject); ok {
+		if err := validResponse.VisitCancelOrderResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4600,6 +7435,61 @@ func (sh *strictHandler) SetScope(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetYardSettings operation middleware
+func (sh *strictHandler) GetYardSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetYardSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetYardSettings(ctx, request.(GetYardSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetYardSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetYardSettingsResponseObject); ok {
+		if err := validResponse.VisitGetYardSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetYardSettings operation middleware
+func (sh *strictHandler) SetYardSettings(w http.ResponseWriter, r *http.Request) {
+	var request SetYardSettingsRequestObject
+
+	var body SetYardSettingsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetYardSettings(ctx, request.(SetYardSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetYardSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetYardSettingsResponseObject); ok {
+		if err := validResponse.VisitSetYardSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // TestRead operation middleware
 func (sh *strictHandler) TestRead(w http.ResponseWriter, r *http.Request) {
 	var request TestReadRequestObject
@@ -4650,6 +7540,157 @@ func (sh *strictHandler) ValidateNumber(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ValidateNumberResponseObject); ok {
 		if err := validResponse.VisitValidateNumberResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListVisits operation middleware
+func (sh *strictHandler) ListVisits(w http.ResponseWriter, r *http.Request, params ListVisitsParams) {
+	var request ListVisitsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListVisits(ctx, request.(ListVisitsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListVisits")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListVisitsResponseObject); ok {
+		if err := validResponse.VisitListVisitsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVisit operation middleware
+func (sh *strictHandler) GetVisit(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetVisitRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVisit(ctx, request.(GetVisitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVisit")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVisitResponseObject); ok {
+		if err := validResponse.VisitGetVisitResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetVisitGrade operation middleware
+func (sh *strictHandler) SetVisitGrade(w http.ResponseWriter, r *http.Request, id Id) {
+	var request SetVisitGradeRequestObject
+
+	request.Id = id
+
+	var body SetVisitGradeJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetVisitGrade(ctx, request.(SetVisitGradeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetVisitGrade")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetVisitGradeResponseObject); ok {
+		if err := validResponse.VisitSetVisitGradeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PlaceHold operation middleware
+func (sh *strictHandler) PlaceHold(w http.ResponseWriter, r *http.Request, id Id) {
+	var request PlaceHoldRequestObject
+
+	request.Id = id
+
+	var body PlaceHoldJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PlaceHold(ctx, request.(PlaceHoldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PlaceHold")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PlaceHoldResponseObject); ok {
+		if err := validResponse.VisitPlaceHoldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetVisitPosition operation middleware
+func (sh *strictHandler) SetVisitPosition(w http.ResponseWriter, r *http.Request, id Id) {
+	var request SetVisitPositionRequestObject
+
+	request.Id = id
+
+	var body SetVisitPositionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetVisitPosition(ctx, request.(SetVisitPositionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetVisitPosition")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetVisitPositionResponseObject); ok {
+		if err := validResponse.VisitSetVisitPositionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

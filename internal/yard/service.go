@@ -650,6 +650,48 @@ func (s *Service) SetBlockActive(ctx context.Context, id string, active bool) er
 	return s.st.SetBlockActive(ctx, id, active)
 }
 
+func (s *Service) ListOrders(ctx context.Context, kind, status, q string) ([]Order, error) {
+	return s.st.ListOrders(ctx, kind, status, q)
+}
+
+func (s *Service) GetOrder(ctx context.Context, id string) (Order, []OrderItem, error) {
+	return s.st.GetOrder(ctx, id)
+}
+
+func (s *Service) FindVisits(ctx context.Context, f VisitFilter, limit, offset int) ([]VisitRow, int64, error) {
+	return s.st.FindVisits(ctx, f, limit, offset)
+}
+
+func (s *Service) GetVisit(ctx context.Context, id string) (Visit, error) {
+	return s.st.GetVisit(ctx, id)
+}
+
+func (s *Service) ListHolds(ctx context.Context, visitID string, openOnly bool) ([]Hold, error) {
+	return s.st.ListHolds(ctx, visitID, openOnly)
+}
+
+func (s *Service) ListBlocks(ctx context.Context, activeOnly bool) ([]Block, error) {
+	return s.st.ListBlocks(ctx, activeOnly)
+}
+
+func (s *Service) ListFlags(ctx context.Context, moveID string, openOnly bool) ([]Flag, error) {
+	return s.st.ListFlags(ctx, moveID, openOnly)
+}
+
+func (s *Service) ResolveFlag(ctx context.Context, id, actor string) error {
+	return s.st.ResolveFlag(ctx, id, actor)
+}
+
+func (s *Service) ListApprovals(ctx context.Context, status string) ([]Approval, error) {
+	return s.st.ListApprovals(ctx, status)
+}
+
+func (s *Service) Settings(ctx context.Context) (Settings, error) { return s.st.Settings(ctx) }
+
+func (s *Service) SetSettings(ctx context.Context, st Settings) error {
+	return s.st.SetSettings(ctx, st)
+}
+
 func (s *Service) CreateOrder(ctx context.Context, o Order, items []OrderItem, actor string) (string, error) {
 	return s.st.CreateOrder(ctx, o, items, actor)
 }

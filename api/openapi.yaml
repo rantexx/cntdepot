@@ -5,6 +5,15 @@ info:
   description: |
     The hub API. Hand-written outside this spec: GET /api/stream, GET /api/blobs/{digest},
     /api/camera*, /api/live/ws, /auth/*. Every error is {"error": {"code", "message"}}.
+    The stream sends "move" events to the company's screens and "approval" events to its managers.
+
+    Gate and yard errors: 400 E4000 a value is not allowed (bad form, missing reason); 400 E4008 a
+    required field is empty; 404 E4043 no such record; 409 E4090 choose a depot first; 409 E4098
+    refused; 409 E4099 blocked; 409 E4100 the container is in the yard again under a newer visit;
+    409 E4101 a correction cannot change the direction; 409 E4102 the move is void; 409 E4103 the
+    move has no saved gate form; 409 E4104 the visit the move opened is closed since; 409 E4105 the
+    order is not open; 422 E4221 a linked record (photo, order item, approval, line, customer,
+    haulier) does not exist or does not belong to this move or depot.
 servers:
   - url: /
 paths:
@@ -378,6 +387,268 @@ paths:
       responses:
         "204": {description: deactivated}
         default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/gate:
+    post:
+      operationId: saveGateForm
+      description: |
+        Saves the clerk's gate form on the move (gate role). A resend of a saved form returns the stored result.
+        409 E4098: refused (refusals, and approvalId/approvalStatus under manager_approval, or candidates when
+        several order items match and the clerk must choose one); 409 E4099: blocked, never passable at the gate.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/GateForm"}}}
+      responses:
+        "200": {description: saved, content: {application/json: {schema: {$ref: "#/components/schemas/GateResult"}}}}
+        "409": {description: refused or blocked, content: {application/json: {schema: {$ref: "#/components/schemas/GateRefusal"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/eir:
+    post:
+      operationId: createEirLink
+      description: A shareable EIR link for the move. The token in the url is shown only once.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/EirLink"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/correct:
+    post:
+      operationId: correctMove
+      description: |
+        Office: rewrites a saved gate form. Refusals do not stop a correction (they become flags with the reason).
+        409 E4098 with candidates when several order items match; 409 E4100 the container has a newer visit;
+        409 E4101 the direction cannot change; 409 E4102 the move is void; 409 E4103 the move has no saved form;
+        409 E4104 the visit this move opened is closed.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, form]
+              properties:
+                reason: {type: string}
+                form: {$ref: "#/components/schemas/GateForm"}
+      responses:
+        "200": {description: corrected, content: {application/json: {schema: {$ref: "#/components/schemas/GateResult"}}}}
+        "409": {description: choose an order item, content: {application/json: {schema: {$ref: "#/components/schemas/GateRefusal"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/void:
+    post:
+      operationId: voidMove
+      description: Office. 409 E4100, E4102 or E4104 as for correctMove.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ReasonBody"}}}
+      responses:
+        "204": {description: voided}
+        default: {$ref: "#/components/responses/Error"}
+  /api/gate/snapshot:
+    get:
+      operationId: gateSnapshot
+      description: What a gate phone keeps for working offline. Needs a depot in the scope (409 E4090).
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/GateSnapshot"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/orders:
+    get:
+      operationId: listOrders
+      parameters:
+        - {name: kind, in: query, schema: {$ref: "#/components/schemas/OrderKind"}}
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/OrderStatus"}}
+        - {$ref: "#/components/parameters/Q"}
+      responses:
+        "200": {description: newest first, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Order"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createOrder
+      description: Needs a depot in the scope. An item names a container or a quantity of an ISO type, not both.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/OrderCreate"}}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/OrderDetail"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/orders/{id}:
+    get:
+      operationId: getOrder
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/OrderDetail"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/orders/{id}/cancel:
+    post:
+      operationId: cancelOrder
+      description: 409 E4105 when the order is not open.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: cancelled}
+        default: {$ref: "#/components/responses/Error"}
+  /api/visits:
+    get:
+      operationId: listVisits
+      parameters:
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/VisitStatus"}}
+        - {name: lineId, in: query, schema: {type: string}}
+        - {name: customerId, in: query, schema: {type: string}}
+        - {name: type, in: query, description: ISO type code prefix, schema: {type: string}}
+        - {name: grade, in: query, schema: {type: string}}
+        - {name: hold, in: query, description: true lists only visits with an open hold, schema: {type: boolean}}
+        - {name: minDays, in: query, description: at least this many days in the yard, schema: {type: integer, minimum: 0}}
+        - {$ref: "#/components/parameters/Page"}
+        - {$ref: "#/components/parameters/PerPage"}
+      responses:
+        "200": {description: newest first, content: {application/json: {schema: {$ref: "#/components/schemas/VisitList"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/visits/{id}:
+    get:
+      operationId: getVisit
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/VisitDetail"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/visits/{id}/position:
+    patch:
+      operationId: setVisitPosition
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [block, row, tier]
+              properties: {block: {type: string}, row: {type: string}, tier: {type: string}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Visit"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/visits/{id}/grade:
+    patch:
+      operationId: setVisitGrade
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grade]
+              properties: {grade: {type: string, description: "one of '', A, B, C, FOOD"}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Visit"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/visits/{id}/holds:
+    post:
+      operationId: placeHold
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ReasonBody"}}}
+      responses:
+        "201": {description: placed, content: {application/json: {schema: {$ref: "#/components/schemas/Hold"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/holds/{id}/release:
+    post:
+      operationId: releaseHold
+      description: 404 when the hold is already released.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: released}
+        default: {$ref: "#/components/responses/Error"}
+  /api/blocks:
+    get:
+      operationId: listBlocks
+      description: The company's block list, inactive entries included.
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Block"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createBlock
+      description: Adds an entry, or re-activates the same kind and value with the new reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, value, reason]
+              properties: {kind: {$ref: "#/components/schemas/BlockKind"}, value: {type: string}, reason: {type: string}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Block"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/blocks/{id}:
+    patch:
+      operationId: setBlockActive
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties: {active: {type: boolean}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Block"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/approvals:
+    get:
+      operationId: listApprovals
+      description: Managers. Oldest first.
+      parameters: [{name: status, in: query, schema: {type: string, enum: [pending, approved, denied]}}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Approval"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/approvals/{id}:
+    post:
+      operationId: decideApproval
+      description: Managers. 404 when the approval is already decided.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approve]
+              properties: {approve: {type: boolean}}
+      responses:
+        "204": {description: decided}
+        default: {$ref: "#/components/responses/Error"}
+  /api/gate-flags:
+    get:
+      operationId: listGateFlags
+      parameters:
+        - {name: open, in: query, description: true lists only unresolved flags, schema: {type: boolean}}
+        - {name: moveId, in: query, schema: {type: string}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/GateFlag"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/gate-flags/{id}/resolve:
+    post:
+      operationId: resolveGateFlag
+      description: 404 when the flag is already resolved.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: resolved}
+        default: {$ref: "#/components/responses/Error"}
+  /api/settings/yard:
+    get:
+      operationId: getYardSettings
+      description: Managers and owners.
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/YardSettings"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      operationId: setYardSettings
+      description: Owner only.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/YardSettings"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/YardSettings"}}}}
+        default: {$ref: "#/components/responses/Error"}
 components:
   parameters:
     Id: {name: id, in: path, required: true, schema: {type: string}}
@@ -703,3 +974,239 @@ components:
       type: object
       required: [items, total]
       properties: {items: {type: array, items: {$ref: "#/components/schemas/Haulier"}}, total: {type: integer}}
+    Reason:
+      type: object
+      required: [code]
+      properties: {code: {type: string}, detail: {type: string}}
+    ReasonBody:
+      type: object
+      required: [reason]
+      properties: {reason: {type: string}}
+    GateForm:
+      type: object
+      required: [direction, number]
+      properties:
+        direction: {type: string, description: in or out}
+        number: {type: string}
+        typeCode: {type: string}
+        fullEmpty: {type: string, description: "E or F; empty means E"}
+        seal: {type: string}
+        condition: {type: string, description: "sound, damaged or empty"}
+        lineId: {type: string}
+        customerId: {type: string}
+        haulierId: {type: string}
+        truckPlate: {type: string}
+        trailerPlate: {type: string}
+        driverName: {type: string}
+        signaturePhotoId: {type: string}
+        damages:
+          type: array
+          items:
+            type: object
+            required: [location, photoIds]
+            properties:
+              location: {type: string}
+              description: {type: string}
+              photoIds: {type: array, description: 1 to 3 photos of this move, items: {type: string}}
+        chosenOrderItemId: {type: string, description: the clerk's pick among the candidates of a 409 E4098}
+        override:
+          type: object
+          required: [reason]
+          description: The clerk passes the refusals with a reason (refusal mode clerk_override).
+          properties: {reason: {type: string}}
+        approvalId: {type: string, description: the manager approval of a 409 E4098 (refusal mode manager_approval)}
+    GateResult:
+      type: object
+      required: [move, visitId, flags]
+      properties:
+        move: {$ref: "#/components/schemas/Move"}
+        visitId: {type: string}
+        flags: {type: array, items: {$ref: "#/components/schemas/Reason"}}
+    OrderCandidate:
+      type: object
+      required: [orderId, itemId, number, typeCode, fullEmpty, remaining]
+      properties:
+        orderId: {type: string}
+        itemId: {type: string}
+        number: {type: string}
+        typeCode: {type: string}
+        fullEmpty: {type: string}
+        remaining: {type: integer}
+    GateRefusal:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [refusals]
+          properties:
+            refusals: {type: array, items: {$ref: "#/components/schemas/Reason"}}
+            approvalId: {type: string}
+            approvalStatus: {type: string, description: pending or denied}
+            candidates: {type: array, items: {$ref: "#/components/schemas/OrderCandidate"}}
+    EirLink:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: {type: string, description: "relative: /eir/{token}"}
+        expiresAt: {type: string, format: date-time}
+    OrderKind: {type: string, enum: [release, redelivery]}
+    OrderStatus: {type: string, enum: [open, done, cancelled]}
+    Order:
+      type: object
+      required: [id, depotId, kind, reference, lineId, customerId, validUntil, note, status, createdBy, createdAt]
+      properties:
+        id: {type: string}
+        depotId: {type: string}
+        kind: {$ref: "#/components/schemas/OrderKind"}
+        reference: {type: string}
+        lineId: {type: string, nullable: true}
+        customerId: {type: string, nullable: true}
+        validUntil: {type: string, format: date, nullable: true}
+        note: {type: string}
+        status: {$ref: "#/components/schemas/OrderStatus"}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+    OrderItem:
+      type: object
+      required: [id, orderId, number, typeCode, fullEmpty, quantity, used]
+      properties:
+        id: {type: string}
+        orderId: {type: string}
+        number: {type: string, nullable: true}
+        typeCode: {type: string, nullable: true}
+        fullEmpty: {type: string}
+        quantity: {type: integer}
+        used: {type: integer}
+    OrderDetail:
+      allOf:
+        - $ref: "#/components/schemas/Order"
+        - type: object
+          required: [items]
+          properties: {items: {type: array, items: {$ref: "#/components/schemas/OrderItem"}}}
+    OrderCreate:
+      type: object
+      required: [kind, reference, items]
+      properties:
+        kind: {$ref: "#/components/schemas/OrderKind"}
+        reference: {type: string}
+        lineId: {type: string}
+        customerId: {type: string}
+        validUntil: {type: string, format: date}
+        note: {type: string}
+        items:
+          type: array
+          items:
+            type: object
+            description: A container number (quantity 1) or an ISO type with a quantity.
+            properties:
+              number: {type: string}
+              typeCode: {type: string}
+              fullEmpty: {type: string, description: "E or F; empty means E"}
+              quantity: {type: integer, description: default 1}
+    VisitStatus: {type: string, enum: [in_yard, out]}
+    Visit:
+      type: object
+      required: [id, depotId, number, typeCode, lineId, customerId, status, fullEmpty, grade, block, rowNo, tier, inMoveId, outMoveId, inAt, outAt, imported, closeReason]
+      properties:
+        id: {type: string}
+        depotId: {type: string}
+        number: {type: string}
+        typeCode: {type: string}
+        lineId: {type: string, nullable: true}
+        customerId: {type: string, nullable: true}
+        status: {$ref: "#/components/schemas/VisitStatus"}
+        fullEmpty: {type: string}
+        grade: {type: string}
+        block: {type: string}
+        rowNo: {type: string}
+        tier: {type: string}
+        inMoveId: {type: string, nullable: true}
+        outMoveId: {type: string, nullable: true}
+        inAt: {type: string, format: date-time}
+        outAt: {type: string, format: date-time, nullable: true}
+        imported: {type: boolean}
+        closeReason: {type: string}
+    VisitListItem:
+      allOf:
+        - $ref: "#/components/schemas/Visit"
+        - type: object
+          required: [onHold]
+          properties: {onHold: {type: boolean}}
+    VisitList:
+      type: object
+      required: [items, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/VisitListItem"}}
+        total: {type: integer}
+    VisitDetail:
+      allOf:
+        - $ref: "#/components/schemas/Visit"
+        - type: object
+          required: [holds]
+          properties: {holds: {type: array, items: {$ref: "#/components/schemas/Hold"}}}
+    Hold:
+      type: object
+      required: [id, visitId, reason, placedBy, placedAt, releasedBy, releasedAt]
+      properties:
+        id: {type: string}
+        visitId: {type: string}
+        reason: {type: string}
+        placedBy: {type: string}
+        placedAt: {type: string, format: date-time}
+        releasedBy: {type: string}
+        releasedAt: {type: string, format: date-time, nullable: true}
+    BlockKind: {type: string, enum: [container, line]}
+    Block:
+      type: object
+      required: [id, kind, value, reason, active, createdBy, createdAt]
+      properties:
+        id: {type: string}
+        kind: {$ref: "#/components/schemas/BlockKind"}
+        value: {type: string}
+        reason: {type: string}
+        active: {type: boolean}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+    Approval:
+      type: object
+      required: [id, moveId, reasons, requestedBy, requestedAt, status, decidedBy, decidedAt]
+      properties:
+        id: {type: string}
+        moveId: {type: string}
+        reasons: {type: array, items: {$ref: "#/components/schemas/Reason"}}
+        requestedBy: {type: string}
+        requestedAt: {type: string, format: date-time}
+        status: {type: string, description: "pending, approved or denied"}
+        decidedBy: {type: string}
+        decidedAt: {type: string, format: date-time, nullable: true}
+    GateFlag:
+      type: object
+      required: [id, moveId, code, detail, resolvedBy, resolvedAt]
+      properties:
+        id: {type: string}
+        moveId: {type: string}
+        code: {type: string}
+        detail: {type: string}
+        resolvedBy: {type: string}
+        resolvedAt: {type: string, format: date-time, nullable: true}
+    YardSettings:
+      type: object
+      required: [refusalMode, walkinsAllowed, eirTtlDays]
+      properties:
+        refusalMode: {type: string, description: "clerk_override, manager_approval or none"}
+        walkinsAllowed: {type: boolean}
+        eirTtlDays: {type: integer, description: at least 1}
+    LinePrefix:
+      type: object
+      required: [prefix, lineId]
+      properties: {prefix: {type: string}, lineId: {type: string}}
+    GateSnapshot:
+      type: object
+      required: [at, orders, blocks, holds, inYard, linePrefixes, settings]
+      properties:
+        at: {type: string, format: date-time}
+        orders: {type: array, description: the depot's open orders, items: {$ref: "#/components/schemas/OrderDetail"}}
+        blocks: {type: array, description: the company's active block list, items: {$ref: "#/components/schemas/Block"}}
+        holds: {type: array, description: open holds on the depot's visits, items: {$ref: "#/components/schemas/Hold"}}
+        inYard: {type: array, items: {$ref: "#/components/schemas/Visit"}}
+        linePrefixes: {type: array, items: {$ref: "#/components/schemas/LinePrefix"}}
+        settings: {$ref: "#/components/schemas/YardSettings"}

@@ -80,6 +80,48 @@ func (q *Queries) CloseVisit(ctx context.Context, arg CloseVisitParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const countVisits = `-- name: CountVisits :one
+SELECT count(*) FROM visits v
+WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
+  AND ($3::text = '' OR v.status = $3)
+  AND ($4::text = '' OR v.line_id = $4)
+  AND ($5::text = '' OR v.customer_id = $5)
+  AND starts_with(v.type_code, $6::text)
+  AND ($7::text = '' OR v.grade = $7)
+  AND (NOT $8::boolean OR EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
+  AND ($9::timestamptz IS NULL OR v.in_at <= $9)
+`
+
+type CountVisitsParams struct {
+	CompanyID  string
+	DepotID    string
+	Status     string
+	LineID     string
+	CustomerID string
+	TypeCode   string
+	Grade      string
+	OnHoldOnly bool
+	InBefore   *time.Time
+}
+
+func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countVisits,
+		arg.CompanyID,
+		arg.DepotID,
+		arg.Status,
+		arg.LineID,
+		arg.CustomerID,
+		arg.TypeCode,
+		arg.Grade,
+		arg.OnHoldOnly,
+		arg.InBefore,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const decideApproval = `-- name: DecideApproval :execrows
 UPDATE approvals a SET status = $1, decided_by = $2, decided_at = $3
 WHERE a.company_id = $4 AND a.id = $5 AND a.status = 'pending'
@@ -213,6 +255,115 @@ func (q *Queries) EIRLookup(ctx context.Context, tokenHash string) (EIRLookupRow
 	var i EIRLookupRow
 	err := row.Scan(&i.CompanyID, &i.MoveID)
 	return i, err
+}
+
+const findVisits = `-- name: FindVisits :many
+SELECT v.company_id, v.id, v.depot_id, v.number, v.type_code, v.line_id, v.customer_id, v.status, v.full_empty, v.grade, v.block, v.row_no, v.tier, v.in_move_id, v.out_move_id, v.in_at, v.out_at, v.imported, v.close_reason, EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold
+FROM visits v
+WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
+  AND ($3::text = '' OR v.status = $3)
+  AND ($4::text = '' OR v.line_id = $4)
+  AND ($5::text = '' OR v.customer_id = $5)
+  AND starts_with(v.type_code, $6::text)
+  AND ($7::text = '' OR v.grade = $7)
+  AND (NOT $8::boolean OR EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
+  AND ($9::timestamptz IS NULL OR v.in_at <= $9)
+ORDER BY v.id DESC
+LIMIT $11::int OFFSET $10::int
+`
+
+type FindVisitsParams struct {
+	CompanyID  string
+	DepotID    string
+	Status     string
+	LineID     string
+	CustomerID string
+	TypeCode   string
+	Grade      string
+	OnHoldOnly bool
+	InBefore   *time.Time
+	Off        int64
+	Lim        int64
+}
+
+type FindVisitsRow struct {
+	CompanyID   string
+	ID          string
+	DepotID     string
+	Number      string
+	TypeCode    string
+	LineID      *string
+	CustomerID  *string
+	Status      string
+	FullEmpty   string
+	Grade       string
+	Block       string
+	RowNo       string
+	Tier        string
+	InMoveID    *string
+	OutMoveID   *string
+	InAt        time.Time
+	OutAt       *time.Time
+	Imported    bool
+	CloseReason string
+	OnHold      bool
+}
+
+// FindVisits is the office's yard list: filters as CountVisits (keep the two
+// WHERE clauses equal), a page, and whether each visit has an open hold.
+func (q *Queries) FindVisits(ctx context.Context, arg FindVisitsParams) ([]FindVisitsRow, error) {
+	rows, err := q.db.Query(ctx, findVisits,
+		arg.CompanyID,
+		arg.DepotID,
+		arg.Status,
+		arg.LineID,
+		arg.CustomerID,
+		arg.TypeCode,
+		arg.Grade,
+		arg.OnHoldOnly,
+		arg.InBefore,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindVisitsRow
+	for rows.Next() {
+		var i FindVisitsRow
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.ID,
+			&i.DepotID,
+			&i.Number,
+			&i.TypeCode,
+			&i.LineID,
+			&i.CustomerID,
+			&i.Status,
+			&i.FullEmpty,
+			&i.Grade,
+			&i.Block,
+			&i.RowNo,
+			&i.Tier,
+			&i.InMoveID,
+			&i.OutMoveID,
+			&i.InAt,
+			&i.OutAt,
+			&i.Imported,
+			&i.CloseReason,
+			&i.OnHold,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const formRefs = `-- name: FormRefs :one
@@ -1044,6 +1195,7 @@ const listOrders = `-- name: ListOrders :many
 SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at FROM release_orders
 WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2)
   AND ($3::text = '' OR kind = $3) AND ($4::text = '' OR status = $4)
+  AND strpos(lower(reference), lower($5::text)) > 0
 ORDER BY id DESC
 `
 
@@ -1052,6 +1204,7 @@ type ListOrdersParams struct {
 	DepotID   string
 	Kind      string
 	Status    string
+	Q         string
 }
 
 func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]ReleaseOrder, error) {
@@ -1060,6 +1213,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Relea
 		arg.DepotID,
 		arg.Kind,
 		arg.Status,
+		arg.Q,
 	)
 	if err != nil {
 		return nil, err

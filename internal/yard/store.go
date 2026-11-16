@@ -138,10 +138,11 @@ func (s *Store) GetOrder(ctx context.Context, id string) (o Order, items []Order
 	return o, items, err
 }
 
-// ListOrders returns orders newest first; an empty kind or status matches all.
-func (s *Store) ListOrders(ctx context.Context, kind, status string) (out []Order, err error) {
-	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
-		out, err = q.ListOrders(ctx, sqlcdb.ListOrdersParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Kind: kind, Status: status})
+// ListOrders returns orders newest first; an empty kind or status matches
+// all, and q matches anywhere in the reference, in any case.
+func (s *Store) ListOrders(ctx context.Context, kind, status, q string) (out []Order, err error) {
+	err = s.run(ctx, func(qs *sqlcdb.Queries, sc tenancy.Scope) error {
+		out, err = qs.ListOrders(ctx, sqlcdb.ListOrdersParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Kind: kind, Status: status, Q: q})
 		return err
 	})
 	return out, err
@@ -207,6 +208,38 @@ func (s *Store) ListVisits(ctx context.Context, status string) (out []Visit, err
 		return err
 	})
 	return out, err
+}
+
+// VisitFilter narrows the yard list. Zero values match all; TypeCode
+// matches as a prefix ("45" is every 45 type) and MinDays is days in the yard.
+type VisitFilter struct {
+	Status, LineID, CustomerID, TypeCode, Grade string
+	OnHold                                      bool
+	MinDays                                     int
+}
+
+// VisitRow is a visit in the yard list, with whether it has an open hold.
+type VisitRow = sqlcdb.FindVisitsRow
+
+// FindVisits returns one page of the filtered visits, newest first, and the
+// number of all that match.
+func (s *Store) FindVisits(ctx context.Context, f VisitFilter, limit, offset int) (out []VisitRow, total int64, err error) {
+	var before *time.Time
+	if f.MinDays > 0 {
+		before = ptrTo(s.now().AddDate(0, 0, -f.MinDays))
+	}
+	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
+		p := sqlcdb.CountVisitsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Status: f.Status, LineID: f.LineID,
+			CustomerID: f.CustomerID, TypeCode: iso6346.Normalize(f.TypeCode), Grade: f.Grade, OnHoldOnly: f.OnHold, InBefore: before}
+		if total, err = q.CountVisits(ctx, p); err != nil {
+			return err
+		}
+		out, err = q.FindVisits(ctx, sqlcdb.FindVisitsParams{CompanyID: p.CompanyID, DepotID: p.DepotID, Status: p.Status,
+			LineID: p.LineID, CustomerID: p.CustomerID, TypeCode: p.TypeCode, Grade: p.Grade, OnHoldOnly: p.OnHoldOnly,
+			InBefore: p.InBefore, Lim: int64(limit), Off: int64(offset)})
+		return err
+	})
+	return out, total, err
 }
 
 // CloseVisit marks an open visit out; a closed one is ErrNotFound. outMoveID is nil when no gate move closed it.

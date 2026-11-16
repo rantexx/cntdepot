@@ -55,6 +55,20 @@ var operationAccess = map[string]auth.Perm{
 	"SetModules": auth.PermOwner, "CreateDepot": auth.PermOwner,
 	"ListMembers": auth.PermOwner, "UpdateMember": auth.PermOwner, "RemoveMember": auth.PermOwner,
 	"ListInvitations": auth.PermOwner, "CreateInvitation": auth.PermOwner, "DeleteInvitation": auth.PermOwner,
+
+	// The gate and the yard.
+	"SaveGateForm": auth.PermGate, "CreateEirLink": auth.PermGate, "GateSnapshot": auth.PermGate,
+	"GetOrder": auth.PermGate, "GetVisit": auth.PermGate,
+
+	"ListOrders": auth.PermOffice, "CreateOrder": auth.PermOffice, "CancelOrder": auth.PermOffice,
+	"ListVisits": auth.PermOffice, "SetVisitPosition": auth.PermOffice, "SetVisitGrade": auth.PermOffice,
+	"PlaceHold": auth.PermOffice, "ReleaseHold": auth.PermOffice,
+	"ListBlocks": auth.PermOffice, "CreateBlock": auth.PermOffice, "SetBlockActive": auth.PermOffice,
+	"ListGateFlags": auth.PermOffice, "ResolveGateFlag": auth.PermOffice,
+	"CorrectMove": auth.PermOffice, "VoidMove": auth.PermOffice,
+
+	"ListApprovals": auth.PermManage, "DecideApproval": auth.PermManage, "GetYardSettings": auth.PermManage,
+	"SetYardSettings": auth.PermOwner,
 }
 
 type requestKey struct{}

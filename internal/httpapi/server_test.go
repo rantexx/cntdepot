@@ -45,6 +45,7 @@ type env struct {
 	sessions *auth.Sessions
 	store    *store.Store
 	blobs    *blob.Store
+	broker   *Broker
 	owner    string // database owner URL
 }
 
@@ -71,7 +72,7 @@ func newEnv(t *testing.T, edit func(*Options, *gate.Service)) *env {
 	if err := svc.Start(runCtx); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{pool: pool, sessions: auth.NewSessions(pool, 0), store: st, blobs: bl, owner: owner}
+	e := &env{pool: pool, sessions: auth.NewSessions(pool, 0), store: st, blobs: bl, broker: broker, owner: owner}
 	opts := Options{
 		Service: svc, Store: st, Blobs: bl, Version: "test",
 		Static:   fstest.MapFS{"index.html": {Data: []byte("<html><div id=root></div></html>")}},

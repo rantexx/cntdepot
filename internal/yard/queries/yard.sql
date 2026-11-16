@@ -20,6 +20,7 @@ SELECT * FROM order_items WHERE company_id = @company_id AND order_id = @order_i
 SELECT * FROM release_orders
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id)
   AND (@kind::text = '' OR kind = @kind) AND (@status::text = '' OR status = @status)
+  AND strpos(lower(reference), lower(@q::text)) > 0
 ORDER BY id DESC;
 
 -- name: SetOrderStatus :execrows
@@ -52,6 +53,36 @@ SELECT * FROM visits
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id)
   AND (@status::text = '' OR status = @status)
 ORDER BY id DESC;
+
+-- FindVisits is the office's yard list: filters as CountVisits (keep the two
+-- WHERE clauses equal), a page, and whether each visit has an open hold.
+-- name: FindVisits :many
+SELECT v.*, EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold
+FROM visits v
+WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
+  AND (@status::text = '' OR v.status = @status)
+  AND (@line_id::text = '' OR v.line_id = @line_id)
+  AND (@customer_id::text = '' OR v.customer_id = @customer_id)
+  AND starts_with(v.type_code, @type_code::text)
+  AND (@grade::text = '' OR v.grade = @grade)
+  AND (NOT @on_hold_only::boolean OR EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
+  AND (sqlc.narg(in_before)::timestamptz IS NULL OR v.in_at <= sqlc.narg(in_before))
+ORDER BY v.id DESC
+LIMIT @lim::int OFFSET @off::int;
+
+-- name: CountVisits :one
+SELECT count(*) FROM visits v
+WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
+  AND (@status::text = '' OR v.status = @status)
+  AND (@line_id::text = '' OR v.line_id = @line_id)
+  AND (@customer_id::text = '' OR v.customer_id = @customer_id)
+  AND starts_with(v.type_code, @type_code::text)
+  AND (@grade::text = '' OR v.grade = @grade)
+  AND (NOT @on_hold_only::boolean OR EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
+  AND (sqlc.narg(in_before)::timestamptz IS NULL OR v.in_at <= sqlc.narg(in_before));
 
 -- Only an open visit closes: a replay must not overwrite a closed one.
 -- name: CloseVisit :execrows

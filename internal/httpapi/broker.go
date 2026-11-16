@@ -5,21 +5,34 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"depot/internal/auth"
 )
 
-// Broker fans move-change notices out to the open screens of the move's company.
-type Broker struct {
-	mu   sync.Mutex
-	subs map[chan string]string // subscriber -> its company
+// notice is one live update: a changed "move" or "approval" and its id.
+type notice struct{ kind, id string }
+
+// subscriber is an open screen: its company and whether its role may manage.
+type subscriber struct {
+	company string
+	manager bool
 }
 
-func NewBroker() *Broker { return &Broker{subs: map[chan string]string{}} }
+// Broker fans change notices out to the open screens of the company: moves
+// to all of them, approvals to managers only.
+type Broker struct {
+	mu   sync.Mutex
+	subs map[chan notice]subscriber
+}
 
-// Subscribe returns a channel of the company's changed move IDs and a function to stop.
-func (b *Broker) Subscribe(companyID string) (<-chan string, func()) {
-	ch := make(chan string, 16)
+func NewBroker() *Broker { return &Broker{subs: map[chan notice]subscriber{}} }
+
+// Subscribe returns a channel of the company's notices and a function to stop.
+// manager says whether approval notices are sent too.
+func (b *Broker) Subscribe(companyID string, manager bool) (<-chan notice, func()) {
+	ch := make(chan notice, 16)
 	b.mu.Lock()
-	b.subs[ch] = companyID
+	b.subs[ch] = subscriber{companyID, manager}
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
@@ -29,17 +42,21 @@ func (b *Broker) Subscribe(companyID string) (<-chan string, func()) {
 }
 
 // Publish announces that a move of a company changed, to that company's
-// screens only. It never blocks: a slow screen misses the notice and catches
-// up on the next one.
-func (b *Broker) Publish(companyID, moveID string) {
+// screens only.
+func (b *Broker) Publish(companyID, moveID string) { b.Notify(companyID, "move", moveID) }
+
+// Notify announces a changed "move" (to the company's screens) or "approval"
+// (to the company's managers). It never blocks: a slow screen misses the
+// notice and catches up on the next one.
+func (b *Broker) Notify(companyID, kind, id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch, company := range b.subs {
-		if company != companyID {
+	for ch, sub := range b.subs {
+		if sub.company != companyID || (kind == "approval" && !sub.manager) {
 			continue
 		}
 		select {
-		case ch <- moveID:
+		case ch <- notice{kind, id}:
 		default:
 		}
 	}
@@ -55,7 +72,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	ch, stop := s.broker.Subscribe(scopeOf(r.Context()).CompanyID)
+	sc := scopeOf(r.Context())
+	ch, stop := s.broker.Subscribe(sc.CompanyID, auth.Can(sc.Role, auth.PermManage))
 	defer stop()
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
@@ -66,8 +84,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case id := <-ch:
-			fmt.Fprintf(w, "event: move\ndata: {\"id\":%q}\n\n", id)
+		case n := <-ch:
+			fmt.Fprintf(w, "event: %s\ndata: {\"id\":%q}\n\n", n.kind, n.id)
 			flusher.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")

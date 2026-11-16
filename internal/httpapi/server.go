@@ -38,7 +38,7 @@ type Options struct {
 	Sessions *auth.Sessions
 	Provider auth.Provider
 	Pool     *pgxpool.Pool
-	Yard     *yard.Service // nil: no public EIR page
+	Yard     *yard.Service // nil: no public EIR page, and the gate and yard operations must not be called
 	Hub      bool          // the on-site box: camera routes are mounted only here
 	// PublicHosts are the domain names the cloud server is reached by (for
 	// example app.example.com); the API also answers to them.
@@ -292,6 +292,9 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "E4090", err.Error())
 	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto):
 		writeError(w, http.StatusBadRequest, "E4000", err.Error())
+	case yardError(err) != nil:
+		ae = yardError(err)
+		writeError(w, ae.status, ae.code, ae.message)
 	default:
 		log.Printf("httpapi: %v", err)
 		writeError(w, http.StatusInternalServerError, "E9000", "internal error; see the hub log")

@@ -144,7 +144,7 @@ func TestYardTablesRespectCompany(t *testing.T) {
 	if _, _, err := s.GetOrder(b, orderID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetOrder = %v", err)
 	}
-	if got, err := s.ListOrders(b, "", ""); err != nil || len(got) != 0 {
+	if got, err := s.ListOrders(b, "", "", ""); err != nil || len(got) != 0 {
 		t.Errorf("ListOrders = %v, %v", got, err)
 	}
 	if _, err := s.GetVisit(b, visitID); !errors.Is(err, ErrNotFound) {
@@ -328,7 +328,7 @@ func TestOrderItemShape(t *testing.T) {
 			t.Errorf("%s: %v, want check violation", name, err)
 		}
 	}
-	if got, _ := s.ListOrders(ctxA, "", ""); len(got) != 0 {
+	if got, _ := s.ListOrders(ctxA, "", "", ""); len(got) != 0 {
 		t.Fatalf("a rejected order was half-stored: %v", got)
 	}
 	id, err := s.CreateOrder(ctxA, Order{Kind: "release", Reference: "R"}, []OrderItem{{TypeCode: ptr("45G1"), Quantity: 1}}, "u1")

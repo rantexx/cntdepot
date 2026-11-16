@@ -34,14 +34,20 @@ var (
 	errNoSuchRow     = fail(http.StatusNotFound, "E4043", "no such record")
 )
 
-// listRows returns a page of rows whose code or name contains q, by code,
-// with the total number of matches. Inactive rows are included.
-func listRows[T any](ctx context.Context, s *Server, table string, q *string, page, perPage *int) ([]T, int, error) {
+// pageOf is a list page's limit and offset: pages count from 1, 50 rows by default, at most 200.
+func pageOf(page, perPage *int) (limit, offset int) {
 	n, size := max(val(page), 1), val(perPage)
 	if size < 1 {
 		size = 50
 	}
 	size = min(size, 200)
+	return size, (n - 1) * size
+}
+
+// listRows returns a page of rows whose code or name contains q, by code,
+// with the total number of matches. Inactive rows are included.
+func listRows[T any](ctx context.Context, s *Server, table string, q *string, page, perPage *int) ([]T, int, error) {
+	size, offset := pageOf(page, perPage)
 	where := " WHERE code ILIKE $1 OR name ILIKE $1"
 	var items []T
 	var total int
@@ -50,7 +56,7 @@ func listRows[T any](ctx context.Context, s *Server, table string, q *string, pa
 			return err
 		}
 		rows, err := tx.Query(ctx, "SELECT "+listCols+" FROM "+table+where+" ORDER BY code, id LIMIT $2 OFFSET $3",
-			likePattern(q), size, (n-1)*size)
+			likePattern(q), size, offset)
 		if err != nil {
 			return err
 		}
