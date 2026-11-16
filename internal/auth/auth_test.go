@@ -356,3 +356,19 @@ func TestDevProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestSignInClearsExpiredSessions(t *testing.T) {
+	s, pool := setup(t)
+	login(t, s, verified("x|old", "old@x.com"))
+	exec(t, pool, "", `UPDATE sessions SET expires_at = now() - interval '1 second'`)
+	login(t, s, verified("x|new", "new@x.com"))
+	var n int
+	if err := db.Global(bg, pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(bg, `SELECT count(*) FROM sessions`).Scan(&n)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("sessions after sign-in = %d; want only the new one", n)
+	}
+}

@@ -38,6 +38,9 @@ type Options struct {
 	Provider auth.Provider
 	Pool     *pgxpool.Pool
 	Hub      bool // the on-site box: camera routes are mounted only here
+	// PublicHosts are the domain names the cloud server is reached by (for
+	// example app.example.com); the API also answers to them.
+	PublicHosts []string
 }
 
 // Server is the HTTP front door.
@@ -134,7 +137,7 @@ func (s *Server) guardAPI(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !allowedHost(r.Host, s.machine) {
+		if !allowedHost(r.Host, s.machine) && !publicHost(r.Host, s.opts.PublicHosts) {
 			writeError(w, http.StatusForbidden, "E5005", "unknown host")
 			return
 		}
@@ -162,6 +165,22 @@ func checkScope(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// publicHost reports whether a Host header names one of the configured
+// public domain names (any case, with or without a port or trailing dot).
+func publicHost(hostHeader string, public []string) bool {
+	host := hostHeader
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, p := range public {
+		if p = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(p)), "."); p != "" && host == p {
+			return true
+		}
+	}
+	return false
 }
 
 // allowedHost reports whether a Host header names this computer: localhost,

@@ -1,0 +1,13 @@
+.git
+.github
+.superpowers
+.tools
+.impeccable
+bin
+depot-data
+demo-data
+dataset-export
+graphify-out
+web/node_modules
+internal/webui/dist
+*.exe

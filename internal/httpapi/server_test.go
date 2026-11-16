@@ -1068,3 +1068,22 @@ func TestStateCookieFollowsTheSecureSetting(t *testing.T) {
 	}
 	t.Fatalf("no state cookie in %v", resp.Header["Set-Cookie"])
 }
+
+func TestPublicHostsAreAllowed(t *testing.T) {
+	public := []string{"App.Example.com.", " "}
+	for host, want := range map[string]bool{
+		"app.example.com":      true,
+		"APP.example.com:443":  true,
+		"app.example.com.":     true,
+		"evil.example.com":     false,
+		"app.example.com.evil": false,
+		"":                     false,
+	} {
+		if got := publicHost(host, public); got != want {
+			t.Errorf("publicHost(%q) = %v; want %v", host, got, want)
+		}
+	}
+	if publicHost("app.example.com", nil) {
+		t.Error("no configured hosts must allow nothing")
+	}
+}

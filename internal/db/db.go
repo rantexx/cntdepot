@@ -54,14 +54,18 @@ func Migrate(ctx context.Context, ownerURL string, o MigrateOptions) error {
 			return err
 		}
 		// The role is cluster-wide: another database may create it at the same time.
+		// It is created with the defaults (no superuser, no BYPASSRLS, no CREATEROLE)
+		// and afterwards only its password is set: on a managed PostgreSQL the owner
+		// is usually not a superuser and may not name those attributes at all.
+		// Open refuses to serve as a role that has them.
 		if _, err := tx.Exec(ctx, `DO $$ BEGIN
-			CREATE ROLE depot_app;
+			CREATE ROLE depot_app LOGIN;
 		EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
 		END $$`); err != nil {
 			return fmt.Errorf("create role: %w", err)
 		}
 		var alter string
-		if err := tx.QueryRow(ctx, "SELECT format('ALTER ROLE depot_app WITH LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L', $1::text)", o.AppPassword).Scan(&alter); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT format('ALTER ROLE depot_app WITH PASSWORD %L', $1::text)", o.AppPassword).Scan(&alter); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, alter); err != nil {

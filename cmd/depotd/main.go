@@ -152,12 +152,13 @@ func runMigrate(args []string) error {
 	fs := newFlags("migrate")
 	owner := fs.String("db-owner", "", "owner database URL (env DATABASE_OWNER_URL)")
 	pw := fs.String("app-password", "", "password for the depot_app role (env DATABASE_APP_PASSWORD)")
-	admin := fs.String("platform-admin", "", "email to add as platform admin")
+	admin := fs.String("platform-admin", "", "email to add as platform admin (env PLATFORM_ADMIN_EMAIL)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	envFallback(owner, "DATABASE_OWNER_URL")
 	envFallback(pw, "DATABASE_APP_PASSWORD")
+	envFallback(admin, "PLATFORM_ADMIN_EMAIL")
 	if *owner == "" || *pw == "" {
 		return errors.New("migrate needs -db-owner (DATABASE_OWNER_URL) and -app-password (DATABASE_APP_PASSWORD)")
 	}
@@ -200,12 +201,14 @@ func runAPI(args []string) error {
 	blobs := fs.String("blobs", filepath.Join("depot-data", "blobs"), "folder for photos")
 	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
+	public := fs.String("public-host", "", "comma-separated domain names the API answers to, e.g. app.example.com (env PUBLIC_HOST)")
 	var eng engineFlags
 	eng.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	envFallback(dbURL, "DATABASE_URL")
+	envFallback(public, "PUBLIC_HOST")
 	// Anything but these two is refused: a typo must not leave dev login on.
 	if *env != "development" && *env != "production" {
 		return fmt.Errorf("-env must be development or production, not %q", *env)
@@ -242,7 +245,7 @@ func runAPI(args []string) error {
 	if !*devLogin {
 		return errors.New("no identity provider is configured yet: only dev login exists")
 	}
-	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider()}, nil)
+	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), PublicHosts: strings.Split(*public, ",")}, nil)
 }
 
 // apiAddr is the api's listen address: loopback while dev login (which signs
