@@ -12,7 +12,7 @@ import (
 )
 
 const getMove = `-- name: GetMove :one
-SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at FROM gate_moves WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) AND id = $3
+SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at, visit_id, order_id, order_item_id, truck_plate, trailer_plate, driver_name, haulier_id, seal, full_empty, condition, signature_photo_id, form_saved_at, voided, void_reason FROM gate_moves WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) AND id = $3
 `
 
 type GetMoveParams struct {
@@ -47,6 +47,20 @@ func (q *Queries) GetMove(ctx context.Context, arg GetMoveParams) (GateMove, err
 		&i.Source,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VisitID,
+		&i.OrderID,
+		&i.OrderItemID,
+		&i.TruckPlate,
+		&i.TrailerPlate,
+		&i.DriverName,
+		&i.HaulierID,
+		&i.Seal,
+		&i.FullEmpty,
+		&i.Condition,
+		&i.SignaturePhotoID,
+		&i.FormSavedAt,
+		&i.Voided,
+		&i.VoidReason,
 	)
 	return i, err
 }
@@ -84,7 +98,7 @@ func (q *Queries) InsertMove(ctx context.Context, arg InsertMoveParams) error {
 }
 
 const listMoves = `-- name: ListMoves :many
-SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at FROM gate_moves
+SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at, visit_id, order_id, order_item_id, truck_plate, trailer_plate, driver_name, haulier_id, seal, full_empty, condition, signature_photo_id, form_saved_at, voided, void_reason FROM gate_moves
 WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2)
   AND ($3::text = '' OR status = $3)
   AND ($4::text = '' OR source = $4)
@@ -141,6 +155,20 @@ func (q *Queries) ListMoves(ctx context.Context, arg ListMovesParams) ([]GateMov
 			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VisitID,
+			&i.OrderID,
+			&i.OrderItemID,
+			&i.TruckPlate,
+			&i.TrailerPlate,
+			&i.DriverName,
+			&i.HaulierID,
+			&i.Seal,
+			&i.FullEmpty,
+			&i.Condition,
+			&i.SignaturePhotoID,
+			&i.FormSavedAt,
+			&i.Voided,
+			&i.VoidReason,
 		); err != nil {
 			return nil, err
 		}
@@ -260,7 +288,7 @@ func (q *Queries) SetStatus(ctx context.Context, arg SetStatusParams) error {
 }
 
 const verifiedMoves = `-- name: VerifiedMoves :many
-SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at FROM gate_moves
+SELECT company_id, id, depot_id, lane, direction, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, source, created_at, updated_at, visit_id, order_id, order_item_id, truck_plate, trailer_plate, driver_name, haulier_id, seal, full_empty, condition, signature_photo_id, form_saved_at, voided, void_reason FROM gate_moves
 WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2)
   AND status = 'accepted' AND verified AND NOT is_test
 ORDER BY id
@@ -303,6 +331,20 @@ func (q *Queries) VerifiedMoves(ctx context.Context, arg VerifiedMovesParams) ([
 			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VisitID,
+			&i.OrderID,
+			&i.OrderItemID,
+			&i.TruckPlate,
+			&i.TrailerPlate,
+			&i.DriverName,
+			&i.HaulierID,
+			&i.Seal,
+			&i.FullEmpty,
+			&i.Condition,
+			&i.SignaturePhotoID,
+			&i.FormSavedAt,
+			&i.Voided,
+			&i.VoidReason,
 		); err != nil {
 			return nil, err
 		}

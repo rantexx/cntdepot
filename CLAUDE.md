@@ -15,7 +15,7 @@ Run `bash scripts/check.sh`. It must print `CHECK OK`. A Stop hook runs it too
 - Every tenant table has `company_id` and row-level security (RLS). No query bypasses it.
 - Company and user scope come from the session, never from request bodies, URLs or headers the client controls.
 - Generated code is never hand-edited. Change the source (SQL, schema, spec) and regenerate.
-- Store queries are SQL in `internal/store/queries`; `scripts/gen.sh` runs sqlc (pinned release binary from `scripts/tools.sh`, no cgo needed) into `internal/store/db`.
+- Store queries are SQL in `internal/store/queries` (and `internal/yard/queries`); `scripts/gen.sh` runs sqlc (pinned release binary from `scripts/tools.sh`, no cgo needed) into `internal/store/db` (and `internal/yard/db`).
 - The gate never stops: a failure in recognition, camera, database or network must not block a truck
   from entering or leaving. Degrade to manual entry and queue the work.
 - Dev login never exists in production builds or production config.

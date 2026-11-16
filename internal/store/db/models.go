@@ -11,12 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Approval struct {
+	CompanyID   string
+	ID          string
+	MoveID      string
+	Reasons     json.RawMessage
+	RequestedBy string
+	RequestedAt time.Time
+	Status      string
+	DecidedBy   string
+	DecidedAt   pgtype.Timestamptz
+}
+
+type BlockList struct {
+	CompanyID string
+	ID        string
+	Kind      string
+	Value     string
+	Reason    string
+	Active    bool
+	CreatedBy string
+	CreatedAt time.Time
+}
+
 type Company struct {
 	ID        string
 	Name      string
 	Country   string
 	Modules   []string
 	CreatedAt time.Time
+}
+
+type CompanySetting struct {
+	CompanyID      string
+	RefusalMode    string
+	WalkinsAllowed bool
+	EirTtlDays     int64
 }
 
 type Customer struct {
@@ -29,12 +59,30 @@ type Customer struct {
 	CreatedAt time.Time
 }
 
+type Damage struct {
+	CompanyID   string
+	ID          string
+	MoveID      string
+	Location    string
+	Description string
+	PhotoIds    []string
+}
+
 type Depot struct {
 	CompanyID string
 	ID        string
 	Name      string
 	Country   string
 	Timezone  string
+}
+
+type EirToken struct {
+	CompanyID string
+	ID        string
+	MoveID    string
+	TokenHash string
+	ExpiresAt time.Time
+	CreatedBy string
 }
 
 type Event struct {
@@ -48,29 +96,53 @@ type Event struct {
 	OccurredAt time.Time
 }
 
+type GateFlag struct {
+	CompanyID  string
+	ID         string
+	MoveID     string
+	Code       string
+	Detail     string
+	ResolvedBy string
+	ResolvedAt pgtype.Timestamptz
+}
+
 type GateMove struct {
-	CompanyID       string
-	ID              string
-	DepotID         string
-	Lane            string
-	Direction       string
-	Status          string
-	Number          string
-	TypeCode        string
-	Color           string
-	Confidence      float64
-	CheckDigitValid bool
-	Decision        string
-	Reason          string
-	ResultJson      json.RawMessage
-	Verified        bool
-	CorrectedFrom   string
-	ResolvedBy      string
-	Note            string
-	IsTest          bool
-	Source          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	CompanyID        string
+	ID               string
+	DepotID          string
+	Lane             string
+	Direction        string
+	Status           string
+	Number           string
+	TypeCode         string
+	Color            string
+	Confidence       float64
+	CheckDigitValid  bool
+	Decision         string
+	Reason           string
+	ResultJson       json.RawMessage
+	Verified         bool
+	CorrectedFrom    string
+	ResolvedBy       string
+	Note             string
+	IsTest           bool
+	Source           string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	VisitID          pgtype.Text
+	OrderID          pgtype.Text
+	OrderItemID      pgtype.Text
+	TruckPlate       string
+	TrailerPlate     string
+	DriverName       string
+	HaulierID        pgtype.Text
+	Seal             string
+	FullEmpty        string
+	Condition        string
+	SignaturePhotoID pgtype.Text
+	FormSavedAt      pgtype.Timestamptz
+	Voided           bool
+	VoidReason       string
 }
 
 type Haulier struct {
@@ -81,6 +153,17 @@ type Haulier struct {
 	Contact   string
 	Active    bool
 	CreatedAt time.Time
+}
+
+type Hold struct {
+	CompanyID  string
+	ID         string
+	VisitID    string
+	Reason     string
+	PlacedBy   string
+	PlacedAt   time.Time
+	ReleasedBy string
+	ReleasedAt pgtype.Timestamptz
 }
 
 type Invitation struct {
@@ -94,11 +177,28 @@ type Invitation struct {
 	UsedAt    pgtype.Timestamptz
 }
 
+type LinePrefix struct {
+	CompanyID string
+	Prefix    string
+	LineID    string
+}
+
 type Membership struct {
 	CompanyID string
 	UserID    string
 	Role      string
 	DepotIds  []string
+}
+
+type OrderItem struct {
+	CompanyID string
+	ID        string
+	OrderID   string
+	Number    pgtype.Text
+	TypeCode  pgtype.Text
+	FullEmpty string
+	Quantity  int64
+	Used      int64
 }
 
 type Photo struct {
@@ -158,6 +258,21 @@ type RefVersion struct {
 	Version string
 }
 
+type ReleaseOrder struct {
+	CompanyID  string
+	ID         string
+	DepotID    string
+	Kind       string
+	Reference  string
+	LineID     pgtype.Text
+	CustomerID pgtype.Text
+	ValidUntil pgtype.Date
+	Note       string
+	Status     string
+	CreatedBy  string
+	CreatedAt  time.Time
+}
+
 type Session struct {
 	IDHash    string
 	UserID    string
@@ -198,4 +313,26 @@ type User struct {
 	Name       string
 	IdpSubject pgtype.Text
 	CreatedAt  time.Time
+}
+
+type Visit struct {
+	CompanyID   string
+	ID          string
+	DepotID     string
+	Number      string
+	TypeCode    string
+	LineID      pgtype.Text
+	CustomerID  pgtype.Text
+	Status      string
+	FullEmpty   string
+	Grade       string
+	Block       string
+	RowNo       string
+	Tier        string
+	InMoveID    pgtype.Text
+	OutMoveID   pgtype.Text
+	InAt        time.Time
+	OutAt       pgtype.Timestamptz
+	Imported    bool
+	CloseReason string
 }
