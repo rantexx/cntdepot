@@ -1,6 +1,13 @@
 package main
 
 import (
+	"context"
+	"strings"
+
+	"depot/internal/auth"
+	"depot/internal/db"
+	"depot/internal/pgtest"
+	"depot/internal/tenancy"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,5 +32,48 @@ func TestLoadStills(t *testing.T) {
 	}
 	if _, err := loadStills(t.TempDir()); err == nil {
 		t.Fatal("a folder without photos should be an error")
+	}
+}
+
+func TestMain(m *testing.M) { os.Exit(pgtest.Main(m)) }
+
+func TestApiRefusesDevLoginInProduction(t *testing.T) {
+	err := run([]string{"api", "-env", "production", "-dev-login"})
+	if err == nil || !strings.Contains(err.Error(), "dev login") {
+		t.Fatalf("err = %v, want a refusal that mentions dev login", err)
+	}
+}
+
+func TestSeedHubIsRepeatableAndDevLoginFindsTheOwner(t *testing.T) {
+	ctx := context.Background()
+	owner := pgtest.NewDB(t)
+	if err := db.Migrate(ctx, owner, db.MigrateOptions{AppPassword: "pw"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := seedHub(ctx, owner, "Owner@Local"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pool, err := db.Open(ctx, db.AppURL(owner, "pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	s := auth.NewSessions(pool, 0)
+	id, err := auth.NewDevProvider().Exchange(ctx, "owner@local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, err := s.Login(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, err := s.Resolve(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cur.Memberships) != 1 || cur.Memberships[0].CompanyID != hubCompany || cur.Memberships[0].Role != tenancy.Owner {
+		t.Fatalf("memberships = %+v, want one owner of %s", cur.Memberships, hubCompany)
 	}
 }

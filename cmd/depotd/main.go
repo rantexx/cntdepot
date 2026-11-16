@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -14,19 +17,28 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"depot/internal/auth"
 	"depot/internal/bench"
 	"depot/internal/blob"
 	"depot/internal/camera"
 	"depot/internal/dataset"
+	"depot/internal/db"
 	"depot/internal/gate"
 	"depot/internal/gatecam"
 	"depot/internal/httpapi"
 	"depot/internal/live"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/tenancy"
 	"depot/internal/webui"
+
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/oklog/ulid/v2"
 )
 
 // Version is set at build time with -ldflags "-X main.Version=...".
@@ -36,28 +48,39 @@ var Version = "dev"
 var _ gatecam.Gate = (*gate.Service)(nil)
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
-	}
-	var err error
-	switch os.Args[1] {
-	case "version":
-		fmt.Println(Version)
-	case "hub":
-		err = runHub(os.Args[2:])
-	case "export-dataset":
-		err = runExport(os.Args[2:])
-	case "bench":
-		err = runBench(os.Args[2:])
-	default:
-		usage()
-		os.Exit(2)
-	}
-	if err != nil {
+	if err := run(os.Args[1:]); err != nil {
+		if errors.Is(err, errUsage) || errors.Is(err, flag.ErrHelp) {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+var errUsage = errors.New("usage")
+
+func run(args []string) error {
+	if len(args) < 1 {
+		usage()
+		return errUsage
+	}
+	switch args[0] {
+	case "version":
+		fmt.Println(Version)
+		return nil
+	case "migrate":
+		return runMigrate(args[1:])
+	case "api":
+		return runAPI(args[1:])
+	case "hub":
+		return runHub(args[1:])
+	case "export-dataset":
+		return runExport(args[1:])
+	case "bench":
+		return runBench(args[1:])
+	}
+	usage()
+	return errUsage
 }
 
 func usage() {
@@ -65,45 +88,25 @@ func usage() {
 
 commands:
   version          print the version
-  hub              run the gate hub (web app + API + reading) on this computer
+  migrate          create or update the database schema and the app role
+  api              run the web app + API against a PostgreSQL database
+  hub              run everything on this computer: own database, camera, web app
   export-dataset   write verified photos and labels for model training
   bench            re-read verified moves with an engine and report accuracy
 
 run "depotd <command> -h" for a command's flags`)
 }
 
-// dataFlags locate the hub's database and photos.
-type dataFlags struct{ dir, tenant, depot string }
-
-func (d *dataFlags) register(fs *flag.FlagSet) {
-	fs.StringVar(&d.dir, "data", "depot-data", "folder for the database and photos")
-	fs.StringVar(&d.tenant, "tenant", "local", "company id (stays local until the cloud exists)")
-	fs.StringVar(&d.depot, "depot", "own-depot", "depot id")
-}
-
-func (d *dataFlags) open() (*store.Store, *blob.Store, error) {
-	if err := os.MkdirAll(d.dir, 0o755); err != nil {
-		return nil, nil, err
-	}
-	st, err := store.Open(filepath.Join(d.dir, "depot.db"), d.tenant, d.depot)
-	if err != nil {
-		return nil, nil, err
-	}
-	bl, err := blob.Open(filepath.Join(d.dir, "blobs"))
-	if err != nil {
-		st.Close()
-		return nil, nil, err
-	}
-	return st, bl, nil
-}
+func newFlags(name string) *flag.FlagSet { return flag.NewFlagSet(name, flag.ContinueOnError) }
 
 // engineFlags choose and configure the reading engine.
-type engineFlags struct{ engine, model, thinking string }
+type engineFlags struct{ engine, model, thinking, fallbacks string }
 
 func (e *engineFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&e.engine, "engine", "gemini", "reading engine: gemini | fake")
 	fs.StringVar(&e.model, "model", envOr("DEPOT_GEMINI_MODEL", recognition.DefaultGeminiModel), "Gemini model id")
 	fs.StringVar(&e.thinking, "thinking", envOr("DEPOT_GEMINI_THINKING", "low"), "Gemini thinking level (empty: model default)")
+	fs.StringVar(&e.fallbacks, "fallback-models", "", "comma-separated Gemini models to try when the main one is overloaded (empty: default)")
 }
 
 func (e *engineFlags) build() (recognition.Recognizer, error) {
@@ -116,143 +119,369 @@ func (e *engineFlags) build() (recognition.Recognizer, error) {
 			return nil, errors.New("GEMINI_API_KEY is not set: set it in your own terminal " +
 				"(setx GEMINI_API_KEY ...), open a new terminal, or run with -engine fake")
 		}
+		var fb []string
+		for _, m := range strings.Split(e.fallbacks, ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				fb = append(fb, m)
+			}
+		}
 		return recognition.NewGemini(recognition.GeminiConfig{
-			APIKey: key, Model: e.model, ThinkingLevel: e.thinking, Retries: 2,
+			APIKey: key, Model: e.model, ThinkingLevel: e.thinking, Retries: 2, Fallbacks: fb,
 		}), nil
 	default:
 		return nil, fmt.Errorf("unknown engine %q (use gemini or fake)", e.engine)
 	}
 }
 
-func runHub(args []string) error {
-	fs := flag.NewFlagSet("hub", flag.ExitOnError)
-	var data dataFlags
-	data.register(fs)
-	var eng engineFlags
-	eng.register(fs)
+func runMigrate(args []string) error {
+	fs := newFlags("migrate")
+	owner := fs.String("db-owner", os.Getenv("DATABASE_OWNER_URL"), "owner database URL (env DATABASE_OWNER_URL)")
+	pw := fs.String("app-password", os.Getenv("DATABASE_APP_PASSWORD"), "password for the depot_app role (env DATABASE_APP_PASSWORD)")
+	admin := fs.String("platform-admin", "", "email to add as platform admin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *owner == "" || *pw == "" {
+		return errors.New("migrate needs -db-owner (DATABASE_OWNER_URL) and -app-password (DATABASE_APP_PASSWORD)")
+	}
+	if err := db.Migrate(context.Background(), *owner, db.MigrateOptions{AppPassword: *pw, PlatformAdminEmail: *admin}); err != nil {
+		return err
+	}
+	fmt.Println("migrated")
+	return nil
+}
+
+// app is what api and hub share: the database, the gate service and sessions.
+type app struct {
+	pool   *pgxpool.Pool
+	st     *store.Store
+	bl     *blob.Store
+	svc    *gate.Service
+	broker *httpapi.Broker
+	sess   *auth.Sessions
+}
+
+func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg gate.Config, secure bool) (*app, error) {
+	bl, err := blob.Open(blobs)
+	if err != nil {
+		return nil, err
+	}
+	st := store.New(pool)
+	broker := httpapi.NewBroker()
+	sess := auth.NewSessions(pool, 0)
+	sess.SetSecureCookies(secure)
+	return &app{pool: pool, st: st, bl: bl, broker: broker, sess: sess,
+		svc: gate.New(st, bl, rec, cfg, broker.Publish)}, nil
+}
+
+func runAPI(args []string) error {
+	fs := newFlags("api")
+	dbURL := fs.String("db", os.Getenv("DATABASE_URL"), "depot_app database URL (env DATABASE_URL)")
 	addr := fs.String("addr", ":8080", "listen address")
+	env := fs.String("env", "development", "development | production")
+	devLogin := fs.Bool("dev-login", true, "allow dev login (default: on in development; refused in production)")
+	blobs := fs.String("blobs", filepath.Join("depot-data", "blobs"), "folder for photos")
 	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
-	accessCode := fs.String("access-code", os.Getenv("DEPOT_ACCESS_CODE"), "code people must enter to use the app (empty: none)")
-	fakeCamera := fs.Bool("fake-camera", false, "use a simulated camera (try the Camera page without one)")
-	fakePhotos := fs.String("fake-camera-photos", "", "folder of JPEG photos the simulated camera serves in turn (implies -fake-camera)")
-	go2rtcPath := fs.String("go2rtc", defaultGo2rtc(), "go2rtc executable for live video")
-	_ = fs.Parse(args)
-	if *fakePhotos != "" {
-		*fakeCamera = true
+	var eng engineFlags
+	eng.register(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-
+	production := strings.EqualFold(strings.TrimSpace(*env), "production")
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if !set["dev-login"] {
+		*devLogin = !production
+	}
+	if err := auth.CheckDevLogin(*env, *devLogin); err != nil {
+		return err
+	}
+	if *dbURL == "" {
+		return errors.New("api needs -db (DATABASE_URL), the depot_app database URL")
+	}
 	rec, err := eng.build()
 	if err != nil {
 		return err
 	}
-	st, bl, err := data.open()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	pool, err := db.Open(ctx, *dbURL)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer pool.Close()
+	// Secure cookies are set (inside newApp) before anything is served.
+	a, err := newApp(pool, *blobs, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, production)
+	if err != nil {
+		return err
+	}
+	if !*devLogin {
+		return errors.New("no identity provider is configured yet: only dev login exists")
+	}
+	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider()}, nil)
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
+// serve starts the gate service and the HTTP server and blocks until ctx ends.
+// background funcs run alongside and must return when ctx ends.
+func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, background []func(context.Context)) error {
 	// Take the port before anything is read: a busy port must fail fast, not
 	// after photos left over from the last run were sent to the paid engine.
-	ln, err := net.Listen("tcp", *addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	defer ln.Close()
-
-	broker := httpapi.NewBroker()
-	svc := gate.New(st, bl, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, broker.Publish)
-
-	watcher := gatecam.New(svc, gatecam.DefaultConfig())
-	svc.SetReadHook(watcher.OnRead)
-	liveVideo := live.New(live.Config{Binary: *go2rtcPath, DataDir: data.dir})
-	cams := gatecam.NewManager(st, watcher, liveVideo, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) })
-	if *fakeCamera {
-		stills, err := loadStills(*fakePhotos)
-		if err != nil {
-			return err
-		}
-		cams.UseFixed(camera.NewDemoFake(stills...))
-	}
-	if err := cams.Load(ctx); err != nil {
+	if err := a.svc.Start(ctx); err != nil {
 		return err
 	}
-	if err := svc.Start(ctx); err != nil {
-		return err
+	var bg sync.WaitGroup
+	for _, f := range background {
+		bg.Add(1)
+		go func() { defer bg.Done(); f(ctx) }()
 	}
-	var background sync.WaitGroup
-	background.Add(2)
-	go func() { defer background.Done(); watcher.Run(ctx) }()
-	go func() { defer background.Done(); liveVideo.Run(ctx) }() // stops go2rtc on exit
-
 	static := webui.Dist()
 	if static == nil {
 		log.Print("web app not built yet: run `npm --prefix web run build`, then rebuild depotd")
 	}
+	o.Service, o.Store, o.Blobs, o.Static, o.Version, o.Sessions, o.Pool = a.svc, a.st, a.bl, static, Version, a.sess, a.pool
 	server := &http.Server{
-		Addr: *addr,
-		Handler: httpapi.New(httpapi.Options{
-			Service: svc, Store: st, Blobs: bl, Static: static, AccessCode: *accessCode, Version: Version,
-			Camera: cams, Live: liveVideo,
-		}, broker).Handler(),
+		Addr:              addr,
+		Handler:           httpapi.New(o, a.broker).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Requests inherit ctx, so live-update streams end on Ctrl+C.
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-
 	errc := make(chan error, 1)
 	go func() { errc <- server.Serve(ln) }()
-	name, model := svc.Engine()
-	log.Printf("depotd %s · engine %s (%s) · data %s · auto-accept %v", Version, name, model, data.dir, *autoAccept)
-	switch s := cams.Settings(); {
-	case *fakeCamera:
-		if *fakePhotos != "" {
-			log.Printf("camera: simulated, serving the photos in %s", *fakePhotos)
-		} else {
-			log.Print("camera: simulated (-fake-camera)")
-		}
-	case s.Configured():
-		log.Printf("camera: %s (automatic photos %v)", s.Host, s.Auto)
-	default:
-		log.Print("camera: not set up; open the Camera page")
-	}
-	for _, u := range lanURLs(*addr) {
+	name, model := a.svc.Engine()
+	log.Printf("depotd %s · engine %s (%s)", Version, name, model)
+	for _, u := range lanURLs(addr) {
 		log.Printf("open: %s", u)
 	}
-
+	var serveErr error
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			serveErr = err
 		}
 	}
 	log.Print("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
-	background.Wait()
-	cams.Close() // log out of the camera: it allows only a few sessions
-	svc.Wait()
-	return nil
+	bg.Wait()
+	a.svc.Wait()
+	return serveErr
 }
 
-func runExport(args []string) error {
-	fs := flag.NewFlagSet("export-dataset", flag.ExitOnError)
-	var data dataFlags
-	data.register(fs)
-	out := fs.String("out", "dataset-export", "folder to write the dataset into")
-	_ = fs.Parse(args)
+// The hub's one company and depot, and the password of its private database
+// (which listens on 127.0.0.1 only).
+const (
+	hubCompany = "local"
+	hubDepot   = "own-depot"
+	hubPGPass  = "depot-hub"
+)
 
-	st, bl, err := data.open()
+func runHub(args []string) error {
+	fs := newFlags("hub")
+	dir := fs.String("data", "depot-data", "folder for the database and photos")
+	devEmail := fs.String("dev-email", "owner@local", "email of the owner that dev login signs in")
+	var eng engineFlags
+	eng.register(fs)
+	addr := fs.String("addr", ":8080", "listen address")
+	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
+	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
+	fakeCamera := fs.Bool("fake-camera", false, "use a simulated camera (try the Camera page without one)")
+	fakePhotos := fs.String("fake-camera-photos", "", "folder of JPEG photos the simulated camera serves in turn (implies -fake-camera)")
+	go2rtcPath := fs.String("go2rtc", defaultGo2rtc(), "go2rtc executable for live video")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *fakePhotos != "" {
+		*fakeCamera = true
+	}
+	rec, err := eng.build()
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	sum, err := dataset.Export(context.Background(), st, bl, *out)
+	var stills [][]byte
+	if *fakeCamera {
+		if stills, err = loadStills(*fakePhotos); err != nil {
+			return err
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ownerURL, stopPG, err := startPostgres(*dir)
+	if err != nil {
+		return err
+	}
+	defer stopPG()
+	appPW, err := randomHex(16)
+	if err != nil {
+		return err
+	}
+	if err := db.Migrate(ctx, ownerURL, db.MigrateOptions{AppPassword: appPW}); err != nil {
+		return err
+	}
+	if err := seedHub(ctx, ownerURL, *devEmail); err != nil {
+		return err
+	}
+	pool, err := db.Open(ctx, db.AppURL(ownerURL, appPW))
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	a, err := newApp(pool, filepath.Join(*dir, "blobs"), rec,
+		gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, false)
+	if err != nil {
+		return err
+	}
+
+	watcher := gatecam.New(a.svc, gatecam.DefaultConfig())
+	a.svc.SetReadHook(watcher.OnRead)
+	liveVideo := live.New(live.Config{Binary: *go2rtcPath, DataDir: *dir})
+	cams := gatecam.NewManager(a.st, watcher, liveVideo, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) },
+		tenancy.Scope{CompanyID: hubCompany, DepotID: hubDepot})
+	if *fakeCamera {
+		cams.UseFixed(camera.NewDemoFake(stills...))
+	}
+	if err := cams.Load(ctx); err != nil {
+		return err
+	}
+	switch s := cams.Settings(); {
+	case *fakeCamera && *fakePhotos != "":
+		log.Printf("camera: simulated, serving the photos in %s", *fakePhotos)
+	case *fakeCamera:
+		log.Print("camera: simulated (-fake-camera)")
+	case s.Configured():
+		log.Printf("camera: %s (automatic photos %v)", s.Host, s.Auto)
+	default:
+		log.Print("camera: not set up; open the Camera page")
+	}
+	log.Printf("dev login signs in %s · data %s", *devEmail, *dir)
+	err = a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), Camera: cams, Live: liveVideo, Hub: true},
+		[]func(context.Context){
+			// The watcher takes its company and depot from ctx.
+			func(c context.Context) { watcher.Run(tenancy.With(c, cams.Scope())) },
+			liveVideo.Run, // stops go2rtc on exit
+		})
+	cams.Close() // log out of the camera: it allows only a few sessions
+	return err
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// startPostgres runs the hub's own PostgreSQL with its data in <dir>/pg and
+// returns the owner URL and a stop function.
+func startPostgres(dir string) (string, func(), error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", nil, err
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
+		Version(embeddedpostgres.V17).
+		Port(uint32(port)).
+		Username("postgres").Password(hubPGPass).
+		CachePath(filepath.Join(cache, "depot", "embedded-postgres")).
+		RuntimePath(filepath.Join(dir, "pg-run")).
+		DataPath(filepath.Join(dir, "pg")).
+		Logger(io.Discard).
+		StartTimeout(2 * time.Minute))
+	if err := pg.Start(); err != nil {
+		return "", nil, fmt.Errorf("start database: %w", err)
+	}
+	return fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/postgres", hubPGPass, port), func() { _ = pg.Stop() }, nil
+}
+
+// seedHub makes sure the hub's company, depot and owner exist. It runs as the
+// database owner and is safe to repeat. The user row carries the dev login's
+// subject, so the first dev login finds it and its membership.
+func seedHub(ctx context.Context, ownerURL, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	conn, err := pgx.Connect(ctx, ownerURL)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{"INSERT INTO companies (id, name, modules) VALUES ($1, 'Local depot', '{ocr}') ON CONFLICT DO NOTHING", []any{hubCompany}},
+			{"INSERT INTO depots (company_id, id, name) VALUES ($1, $2, 'Own depot') ON CONFLICT DO NOTHING", []any{hubCompany, hubDepot}},
+			{"INSERT INTO users (id, email, idp_subject) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", []any{ulid.Make().String(), email, "dev|" + email}},
+			{"INSERT INTO memberships (company_id, user_id, role) SELECT $1, id, 'owner' FROM users WHERE email = $2 ON CONFLICT DO NOTHING", []any{hubCompany, email}},
+		} {
+			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
+				return fmt.Errorf("seed: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// scopeFlags open the database and pick the company that export and bench read.
+type scopeFlags struct{ db, company, depot, blobs string }
+
+func (f *scopeFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&f.db, "db", os.Getenv("DATABASE_URL"), "depot_app database URL (env DATABASE_URL)")
+	fs.StringVar(&f.company, "company", "", "company id (required)")
+	fs.StringVar(&f.depot, "depot", "", "depot id (empty: all the company's depots)")
+	fs.StringVar(&f.blobs, "blobs", filepath.Join("depot-data", "blobs"), "folder of photos")
+}
+
+func (f *scopeFlags) open(ctx context.Context) (context.Context, *store.Store, *blob.Store, func(), error) {
+	if f.company == "" || f.db == "" {
+		return nil, nil, nil, nil, errors.New("needs -company and -db (DATABASE_URL)")
+	}
+	pool, err := db.Open(ctx, f.db)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	bl, err := blob.Open(f.blobs)
+	if err != nil {
+		pool.Close()
+		return nil, nil, nil, nil, err
+	}
+	ctx = tenancy.With(ctx, tenancy.Scope{CompanyID: f.company, DepotID: f.depot})
+	return ctx, store.New(pool), bl, pool.Close, nil
+}
+
+func runExport(args []string) error {
+	fs := newFlags("export-dataset")
+	var sf scopeFlags
+	sf.register(fs)
+	out := fs.String("out", "dataset-export", "folder to write the dataset into")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, st, bl, closeDB, err := sf.open(context.Background())
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+	sum, err := dataset.Export(ctx, st, bl, *out)
 	if err != nil {
 		return err
 	}
@@ -262,16 +491,17 @@ func runExport(args []string) error {
 }
 
 func runBench(args []string) error {
-	fs := flag.NewFlagSet("bench", flag.ExitOnError)
-	var data dataFlags
-	data.register(fs)
+	fs := newFlags("bench")
+	var sf scopeFlags
+	sf.register(fs)
 	var eng engineFlags
 	eng.register(fs)
 	limit := fs.Int("limit", 0, "only the first N verified moves (0: all)")
 	threshold := fs.Float64("threshold", 0.85, "auto-accept threshold used when combining photos")
 	yes := fs.Bool("yes", false, "confirm that every verified photo is sent to the paid engine")
-	_ = fs.Parse(args)
-
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	if eng.engine != "fake" && !*yes {
 		return errors.New("bench sends every verified photo to the engine, which costs money: re-run with -yes")
 	}
@@ -279,13 +509,13 @@ func runBench(args []string) error {
 	if err != nil {
 		return err
 	}
-	st, bl, err := data.open()
+	ctx, st, bl, closeDB, err := sf.open(context.Background())
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer closeDB()
 
-	rep, err := bench.Run(context.Background(), st, bl, rec, *threshold, *limit)
+	rep, err := bench.Run(ctx, st, bl, rec, *threshold, *limit)
 	if err != nil {
 		return err
 	}

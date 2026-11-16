@@ -2,7 +2,9 @@
 
 One Windows PC runs `depotd hub`. Phones on the same Wi-Fi open it in the browser,
 photograph containers, and an office screen confirms or corrects what was read.
-Everything stays on the PC: database and photos are in the `depot-data` folder.
+Everything stays on the PC: the hub runs its own PostgreSQL (data in `depot-data/pg`) and keeps photos
+in `depot-data/blobs`. The depot keeps running `depot-pc-v1` (the old SQLite hub build) for real gate
+work; this build is for testing the new platform and does not read the old `depot.db`.
 
 ## One-time setup
 
@@ -22,14 +24,15 @@ Everything stays on the PC: database and photos are in the `depot-data` folder.
 ## Every day
 
 ```
-bin/depotd.exe hub -data depot-data -access-code 482915
+bin/depotd.exe hub -data depot-data
 ```
 
 - The log prints addresses such as `open: http://192.168.0.29:8080`. Open that on the phones.
 - The first time, Windows Firewall asks whether `depotd.exe` may use the network: choose
   **Private networks** and allow. (Do this yourself; nobody should change firewall settings for you.)
-- `-access-code` is optional; when set, every phone and PC asks for it once. Use at least 6 characters
-  (drivers often get the depot Wi-Fi). After 5 wrong tries a device must wait a minute.
+- First start downloads PostgreSQL once (needs internet) and takes a minute. Sign in with the dev login
+  as `owner@local` (change with `-dev-email`); the hub creates company `local`, depot `own-depot` and
+  that owner by itself, and repeats safely at every start.
 - No API key yet, or just practising? Add `-engine fake`: every photo reads as `CSQU3054383`.
 - Stop with Ctrl+C. Photos that were still being read are read again at the next start, and trucks
   left half-read are finished from what was already read.
@@ -52,6 +55,23 @@ collecting training data), `-addr :8080` changes the port.
   returns to the same truck and shows the photos already saved.
 - **Test read:** try one photo without creating a record. Shows the raw engine answer, time and tokens.
 
+## Against your own database (api mode)
+
+Instead of the hub's built-in database, run `migrate` once as the database owner, then `api`
+as the `depot_app` role. Secrets come from flags or environment only, never from files:
+
+```
+export DATABASE_OWNER_URL=postgres://owner:...@host/depot
+export DATABASE_APP_PASSWORD=...        # chosen password for the depot_app role
+bin/depotd.exe migrate -platform-admin you@example.com
+export DATABASE_URL=postgres://depot_app:...@host/depot
+bin/depotd.exe api -addr :8080 -blobs depot-data/blobs -engine fake
+```
+
+`api -env production` refuses `-dev-login` and sets secure cookies; until a real identity provider
+exists it also refuses to start, so use `-env development` for now. `-fallback-models a,b` lists
+Gemini models to try when the main one is overloaded.
+
 ## Photo tips
 
 Fill the frame with the number, keep the phone level, avoid glare on wet paint, and for flat racks
@@ -60,9 +80,11 @@ and tanks photograph the end frame where the number is. Night photos need a ligh
 ## Training data and accuracy
 
 ```
-bin/depotd.exe export-dataset -data depot-data -out dataset-export
-bin/depotd.exe bench -data depot-data -limit 50 -yes
+bin/depotd.exe export-dataset -db "$DATABASE_URL" -company local -blobs depot-data/blobs -out dataset-export
+bin/depotd.exe bench -db "$DATABASE_URL" -company local -blobs depot-data/blobs -limit 50 -yes
 ```
+
+`-db` is the `depot_app` URL of the database to read (see "Against your own database" below).
 
 `export-dataset` copies every verified, non-practice photo with labels (see `dataset-export/README.txt`).
 `bench` re-reads verified trucks with the chosen `-model`/`-thinking` and prints accuracy, tokens and
