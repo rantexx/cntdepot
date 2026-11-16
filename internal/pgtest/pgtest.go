@@ -8,8 +8,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,7 +43,11 @@ func Main(m *testing.M) (code int) {
 		fmt.Fprintln(os.Stderr, "pgtest:", err)
 		return 1
 	}
-	defer os.RemoveAll(dir)
+	sweep(os.TempDir())
+	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "pgtest:", err)
+		return 1
+	}
 	port, err := freePort()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pgtest:", err)
@@ -57,11 +67,20 @@ func Main(m *testing.M) (code int) {
 		fmt.Fprintln(os.Stderr, "pgtest: start:", err)
 		return 1
 	}
-	defer func() {
-		if err := pg.Stop(); err != nil {
-			fmt.Fprintln(os.Stderr, "pgtest: stop:", err)
-		}
-	}()
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			if err := pg.Stop(); err != nil {
+				fmt.Fprintln(os.Stderr, "pgtest: stop:", err)
+			}
+			os.RemoveAll(dir)
+		})
+	}
+	defer cleanup()
+	// Ctrl-C / SIGTERM skip defers; panics and -timeout are covered by sweep on the next run.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() { <-sig; cleanup(); os.Exit(1) }()
 	adminURL = fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/", password, port)
 	return m.Run()
 }
@@ -104,4 +123,42 @@ func freePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// sweep removes depot-pg-* dirs under root whose owner process is gone,
+// stopping any postgres still running from them. Dirs of live owners
+// (parallel test binaries) are never touched.
+func sweep(root string) {
+	dirs, _ := filepath.Glob(filepath.Join(root, "depot-pg-*"))
+	for _, d := range dirs {
+		b, err := os.ReadFile(filepath.Join(d, "pid"))
+		if err != nil {
+			// No pid yet: owner may be mid-creation; only reap old dirs.
+			if fi, e := os.Stat(d); e != nil || time.Since(fi.ModTime()) < time.Minute {
+				continue
+			}
+		} else if pid, err := strconv.Atoi(string(b)); err == nil && alive(pid) {
+			continue
+		}
+		ctl := filepath.Join(d, "bin", "bin", "pg_ctl")
+		if runtime.GOOS == "windows" {
+			ctl += ".exe"
+		}
+		if _, err := os.Stat(ctl); err == nil {
+			exec.Command(ctl, "stop", "-D", filepath.Join(d, "data"), "-m", "immediate").Run()
+		}
+		os.RemoveAll(d)
+	}
+}
+
+func alive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" { // FindProcess fails for a gone process
+		p.Release()
+		return true
+	}
+	return p.Signal(syscall.Signal(0)) == nil
 }
