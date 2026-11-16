@@ -147,6 +147,12 @@ Durations are rough guesses for me building with the owner reviewing.
   - holds;
   - days in yard and free days.
 - **Stock list** with days in yard, per line.
+- **Basic reports**, which every competitor has:
+  - container ageing (days in yard);
+  - a daily status summary e-mailed to the manager and each line;
+  - truck time at the gate;
+  - a dashboard;
+  - Excel export of every list.
 - **Camera and OCR** plug in as an optional reader.
 
 Done when the owner's depot runs gate and stock for two weeks with no paper or Excel. Meanwhile, the old depot PC version retires.
@@ -202,6 +208,7 @@ Done when a depot in another country signs up, imports its Excel and issues a ph
 - **Work orders** for the workshop, with repair-completion photos for every approved line; completion reported back to the line.
 - **Rule:** no repair before approval and pre-repair photos.
 - **Each line's rules stored as a reusable profile.** Every new depot that works with that line starts with them.
+- **AI draft of the estimate (paid add-on):** Gemini proposes estimate lines from the damage photos and a surveyor confirms them. EOS's repair app has shipped AI estimate drafting and checks since 2025, so this is where the market is moving.
 - **Later, as its own module:** reefer machinery and PTI results.
 
 ### Stage 5: Add-ons, only when a paying customer asks
@@ -216,7 +223,16 @@ Done when a depot in another country signs up, imports its Excel and issues a ph
   - single sign-on;
   - more regions.
 
-**Not now:** 3D yard, reefer PTI, truck appointments, DCSA standards (watch from 2027).
+- **Container sales and leasing (module, high priority among add-ons):**
+  - stock for sale;
+  - quotes;
+  - sales orders;
+  - lease-out and on-hire;
+  - a buyer portal linked to the owner's sales website.
+
+  The research found no depot system that covers sales, so it is open ground, and the owner already sells containers.
+
+**Not now:** 3D yard, reefer PTI, DCSA standards (watch from 2027).
 
 Rough total to "anyone can sign up" (end of Stage 2): **about 3–4 months.** This is a guess. Billing comes off the critical path, and the rented building blocks save platform work.
 
