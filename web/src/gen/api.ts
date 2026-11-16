@@ -241,27 +241,33 @@ export type SessionUser = {
   name: string;
 };
 
-export interface Depot {
-  id: string;
-  name: string;
-  locode?: string;
-}
-
 export type SessionCompaniesItem = {
   id: string;
   name: string;
-  depots: Depot[];
+  role: Role;
+};
+
+/**
+ * Present only when a scope (company and depot) is set.
+ */
+export type SessionCurrent = {
+  companyId: string;
+  /**
+     * null means all depots
+     * @nullable
+     */
+  depotId: string | null;
+  role: Role;
+  modules: string[];
+  permissions: string[];
 };
 
 export interface Session {
   user: SessionUser;
   companies: SessionCompaniesItem[];
-  companyId?: string;
-  depotId?: string;
-  role: Role;
-  modules: string[];
-  permissions: string[];
-  platformAdmin?: boolean;
+  platformAdmin: boolean;
+  /** Present only when a scope (company and depot) is set. */
+  current?: SessionCurrent;
 }
 
 export interface Company {
@@ -271,25 +277,39 @@ export interface Company {
   modules: string[];
 }
 
+export interface Depot {
+  id: string;
+  name: string;
+  country: string;
+  timezone: string;
+}
+
+/**
+ * Depots the member or invitee may use. null means all depots; when set, at least one id.
+ * @minItems 1
+ * @nullable
+ */
+export type DepotIds = string[] | null;
+
 export interface Member {
   userId: string;
   email: string;
   name: string;
   role: Role;
-  depotIds: string[];
+  depotIds: DepotIds | null;
 }
 
 export interface MemberUpdate {
   role: Role;
-  depotIds: string[];
+  depotIds: DepotIds | null;
 }
 
 export interface Invitation {
   id: string;
   email: string;
   role: Role;
-  depotIds: string[];
-  expiresAt: string;
+  depotIds: DepotIds | null;
+  createdAt: string;
 }
 
 export interface Liner {
@@ -305,18 +325,23 @@ export interface Locode {
 
 export interface Line {
   id: string;
+  code: string;
   name: string;
-  code?: string;
-  email?: string;
-  phone?: string;
+  contact: string;
   active: boolean;
 }
 
-export interface LineInput {
-  name?: string;
+export interface LineCreate {
+  code: string;
+  name: string;
+  contact?: string;
+}
+
+export interface LinePatch {
   code?: string;
-  email?: string;
-  phone?: string;
+  name?: string;
+  contact?: string;
+  active?: boolean;
 }
 
 export interface LineList {
@@ -326,18 +351,23 @@ export interface LineList {
 
 export interface Customer {
   id: string;
+  code: string;
   name: string;
-  code?: string;
-  email?: string;
-  phone?: string;
+  contact: string;
   active: boolean;
 }
 
-export interface CustomerInput {
-  name?: string;
+export interface CustomerCreate {
+  code: string;
+  name: string;
+  contact?: string;
+}
+
+export interface CustomerPatch {
   code?: string;
-  email?: string;
-  phone?: string;
+  name?: string;
+  contact?: string;
+  active?: boolean;
 }
 
 export interface CustomerList {
@@ -347,18 +377,23 @@ export interface CustomerList {
 
 export interface Haulier {
   id: string;
+  code: string;
   name: string;
-  code?: string;
-  email?: string;
-  phone?: string;
+  contact: string;
   active: boolean;
 }
 
-export interface HaulierInput {
-  name?: string;
+export interface HaulierCreate {
+  code: string;
+  name: string;
+  contact?: string;
+}
+
+export interface HaulierPatch {
   code?: string;
-  email?: string;
-  phone?: string;
+  name?: string;
+  contact?: string;
+  active?: boolean;
 }
 
 export interface HaulierList {
@@ -412,13 +447,14 @@ export type SetModulesBody = {
 
 export type CreateDepotBody = {
   name: string;
-  locode?: string;
+  country: string;
+  timezone: string;
 };
 
 export type CreateInvitationBody = {
   email: string;
   role: Role;
-  depotIds: string[];
+  depotIds: DepotIds | null;
 };
 
 export type SearchLinersParams = {
@@ -1693,14 +1729,14 @@ export const getCreateLineUrl = () => {
   return `/api/lines`
 }
 
-export const createLine = async (lineInput: LineInput, options?: Parameters<typeof http>[1]): Promise<createLineResponse> => {
+export const createLine = async (lineCreate: LineCreate, options?: Parameters<typeof http>[1]): Promise<createLineResponse> => {
 
   return http<createLineResponse>(getCreateLineUrl(),
   {
     ...options,
     method: 'POST',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(lineInput)
+    body: JSON.stringify(lineCreate)
   }
 );}
 
@@ -1734,14 +1770,14 @@ export const getUpdateLineUrl = (id: string,) => {
 }
 
 export const updateLine = async (id: string,
-    lineInput: LineInput, options?: Parameters<typeof http>[1]): Promise<updateLineResponse> => {
+    linePatch: LinePatch, options?: Parameters<typeof http>[1]): Promise<updateLineResponse> => {
 
   return http<updateLineResponse>(getUpdateLineUrl(id),
   {
     ...options,
     method: 'PATCH',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(lineInput)
+    body: JSON.stringify(linePatch)
   }
 );}
 
@@ -1864,14 +1900,14 @@ export const getCreateCustomerUrl = () => {
   return `/api/customers`
 }
 
-export const createCustomer = async (customerInput: CustomerInput, options?: Parameters<typeof http>[1]): Promise<createCustomerResponse> => {
+export const createCustomer = async (customerCreate: CustomerCreate, options?: Parameters<typeof http>[1]): Promise<createCustomerResponse> => {
 
   return http<createCustomerResponse>(getCreateCustomerUrl(),
   {
     ...options,
     method: 'POST',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(customerInput)
+    body: JSON.stringify(customerCreate)
   }
 );}
 
@@ -1905,14 +1941,14 @@ export const getUpdateCustomerUrl = (id: string,) => {
 }
 
 export const updateCustomer = async (id: string,
-    customerInput: CustomerInput, options?: Parameters<typeof http>[1]): Promise<updateCustomerResponse> => {
+    customerPatch: CustomerPatch, options?: Parameters<typeof http>[1]): Promise<updateCustomerResponse> => {
 
   return http<updateCustomerResponse>(getUpdateCustomerUrl(id),
   {
     ...options,
     method: 'PATCH',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(customerInput)
+    body: JSON.stringify(customerPatch)
   }
 );}
 
@@ -2035,14 +2071,14 @@ export const getCreateHaulierUrl = () => {
   return `/api/hauliers`
 }
 
-export const createHaulier = async (haulierInput: HaulierInput, options?: Parameters<typeof http>[1]): Promise<createHaulierResponse> => {
+export const createHaulier = async (haulierCreate: HaulierCreate, options?: Parameters<typeof http>[1]): Promise<createHaulierResponse> => {
 
   return http<createHaulierResponse>(getCreateHaulierUrl(),
   {
     ...options,
     method: 'POST',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(haulierInput)
+    body: JSON.stringify(haulierCreate)
   }
 );}
 
@@ -2076,14 +2112,14 @@ export const getUpdateHaulierUrl = (id: string,) => {
 }
 
 export const updateHaulier = async (id: string,
-    haulierInput: HaulierInput, options?: Parameters<typeof http>[1]): Promise<updateHaulierResponse> => {
+    haulierPatch: HaulierPatch, options?: Parameters<typeof http>[1]): Promise<updateHaulierResponse> => {
 
   return http<updateHaulierResponse>(getUpdateHaulierUrl(id),
   {
     ...options,
     method: 'PATCH',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
-    body: JSON.stringify(haulierInput)
+    body: JSON.stringify(haulierPatch)
   }
 );}
 

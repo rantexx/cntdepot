@@ -179,20 +179,18 @@ type CreateMoveRequest struct {
 
 // Customer defines model for Customer.
 type Customer struct {
-	Active bool    `json:"active"`
-	Code   *string `json:"code,omitempty"`
-	Email  *string `json:"email,omitempty"`
-	Id     string  `json:"id"`
-	Name   string  `json:"name"`
-	Phone  *string `json:"phone,omitempty"`
+	Active  bool   `json:"active"`
+	Code    string `json:"code"`
+	Contact string `json:"contact"`
+	Id      string `json:"id"`
+	Name    string `json:"name"`
 }
 
-// CustomerInput defines model for CustomerInput.
-type CustomerInput struct {
-	Code  *string `json:"code,omitempty"`
-	Email *string `json:"email,omitempty"`
-	Name  *string `json:"name,omitempty"`
-	Phone *string `json:"phone,omitempty"`
+// CustomerCreate defines model for CustomerCreate.
+type CustomerCreate struct {
+	Code    string  `json:"code"`
+	Contact *string `json:"contact,omitempty"`
+	Name    string  `json:"name"`
 }
 
 // CustomerList defines model for CustomerList.
@@ -201,12 +199,24 @@ type CustomerList struct {
 	Total int        `json:"total"`
 }
 
+// CustomerPatch defines model for CustomerPatch.
+type CustomerPatch struct {
+	Active  *bool   `json:"active,omitempty"`
+	Code    *string `json:"code,omitempty"`
+	Contact *string `json:"contact,omitempty"`
+	Name    *string `json:"name,omitempty"`
+}
+
 // Depot defines model for Depot.
 type Depot struct {
-	Id     string  `json:"id"`
-	Locode *string `json:"locode,omitempty"`
-	Name   string  `json:"name"`
+	Country  string `json:"country"`
+	Id       string `json:"id"`
+	Name     string `json:"name"`
+	Timezone string `json:"timezone"`
 }
+
+// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
+type DepotIds = []string
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
@@ -229,26 +239,32 @@ type Frame struct {
 
 // Haulier defines model for Haulier.
 type Haulier struct {
-	Active bool    `json:"active"`
-	Code   *string `json:"code,omitempty"`
-	Email  *string `json:"email,omitempty"`
-	Id     string  `json:"id"`
-	Name   string  `json:"name"`
-	Phone  *string `json:"phone,omitempty"`
+	Active  bool   `json:"active"`
+	Code    string `json:"code"`
+	Contact string `json:"contact"`
+	Id      string `json:"id"`
+	Name    string `json:"name"`
 }
 
-// HaulierInput defines model for HaulierInput.
-type HaulierInput struct {
-	Code  *string `json:"code,omitempty"`
-	Email *string `json:"email,omitempty"`
-	Name  *string `json:"name,omitempty"`
-	Phone *string `json:"phone,omitempty"`
+// HaulierCreate defines model for HaulierCreate.
+type HaulierCreate struct {
+	Code    string  `json:"code"`
+	Contact *string `json:"contact,omitempty"`
+	Name    string  `json:"name"`
 }
 
 // HaulierList defines model for HaulierList.
 type HaulierList struct {
 	Items []Haulier `json:"items"`
 	Total int       `json:"total"`
+}
+
+// HaulierPatch defines model for HaulierPatch.
+type HaulierPatch struct {
+	Active  *bool   `json:"active,omitempty"`
+	Code    *string `json:"code,omitempty"`
+	Contact *string `json:"contact,omitempty"`
+	Name    *string `json:"name,omitempty"`
 }
 
 // Health defines model for Health.
@@ -262,35 +278,43 @@ type Health struct {
 
 // Invitation defines model for Invitation.
 type Invitation struct {
-	DepotIds  []string  `json:"depotIds"`
-	Email     string    `json:"email"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Id        string    `json:"id"`
-	Role      Role      `json:"role"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
+	DepotIds *DepotIds `json:"depotIds"`
+	Email    string    `json:"email"`
+	Id       string    `json:"id"`
+	Role     Role      `json:"role"`
 }
 
 // Line defines model for Line.
 type Line struct {
-	Active bool    `json:"active"`
-	Code   *string `json:"code,omitempty"`
-	Email  *string `json:"email,omitempty"`
-	Id     string  `json:"id"`
-	Name   string  `json:"name"`
-	Phone  *string `json:"phone,omitempty"`
+	Active  bool   `json:"active"`
+	Code    string `json:"code"`
+	Contact string `json:"contact"`
+	Id      string `json:"id"`
+	Name    string `json:"name"`
 }
 
-// LineInput defines model for LineInput.
-type LineInput struct {
-	Code  *string `json:"code,omitempty"`
-	Email *string `json:"email,omitempty"`
-	Name  *string `json:"name,omitempty"`
-	Phone *string `json:"phone,omitempty"`
+// LineCreate defines model for LineCreate.
+type LineCreate struct {
+	Code    string  `json:"code"`
+	Contact *string `json:"contact,omitempty"`
+	Name    string  `json:"name"`
 }
 
 // LineList defines model for LineList.
 type LineList struct {
 	Items []Line `json:"items"`
 	Total int    `json:"total"`
+}
+
+// LinePatch defines model for LinePatch.
+type LinePatch struct {
+	Active  *bool   `json:"active,omitempty"`
+	Code    *string `json:"code,omitempty"`
+	Contact *string `json:"contact,omitempty"`
+	Name    *string `json:"name,omitempty"`
 }
 
 // Liner defines model for Liner.
@@ -308,17 +332,19 @@ type Locode struct {
 
 // Member defines model for Member.
 type Member struct {
-	DepotIds []string `json:"depotIds"`
-	Email    string   `json:"email"`
-	Name     string   `json:"name"`
-	Role     Role     `json:"role"`
-	UserId   string   `json:"userId"`
+	// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
+	DepotIds *DepotIds `json:"depotIds"`
+	Email    string    `json:"email"`
+	Name     string    `json:"name"`
+	Role     Role      `json:"role"`
+	UserId   string    `json:"userId"`
 }
 
 // MemberUpdate defines model for MemberUpdate.
 type MemberUpdate struct {
-	DepotIds []string `json:"depotIds"`
-	Role     Role     `json:"role"`
+	// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
+	DepotIds *DepotIds `json:"depotIds"`
+	Role     Role      `json:"role"`
 }
 
 // Move defines model for Move.
@@ -439,16 +465,22 @@ type Role string
 // Session defines model for Session.
 type Session struct {
 	Companies []struct {
-		Depots []Depot `json:"depots"`
-		Id     string  `json:"id"`
-		Name   string  `json:"name"`
+		Id   string `json:"id"`
+		Name string `json:"name"`
+		Role Role   `json:"role"`
 	} `json:"companies"`
-	CompanyId     *string  `json:"companyId,omitempty"`
-	DepotId       *string  `json:"depotId,omitempty"`
-	Modules       []string `json:"modules"`
-	Permissions   []string `json:"permissions"`
-	PlatformAdmin *bool    `json:"platformAdmin,omitempty"`
-	Role          Role     `json:"role"`
+
+	// Current Present only when a scope (company and depot) is set.
+	Current *struct {
+		CompanyId string `json:"companyId"`
+
+		// DepotId null means all depots
+		DepotId     *string  `json:"depotId"`
+		Modules     []string `json:"modules"`
+		Permissions []string `json:"permissions"`
+		Role        Role     `json:"role"`
+	} `json:"current,omitempty"`
+	PlatformAdmin bool `json:"platformAdmin"`
 	User          struct {
 		Email string `json:"email"`
 		Id    string `json:"id"`
@@ -527,8 +559,9 @@ type ListCustomersParams struct {
 
 // CreateDepotJSONBody defines parameters for CreateDepot.
 type CreateDepotJSONBody struct {
-	Locode *string `json:"locode,omitempty"`
-	Name   string  `json:"name"`
+	Country  string `json:"country"`
+	Name     string `json:"name"`
+	Timezone string `json:"timezone"`
 }
 
 // ListHauliersParams defines parameters for ListHauliers.
@@ -540,9 +573,10 @@ type ListHauliersParams struct {
 
 // CreateInvitationJSONBody defines parameters for CreateInvitation.
 type CreateInvitationJSONBody struct {
-	DepotIds []string `json:"depotIds"`
-	Email    string   `json:"email"`
-	Role     Role     `json:"role"`
+	// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
+	DepotIds *DepotIds `json:"depotIds"`
+	Email    string    `json:"email"`
+	Role     Role      `json:"role"`
 }
 
 // ListLinesParams defines parameters for ListLines.
@@ -610,28 +644,28 @@ type TestReadMultipartBody struct {
 type SetModulesJSONRequestBody SetModulesJSONBody
 
 // CreateCustomerJSONRequestBody defines body for CreateCustomer for application/json ContentType.
-type CreateCustomerJSONRequestBody = CustomerInput
+type CreateCustomerJSONRequestBody = CustomerCreate
 
 // UpdateCustomerJSONRequestBody defines body for UpdateCustomer for application/json ContentType.
-type UpdateCustomerJSONRequestBody = CustomerInput
+type UpdateCustomerJSONRequestBody = CustomerPatch
 
 // CreateDepotJSONRequestBody defines body for CreateDepot for application/json ContentType.
 type CreateDepotJSONRequestBody CreateDepotJSONBody
 
 // CreateHaulierJSONRequestBody defines body for CreateHaulier for application/json ContentType.
-type CreateHaulierJSONRequestBody = HaulierInput
+type CreateHaulierJSONRequestBody = HaulierCreate
 
 // UpdateHaulierJSONRequestBody defines body for UpdateHaulier for application/json ContentType.
-type UpdateHaulierJSONRequestBody = HaulierInput
+type UpdateHaulierJSONRequestBody = HaulierPatch
 
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
 type CreateInvitationJSONRequestBody CreateInvitationJSONBody
 
 // CreateLineJSONRequestBody defines body for CreateLine for application/json ContentType.
-type CreateLineJSONRequestBody = LineInput
+type CreateLineJSONRequestBody = LineCreate
 
 // UpdateLineJSONRequestBody defines body for UpdateLine for application/json ContentType.
-type UpdateLineJSONRequestBody = LineInput
+type UpdateLineJSONRequestBody = LinePatch
 
 // UpdateMemberJSONRequestBody defines body for UpdateMember for application/json ContentType.
 type UpdateMemberJSONRequestBody = MemberUpdate
