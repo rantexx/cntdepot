@@ -158,6 +158,45 @@ func (q *Queries) DetachVisit(ctx context.Context, arg DetachVisitParams) error 
 	return err
 }
 
+const eIRHeader = `-- name: EIRHeader :one
+SELECT c.name AS company_name, d.name AS depot_name, COALESCE(h.name, '')::text AS haulier_name,
+    (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections,
+    COALESCE((SELECT e.payload->>'reason' FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected'
+        ORDER BY e.seq DESC LIMIT 1), '')::text AS correction_reason
+FROM gate_moves m
+JOIN companies c ON c.id = m.company_id
+JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
+WHERE m.company_id = $1 AND m.id = $2
+`
+
+type EIRHeaderParams struct {
+	CompanyID string
+	ID        string
+}
+
+type EIRHeaderRow struct {
+	CompanyName      string
+	DepotName        string
+	HaulierName      string
+	Corrections      int64
+	CorrectionReason string
+}
+
+// What the public EIR page shows beside the gate form: names, the haulier and the correction trail.
+func (q *Queries) EIRHeader(ctx context.Context, arg EIRHeaderParams) (EIRHeaderRow, error) {
+	row := q.db.QueryRow(ctx, eIRHeader, arg.CompanyID, arg.ID)
+	var i EIRHeaderRow
+	err := row.Scan(
+		&i.CompanyName,
+		&i.DepotName,
+		&i.HaulierName,
+		&i.Corrections,
+		&i.CorrectionReason,
+	)
+	return i, err
+}
+
 const eIRLookup = `-- name: EIRLookup :one
 SELECT company_id::text, move_id::text FROM eir_lookup($1)
 `

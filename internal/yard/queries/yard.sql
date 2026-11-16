@@ -291,3 +291,15 @@ VALUES (@id, @company_id, @stream, @kind, @actor, @payload, @occurred_at);
 SELECT i.* FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
 WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.status = 'open'
 ORDER BY i.id;
+
+-- name: EIRHeader :one
+-- What the public EIR page shows beside the gate form: names, the haulier and the correction trail.
+SELECT c.name AS company_name, d.name AS depot_name, COALESCE(h.name, '')::text AS haulier_name,
+    (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections,
+    COALESCE((SELECT e.payload->>'reason' FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected'
+        ORDER BY e.seq DESC LIMIT 1), '')::text AS correction_reason
+FROM gate_moves m
+JOIN companies c ON c.id = m.company_id
+JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
+WHERE m.company_id = @company_id AND m.id = @id;

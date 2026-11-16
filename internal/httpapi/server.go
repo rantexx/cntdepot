@@ -21,6 +21,7 @@ import (
 	"depot/internal/live"
 	"depot/internal/store"
 	"depot/internal/tenancy"
+	"depot/internal/yard"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,7 +38,8 @@ type Options struct {
 	Sessions *auth.Sessions
 	Provider auth.Provider
 	Pool     *pgxpool.Pool
-	Hub      bool // the on-site box: camera routes are mounted only here
+	Yard     *yard.Service // nil: no public EIR page
+	Hub      bool          // the on-site box: camera routes are mounted only here
 	// PublicHosts are the domain names the cloud server is reached by (for
 	// example app.example.com); the API also answers to them.
 	PublicHosts []string
@@ -124,6 +126,10 @@ func (s *Server) routes() {
 	withSession := s.opts.Sessions.Middleware(checkScope(apiMux))
 	s.mux.Handle("/api/", withSession)
 	s.mux.Handle("/auth/", withSession)
+	if s.opts.Yard != nil { // public: the link token is the only credential, so no session and no API guard
+		s.mux.HandleFunc("GET /eir/{token}", s.eirPage)
+		s.mux.HandleFunc("GET /eir/{token}/photo/{photoId}", s.eirPhoto)
+	}
 	s.mux.Handle("/", s.static())
 }
 

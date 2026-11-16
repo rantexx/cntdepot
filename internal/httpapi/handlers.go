@@ -83,7 +83,9 @@ func (s *Server) serveBlob(w http.ResponseWriter, digest string, width int) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if w.Header().Get("Cache-Control") == "" { // a caller (the public EIR page) may have set its own
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
 	_, _ = w.Write(data)
 }
 
