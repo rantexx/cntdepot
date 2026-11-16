@@ -132,13 +132,33 @@ Durations are rough guesses for me building with the owner reviewing.
 - **Gate in and out on a phone,** offline:
   - check digit;
   - full or empty, condition, seal;
-  - in-app photos stamped and tied to the move.
-- **Gate-out checks:** only against a valid release; blocked boxes can't leave.
-- **EIR as PDF** (made from HTML with Gotenberg), shared by link or WhatsApp.
+  - in-app photos stamped and tied to the move;
+  - damage noted at the gate with up to 3 photos per damage;
+  - truck, trailer and driver details;
+  - **the trucker signs on the phone.**
+- **Gate checks:**
+  - blacklist and whitelist checked at the moment of the move;
+  - gate-out only against a valid release order;
+  - blocked or held boxes can't leave.
+- **EIR as PDF** (made from HTML with Gotenberg), emailed automatically and shared by link or WhatsApp. It covers what Maersk's own EIR app captures: container, damage with photos, trucker, signature.
+- **Container record:**
+  - stack position (block, row, tier);
+  - grade (A/B/C, food grade);
+  - holds;
+  - days in yard and free days.
 - **Stock list** with days in yard, per line.
 - **Camera and OCR** plug in as an optional reader.
 
 Done when the owner's depot runs gate and stock for two weeks with no paper or Excel. Meanwhile, the old depot PC version retires.
+
+### Stage 1b: Standard shipping-line EDI (about 2–3 weeks)
+Every competitor has this, so it is basic (owner decision, 16 Nov).
+- **One generic profile** following SMDG's recommended D.00B guides (version 2.1.3):
+  - **release and booking orders in (COPARN):** arriving as release orders;
+  - **gate moves out (CODECO):** sent straight after each move;
+  - **acknowledgements and errors (APERAK).**
+- **Sending and receiving** by e-mail or SFTP.
+- **Per line:** small adjustments to the profile, stored as data. A line without EDI gets an automatic PDF/Excel e-mail instead.
 
 ### Stage 2: Ready for anyone to sign up (about 5–7 weeks)
 - **Self-serve signup** and a demo depot.
@@ -168,17 +188,26 @@ Done when a depot in another country signs up, imports its Excel and issues a ph
   - invoice drafts with tax mapping, frozen exchange rate and numbering;
   - each line's evidence pack (EIRs, photos);
   - the Turkey pack (export to the depot's accounting program);
-  - then Xero and Odoo connectors.
+  - then Xero and Odoo connectors;
+  - **self-billing check:** import a line's self-billing file and match it line by line against our charge record (DepotMaster offers this).
 
 ### Stage 4: Repairs, M&R (paid module, about 6 weeks)
 - **Damage codes:** CEDEX tables seeded from IICL's free code standards.
 - **Damage survey:** a photo for each damage line.
-- **Approvals:** estimate PDF or Excel out, approvals imported back.
+- **Estimates** to the IICL, UCIRC, CW or WWT standard, priced from each line's repair tariff.
+- **Approvals:**
+  - estimate out as the generic repair-estimate message (WESTIM/DESTIM), or PDF/Excel;
+  - approvals back by message or bulk import;
+  - approval chasing.
+- **Work orders** for the workshop, with repair-completion photos for every approved line; completion reported back to the line.
 - **Rule:** no repair before approval and pre-repair photos.
 - **Each line's rules stored as a reusable profile.** Every new depot that works with that line starts with them.
+- **Later, as its own module:** reefer machinery and PTI results.
 
 ### Stage 5: Add-ons, only when a paying customer asks
-- **EDI as a profile library:** one generic CODECO/COPARN profile, copied and adjusted per line.
+- **Line APIs per customer,** such as Maersk's EIR system (DepotMaster connects to it), so gate staff don't enter data twice.
+- **Truck slot booking (paid module):** a trucker portal to look up orders and book slots; depots may charge truckers for slots.
+- **Damage recovery:** bill the trucker or customer who caused a damage.
 - **Gate camera and OCR sold per read,** including plate reading.
 - **Other add-ons:**
   - e-invoice adapters per country;
