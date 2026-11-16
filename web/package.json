@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "gen": "orval --config orval.config.ts",
     "build": "tsc --noEmit && vite build && node -e \"require('fs').writeFileSync('../internal/webui/dist/.gitkeep', '')\""
   },
   "dependencies": {
@@ -17,6 +18,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "orval": "^8.48.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.2"
   }

@@ -1,0 +1,675 @@
+openapi: 3.0.3
+info:
+  title: depotd API
+  version: 0.1.0
+  description: |
+    The hub API. Hand-written outside this spec: GET /api/stream, GET /api/blobs/{digest},
+    /api/camera*, /api/live/ws, /auth/*. Every error is {"error": {"code", "message"}}.
+servers:
+  - url: /
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Health"}}}}
+  /api/moves:
+    post:
+      operationId: createMove
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/CreateMoveRequest"}}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Move"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    get:
+      operationId: listMoves
+      parameters:
+        - {name: status, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: before, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moves]
+                properties:
+                  moves: {type: array, items: {$ref: "#/components/schemas/Move"}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}:
+    get:
+      operationId: getMove
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/MoveDetail"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/photos:
+    post:
+      operationId: addPhoto
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [original, ai]
+              properties:
+                role: {type: string}
+                width: {type: integer}
+                height: {type: integer}
+                original: {type: string, format: binary, description: the photo as uploaded}
+                ai: {type: string, format: binary, description: the downscaled copy for reading}
+      responses:
+        "202": {description: accepted, content: {application/json: {schema: {$ref: "#/components/schemas/Photo"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/resolve:
+    post:
+      operationId: resolveMove
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/ResolveRequest"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Move"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/reread:
+    post:
+      operationId: rereadMove
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "202": {description: accepted, content: {application/json: {schema: {$ref: "#/components/schemas/Move"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/number:
+    post:
+      operationId: enterNumber
+      description: Manual entry of the container number by the clerk.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number]
+              properties: {number: {type: string}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Move"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/validate/{number}:
+    get:
+      operationId: validateNumber
+      parameters: [{name: number, in: path, required: true, schema: {type: string}}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Validation"}}}}
+  /api/test-read:
+    post:
+      operationId: testRead
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ai]
+              properties:
+                ai: {type: string, format: binary}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/TestReadResult"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/session:
+    get:
+      operationId: getSession
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/session/scope:
+    post:
+      operationId: setScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [companyId, depotId]
+              properties: {companyId: {type: string}, depotId: {type: string}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/session/logout:
+    post:
+      operationId: logout
+      responses:
+        "204": {description: signed out}
+        default: {$ref: "#/components/responses/Error"}
+  /api/company:
+    get:
+      operationId: getCompany
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Company"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/company/modules:
+    patch:
+      operationId: setModules
+      description: Owner only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modules]
+              properties: {modules: {type: array, items: {type: string}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Company"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/depots:
+    get:
+      operationId: listDepots
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Depot"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createDepot
+      description: Owner only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties: {name: {type: string}, locode: {type: string}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Depot"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/members:
+    get:
+      operationId: listMembers
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Member"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/members/{userId}:
+    patch:
+      operationId: updateMember
+      description: Owner only.
+      parameters: [{name: userId, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/MemberUpdate"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Member"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      operationId: removeMember
+      description: Owner only.
+      parameters: [{name: userId, in: path, required: true, schema: {type: string}}]
+      responses:
+        "204": {description: removed}
+        default: {$ref: "#/components/responses/Error"}
+  /api/invitations:
+    get:
+      operationId: listInvitations
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Invitation"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createInvitation
+      description: Owner only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role, depotIds]
+              properties:
+                email: {type: string}
+                role: {$ref: "#/components/schemas/Role"}
+                depotIds: {type: array, items: {type: string}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Invitation"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/invitations/{id}:
+    delete:
+      operationId: deleteInvitation
+      description: Owner only.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /api/ref/liners:
+    get:
+      operationId: searchLiners
+      parameters: [{name: q, in: query, schema: {type: string}}]
+      responses:
+        "200": {description: at most 20 results, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Liner"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/ref/locodes:
+    get:
+      operationId: searchLocodes
+      parameters: [{name: q, in: query, schema: {type: string}}]
+      responses:
+        "200": {description: at most 20 results, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Locode"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/platform/companies:
+    get:
+      operationId: listCompanies
+      description: Platform admins only.
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Company"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createCompany
+      description: Platform admins only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, country, ownerEmail, modules]
+              properties:
+                name: {type: string}
+                country: {type: string}
+                ownerEmail: {type: string}
+                modules: {type: array, items: {type: string}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Company"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/lines:
+    get:
+      operationId: listLines
+      parameters: [{$ref: "#/components/parameters/Q"}, {$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PerPage"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/LineList"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createLine
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/LineInput"}}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Line"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/lines/{id}:
+    patch:
+      operationId: updateLine
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/LineInput"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Line"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      operationId: deactivateLine
+      description: Sets active=false; the row is kept.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: deactivated}
+        default: {$ref: "#/components/responses/Error"}
+  /api/customers:
+    get:
+      operationId: listCustomers
+      parameters: [{$ref: "#/components/parameters/Q"}, {$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PerPage"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/CustomerList"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createCustomer
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/CustomerInput"}}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Customer"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/customers/{id}:
+    patch:
+      operationId: updateCustomer
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/CustomerInput"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Customer"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      operationId: deactivateCustomer
+      description: Sets active=false; the row is kept.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: deactivated}
+        default: {$ref: "#/components/responses/Error"}
+  /api/hauliers:
+    get:
+      operationId: listHauliers
+      parameters: [{$ref: "#/components/parameters/Q"}, {$ref: "#/components/parameters/Page"}, {$ref: "#/components/parameters/PerPage"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/HaulierList"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createHaulier
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/HaulierInput"}}}
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Haulier"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/hauliers/{id}:
+    patch:
+      operationId: updateHaulier
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/HaulierInput"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Haulier"}}}}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      operationId: deactivateHaulier
+      description: Sets active=false; the row is kept.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: deactivated}
+        default: {$ref: "#/components/responses/Error"}
+components:
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: string}}
+    Q: {name: q, in: query, schema: {type: string}}
+    Page: {name: page, in: query, schema: {type: integer, minimum: 1}}
+    PerPage: {name: perPage, in: query, schema: {type: integer, minimum: 1}}
+  responses:
+    Error:
+      description: error
+      content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties: {code: {type: string}, message: {type: string}}
+    Role: {type: string, enum: [owner, manager, office, gate]}
+    Status: {type: string, enum: [capturing, reading, needs_review, accepted, refused, no_container]}
+    Health:
+      type: object
+      required: [ok, version, engine, model, auth_required]
+      properties:
+        ok: {type: boolean}
+        version: {type: string}
+        engine: {type: string}
+        model: {type: string}
+        auth_required: {type: boolean}
+    CreateMoveRequest:
+      type: object
+      properties: {lane: {type: string, maxLength: 32}, is_test: {type: boolean}}
+    ResolveRequest:
+      type: object
+      required: [action, by]
+      properties:
+        action: {type: string, enum: [accept, correct, refuse]}
+        number: {type: string}
+        by: {type: string}
+        note: {type: string}
+    Photo:
+      type: object
+      required: [id, depot_id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred, read_enabled]
+      properties:
+        id: {type: string}
+        depot_id: {type: string}
+        move_id: {type: string}
+        role: {type: string}
+        sha256: {type: string}
+        ai_sha256: {type: string}
+        media_type: {type: string}
+        ai_media_type: {type: string}
+        bytes: {type: integer, format: int64}
+        width: {type: integer}
+        height: {type: integer}
+        captured_at: {type: string, format: date-time}
+        deferred: {type: boolean}
+        read_enabled: {type: boolean}
+    Candidate:
+      type: object
+      required: [number, confidence, check_digit_valid]
+      properties:
+        number: {type: string}
+        confidence: {type: number}
+        check_digit_valid: {type: boolean}
+        repaired_from: {type: string}
+    Frame:
+      type: object
+      required: [role, candidates, type_code, color, visible, notes]
+      properties:
+        role: {type: string}
+        candidates: {type: array, nullable: true, items: {$ref: "#/components/schemas/Candidate"}}
+        type_code: {type: string}
+        color: {type: string}
+        visible: {type: string}
+        notes: {type: string}
+        error: {type: string}
+    Result:
+      type: object
+      properties:
+        number: {type: string}
+        confidence: {type: number}
+        check_digit_valid: {type: boolean}
+        decision: {type: string}
+        reason: {type: string}
+        type_code: {type: string}
+        color: {type: string}
+        candidates: {type: array, nullable: true, items: {$ref: "#/components/schemas/Candidate"}}
+        frames: {type: array, nullable: true, items: {$ref: "#/components/schemas/Frame"}}
+    Box:
+      type: object
+      required: [x0, y0, x1, y1]
+      properties: {x0: {type: number}, y0: {type: number}, x1: {type: number}, y1: {type: number}}
+    Reading:
+      type: object
+      properties:
+        candidates:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [number, confidence]
+            properties: {number: {type: string}, confidence: {type: number}}
+        type_code: {type: string}
+        color: {type: string}
+        visible: {type: string}
+        box: {nullable: true, allOf: [{$ref: "#/components/schemas/Box"}]}
+        notes: {type: string}
+    Move:
+      type: object
+      required: [id, lane, direction, source, status, number, type_code, color, confidence, check_digit_valid, decision, reason, result, verified, corrected_from, resolved_by, note, is_test, created_at, updated_at, photos]
+      properties:
+        id: {type: string}
+        lane: {type: string}
+        direction: {type: string}
+        source: {type: string, enum: [phone, camera]}
+        status: {$ref: "#/components/schemas/Status"}
+        number: {type: string}
+        type_code: {type: string}
+        color: {type: string}
+        confidence: {type: number}
+        check_digit_valid: {type: boolean}
+        decision: {type: string}
+        reason: {type: string}
+        result: {$ref: "#/components/schemas/Result"}
+        verified: {type: boolean}
+        corrected_from: {type: string}
+        resolved_by: {type: string}
+        note: {type: string}
+        is_test: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        photos: {type: array, nullable: true, items: {$ref: "#/components/schemas/Photo"}}
+    Attempt:
+      type: object
+      required: [id, move_id, photo_id, engine, model, prompt_version, reading, raw, error, input_tokens, output_tokens, latency_ms, created_at]
+      properties:
+        id: {type: string}
+        move_id: {type: string}
+        photo_id: {type: string}
+        engine: {type: string}
+        model: {type: string}
+        prompt_version: {type: string}
+        reading: {$ref: "#/components/schemas/Reading"}
+        raw: {type: string}
+        error: {type: string}
+        input_tokens: {type: integer, format: int64}
+        output_tokens: {type: integer, format: int64}
+        latency_ms: {type: integer, format: int64}
+        created_at: {type: string, format: date-time}
+    MoveDetail:
+      allOf:
+        - $ref: "#/components/schemas/Move"
+        - type: object
+          required: [attempts]
+          properties:
+            attempts: {type: array, nullable: true, items: {$ref: "#/components/schemas/Attempt"}}
+    Step:
+      type: object
+      required: [char, value, weight, product]
+      properties: {char: {type: string}, value: {type: integer}, weight: {type: integer}, product: {type: integer}}
+    Validation:
+      type: object
+      required: [input, normalized, well_formed, check_digit_valid, expected_check_digit, valid, sum, remainder]
+      properties:
+        input: {type: string}
+        normalized: {type: string}
+        well_formed: {type: boolean}
+        check_digit_valid: {type: boolean}
+        expected_check_digit: {type: integer, nullable: true}
+        valid: {type: boolean}
+        steps: {type: array, items: {$ref: "#/components/schemas/Step"}}
+        sum: {type: integer}
+        remainder: {type: integer}
+    TestReadResult:
+      type: object
+      required: [attempt, frame]
+      properties:
+        attempt:
+          type: object
+          required: [engine, model, prompt_version, reading, raw, usage, latency_ms]
+          properties:
+            engine: {type: string}
+            model: {type: string}
+            prompt_version: {type: string}
+            reading: {$ref: "#/components/schemas/Reading"}
+            raw: {type: string}
+            usage:
+              type: object
+              required: [input_tokens, output_tokens]
+              properties: {input_tokens: {type: integer}, output_tokens: {type: integer}}
+            latency_ms: {type: integer, format: int64}
+        frame: {$ref: "#/components/schemas/Frame"}
+        error: {type: string}
+    Session:
+      type: object
+      required: [user, companies, role, modules, permissions]
+      properties:
+        user:
+          type: object
+          required: [id, email, name]
+          properties: {id: {type: string}, email: {type: string}, name: {type: string}}
+        companies:
+          type: array
+          items:
+            type: object
+            required: [id, name, depots]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              depots: {type: array, items: {$ref: "#/components/schemas/Depot"}}
+        companyId: {type: string}
+        depotId: {type: string}
+        role: {$ref: "#/components/schemas/Role"}
+        modules: {type: array, items: {type: string}}
+        permissions: {type: array, items: {type: string}}
+        platformAdmin: {type: boolean}
+    Company:
+      type: object
+      required: [id, name, country, modules]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        country: {type: string}
+        modules: {type: array, items: {type: string}}
+    Depot:
+      type: object
+      required: [id, name]
+      properties: {id: {type: string}, name: {type: string}, locode: {type: string}}
+    Member:
+      type: object
+      required: [userId, email, name, role, depotIds]
+      properties:
+        userId: {type: string}
+        email: {type: string}
+        name: {type: string}
+        role: {$ref: "#/components/schemas/Role"}
+        depotIds: {type: array, items: {type: string}}
+    MemberUpdate:
+      type: object
+      required: [role, depotIds]
+      properties:
+        role: {$ref: "#/components/schemas/Role"}
+        depotIds: {type: array, items: {type: string}}
+    Invitation:
+      type: object
+      required: [id, email, role, depotIds, expiresAt]
+      properties:
+        id: {type: string}
+        email: {type: string}
+        role: {$ref: "#/components/schemas/Role"}
+        depotIds: {type: array, items: {type: string}}
+        expiresAt: {type: string, format: date-time}
+    Liner:
+      type: object
+      required: [code, name]
+      properties: {code: {type: string}, name: {type: string}}
+    Locode:
+      type: object
+      required: [code, name, country]
+      properties: {code: {type: string}, name: {type: string}, country: {type: string}}
+    Line:
+      type: object
+      required: [id, name, active]
+      properties: {id: {type: string}, name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}, active: {type: boolean}}
+    LineInput:
+      type: object
+      properties: {name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}}
+    LineList:
+      type: object
+      required: [items, total]
+      properties: {items: {type: array, items: {$ref: "#/components/schemas/Line"}}, total: {type: integer}}
+    Customer:
+      type: object
+      required: [id, name, active]
+      properties: {id: {type: string}, name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}, active: {type: boolean}}
+    CustomerInput:
+      type: object
+      properties: {name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}}
+    CustomerList:
+      type: object
+      required: [items, total]
+      properties: {items: {type: array, items: {$ref: "#/components/schemas/Customer"}}, total: {type: integer}}
+    Haulier:
+      type: object
+      required: [id, name, active]
+      properties: {id: {type: string}, name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}, active: {type: boolean}}
+    HaulierInput:
+      type: object
+      properties: {name: {type: string}, code: {type: string}, email: {type: string}, phone: {type: string}}
+    HaulierList:
+      type: object
+      required: [items, total]
+      properties: {items: {type: array, items: {$ref: "#/components/schemas/Haulier"}}, total: {type: integer}}
