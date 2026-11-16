@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -378,7 +377,7 @@ func TestCameraConfidenceIsOneStillsConfidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
-	if math.Abs(got.Confidence-0.95) > 1e-6 { // the column is REAL (float4)
+	if got.Confidence != 0.95 {
 		t.Fatalf("confidence = %v; want 0.95, the best single still (no bonus for stills of one side)", got.Confidence)
 	}
 	var res recognition.Result

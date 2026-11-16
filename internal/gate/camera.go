@@ -50,7 +50,7 @@ func (s *Service) AddFrame(ctx context.Context, moveID string, jpeg []byte, widt
 	}
 	p, err := s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg",
-		Bytes: int64(len(jpeg)), Width: width, Height: height, Deferred: true, ReadEnabled: true,
+		Bytes: int64(len(jpeg)), Width: width, Height: height, Deferred: true, ReadEnabled: s.ocrOn(ctx),
 	}, "camera")
 	if err != nil {
 		return store.Photo{}, err
@@ -68,6 +68,9 @@ func (s *Service) ReadFrame(ctx context.Context, photoID string) error {
 	}
 	if _, err := s.openMove(ctx, p.MoveID); err != nil {
 		return err
+	}
+	if !p.ReadEnabled {
+		return nil // taken while ocr was off: never read
 	}
 	if err := s.store.MarkForReading(ctx, p.ID, "camera"); err != nil {
 		return err

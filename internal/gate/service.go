@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 
@@ -24,6 +25,9 @@ var (
 	ErrNumberRequired = errors.New("a container number is required")
 	ErrBadPhoto       = errors.New("photo missing or not a JPEG, PNG or WebP image")
 )
+
+// ModuleOCR is the company module that lets AI read gate photos.
+const ModuleOCR = "ocr"
 
 // Config tunes the service.
 type Config struct {
@@ -99,8 +103,9 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	for _, id := range companies {
 		// Reads span the company's depots; each job keeps its photo's depot.
+		// The gate never stops: one company's failure must not keep the others from recovering.
 		if err := s.recoverCompany(tenancy.With(ctx, tenancy.Scope{CompanyID: id}), id); err != nil {
-			return err
+			log.Printf("gate: recover company %s: %v", id, err)
 		}
 	}
 	return nil
@@ -199,7 +204,9 @@ func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, err
 		return p, err
 	}
 	s.notifyMove(ctx, p.MoveID)
-	s.enqueue(job{scope: scopeOf(ctx), moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType}) // a phone photo: default detail
+	if p.ReadEnabled {
+		s.enqueue(job{scope: scopeOf(ctx), moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType}) // a phone photo: default detail
+	}
 	return p, nil
 }
 
@@ -229,13 +236,17 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 	if role == "" {
 		role = "other"
 	}
+	readEnabled := s.ocrOn(ctx)
 	p, err = s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
 		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,
-		ReadEnabled: true, // until the ocr module switch (Task 6)
+		ReadEnabled: readEnabled,
 	}, in.Actor)
 	if err != nil {
 		return store.Photo{}, false, err
+	}
+	if !readEnabled {
+		return p, true, nil // stored for the clerk; nothing will read it
 	}
 	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
 		return store.Photo{}, false, err
@@ -252,7 +263,7 @@ func (s *Service) Reread(ctx context.Context, moveID string) error {
 	}
 	var photos []store.Photo
 	for _, p := range m.Photos {
-		if !p.Deferred {
+		if !p.Deferred && p.ReadEnabled {
 			photos = append(photos, p)
 		}
 	}
@@ -268,6 +279,44 @@ func (s *Service) Reread(ctx context.Context, moveID string) error {
 		s.enqueue(job{scope: scopeOf(ctx), moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
 	}
 	return nil
+}
+
+// ocrOn reports whether ctx's company has the ocr module on. When that cannot
+// be told, nothing is read: the clerk types the number.
+func (s *Service) ocrOn(ctx context.Context) bool {
+	mods, err := s.store.CompanyModules(ctx)
+	if err != nil {
+		log.Printf("gate: company modules: %v", err)
+		return false
+	}
+	return slices.Contains(mods, ModuleOCR)
+}
+
+// ManualEntry records a container number typed by a person. A number that
+// passes its check digit is accepted and verified; any other is stored and
+// the move goes to review.
+func (s *Service) ManualEntry(ctx context.Context, moveID, number, by string) (store.Move, error) {
+	n := iso6346.Normalize(number)
+	if n == "" {
+		return store.Move{}, ErrNumberRequired
+	}
+	if iso6346.IsValid(n) {
+		return s.Resolve(ctx, moveID, Resolution{Action: "correct", Number: n, By: by})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.openMove(ctx, moveID); err != nil {
+		return store.Move{}, err
+	}
+	err := s.store.SetResult(ctx, moveID, store.ReadOutcome{
+		Status: store.StatusNeedsReview, Number: n, Decision: string(recognition.DecisionReview),
+		Reason: "typed number fails its check digit",
+	})
+	if err != nil {
+		return store.Move{}, err
+	}
+	s.notifyMove(ctx, moveID)
+	return s.store.GetMove(ctx, moveID)
 }
 
 // Resolution is a person's decision.
@@ -393,15 +442,30 @@ func (s *Service) worker() {
 
 func (s *Service) process(j job) {
 	ctx := tenancy.With(s.ctx, j.scope)
+	if !s.ocrOn(ctx) {
+		// Switched off while queued: leave the move open for the clerk. The
+		// hook still hears of it, so a camera visit does not wait for ever.
+		if s.hook != nil && ctx.Err() == nil {
+			s.hook(j.moveID, j.photoID, recognition.ErrorFrame(j.role, "ocr module is off"))
+		}
+		return
+	}
 	img := recognition.Image{MediaType: j.aiType, Detail: j.detail}
+	called := false
 	data, err := s.blobs.Get(j.aiSHA)
 	att := recognition.Attempt{Engine: s.rec.Name(), Model: s.rec.Model(), PromptVersion: recognition.PromptVersion}
 	if err == nil {
 		img.Data = data
 		att, err = s.rec.Read(ctx, img)
+		called = true
 	}
 	if ctx.Err() != nil {
 		return // shutting down: the photo stays unread and Start re-queues it
+	}
+	if called {
+		if uerr := s.store.AddUsage(ctx, "ocr_read", 1); uerr != nil {
+			log.Printf("gate: count read of photo %s: %v", j.photoID, uerr)
+		}
 	}
 	frame := recognition.BuildFrame(j.role, att.Reading)
 	reading, _ := json.Marshal(att.Reading)

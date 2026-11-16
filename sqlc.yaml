@@ -13,7 +13,5 @@ sql:
             go_type: time.Time
           - db_type: jsonb
             go_type: encoding/json.RawMessage
-          - db_type: pg_catalog.float4
-            go_type: float64
           - db_type: pg_catalog.int4
             go_type: int64

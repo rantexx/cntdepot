@@ -16,6 +16,9 @@ import (
 // DefaultGeminiModel is used unless the operator picks another model.
 const DefaultGeminiModel = "gemini-3.8-flash"
 
+// defaultFallbacks are tried, in order, when the default model is overloaded.
+var defaultFallbacks = []string{"gemini-3.5-flash"}
+
 const defaultGeminiURL = "https://generativelanguage.googleapis.com"
 
 // GeminiConfig configures the Gemini engine.
@@ -25,7 +28,10 @@ type GeminiConfig struct {
 	ThinkingLevel string        // for example low or high; empty leaves the model default
 	BaseURL       string        // empty: the public Gemini API (tests point it at a fake)
 	Timeout       time.Duration // per request; zero: 60s
-	Retries       int           // extra attempts after temporary failures
+	Retries       int           // extra attempts after temporary failures, per model
+	// Fallbacks are tried in order when a model stays unavailable (HTTP 503,
+	// 429, ...) after its Retries. Nil with the default Model: gemini-3.5-flash.
+	Fallbacks []string
 }
 
 // Gemini reads photos with the Gemini API.
@@ -40,6 +46,9 @@ var _ Recognizer = (*Gemini)(nil)
 func NewGemini(cfg GeminiConfig) *Gemini {
 	if cfg.Model == "" {
 		cfg.Model = DefaultGeminiModel
+	}
+	if cfg.Fallbacks == nil && cfg.Model == DefaultGeminiModel {
+		cfg.Fallbacks = defaultFallbacks
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultGeminiURL
@@ -127,17 +136,23 @@ func (g *Gemini) Read(ctx context.Context, img Image) (Attempt, error) {
 	}
 
 	var resp geminiResponse
-	for try := 0; ; try++ {
-		resp = geminiResponse{}
-		err = g.post(ctx, body, &resp)
-		if err == nil || !errors.Is(err, ErrUnavailable) || try >= g.cfg.Retries {
-			break
+	for _, model := range append([]string{g.cfg.Model}, g.cfg.Fallbacks...) {
+		att.Model = model
+		for try := 0; ; try++ {
+			resp = geminiResponse{}
+			err = g.post(ctx, model, body, &resp)
+			if err == nil || !errors.Is(err, ErrUnavailable) || try >= g.cfg.Retries {
+				break
+			}
+			select {
+			case <-time.After(time.Duration(try+1) * time.Second):
+			case <-ctx.Done():
+				att.LatencyMS = time.Since(start).Milliseconds()
+				return att, ctx.Err()
+			}
 		}
-		select {
-		case <-time.After(time.Duration(try+1) * time.Second):
-		case <-ctx.Done():
-			att.LatencyMS = time.Since(start).Milliseconds()
-			return att, ctx.Err()
+		if err == nil || !errors.Is(err, ErrUnavailable) {
+			break // answered, or failed in a way another model will not fix
 		}
 	}
 	att.LatencyMS = time.Since(start).Milliseconds()
@@ -205,8 +220,8 @@ func (g *Gemini) request(img Image) map[string]any {
 }
 
 // post sends one request and maps HTTP failures onto engine errors.
-func (g *Gemini) post(ctx context.Context, body []byte, out *geminiResponse) error {
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(g.cfg.BaseURL, "/"), g.cfg.Model)
+func (g *Gemini) post(ctx context.Context, model string, body []byte, out *geminiResponse) error {
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(g.cfg.BaseURL, "/"), model)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err

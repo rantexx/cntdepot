@@ -106,7 +106,7 @@ CREATE TABLE gate_moves (
     number            TEXT NOT NULL DEFAULT '',
     type_code         TEXT NOT NULL DEFAULT '',
     color             TEXT NOT NULL DEFAULT '',
-    confidence        REAL NOT NULL DEFAULT 0,
+    confidence        DOUBLE PRECISION NOT NULL DEFAULT 0,
     check_digit_valid BOOLEAN NOT NULL DEFAULT false,
     decision          TEXT NOT NULL DEFAULT '',
     reason            TEXT NOT NULL DEFAULT '',

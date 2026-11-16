@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -129,7 +130,9 @@ func TestGeminiInvalidKeyIsAuthError(t *testing.T) {
 
 func TestGeminiOverloadIsUnavailable(t *testing.T) {
 	srv, calls := fakeGemini(t, []int{503}, []string{`{"error":{"code":503,"status":"UNAVAILABLE"}}`}, nil)
-	if _, err := testGemini(srv, 0).Read(context.Background(), jpeg); !errors.Is(err, ErrUnavailable) {
+	g := testGemini(srv, 0)
+	g.cfg.Fallbacks = []string{} // one model only
+	if _, err := g.Read(context.Background(), jpeg); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v; want ErrUnavailable", err)
 	}
 	if calls.Load() != 1 {
@@ -179,5 +182,49 @@ func TestGeminiAsksForUltraHighDetailOnlyWhenTold(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != nil || got[1] != "MEDIA_RESOLUTION_ULTRA_HIGH" {
 		t.Fatalf("mediaResolution levels = %v; want [<nil> MEDIA_RESOLUTION_ULTRA_HIGH]", got)
+	}
+}
+
+// modelServer answers each model path with the given status; 200 returns geminiOK.
+func modelServer(t *testing.T, status map[string]int) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status[model])
+		if status[model] == 200 {
+			_, _ = io.WriteString(w, geminiOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func TestFallbackOn503(t *testing.T) { testFallback(t, 503) }
+func TestFallbackOn429(t *testing.T) { testFallback(t, 429) }
+
+func testFallback(t *testing.T, code int) {
+	srv, calls := modelServer(t, map[string]int{DefaultGeminiModel: code, "gemini-3.5-flash": 200})
+	att, err := testGemini(srv, 0).Read(context.Background(), jpeg)
+	if err != nil || att.Model != "gemini-3.5-flash" || calls.Load() != 2 {
+		t.Fatalf("model = %q, calls = %d, err = %v", att.Model, calls.Load(), err)
+	}
+}
+
+func TestAllModelsFailRecordsError(t *testing.T) {
+	srv, calls := modelServer(t, map[string]int{DefaultGeminiModel: 503, "gemini-3.5-flash": 429})
+	att, err := testGemini(srv, 0).Read(context.Background(), jpeg)
+	if !errors.Is(err, ErrUnavailable) || calls.Load() != 2 || att.Model != "gemini-3.5-flash" {
+		t.Fatalf("model = %q, calls = %d, err = %v", att.Model, calls.Load(), err)
+	}
+}
+
+func TestNoFallbackForAnotherModelUnlessGiven(t *testing.T) {
+	srv, calls := modelServer(t, map[string]int{"custom": 503})
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "custom", BaseURL: srv.URL})
+	if _, err := g.Read(context.Background(), jpeg); err == nil || calls.Load() != 1 {
+		t.Fatalf("calls = %d, err = %v", calls.Load(), err)
 	}
 }
