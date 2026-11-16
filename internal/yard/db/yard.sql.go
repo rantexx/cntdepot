@@ -159,7 +159,7 @@ func (q *Queries) DetachVisit(ctx context.Context, arg DetachVisitParams) error 
 }
 
 const eIRHeader = `-- name: EIRHeader :one
-SELECT c.name AS company_name, d.name AS depot_name, COALESCE(h.name, '')::text AS haulier_name,
+SELECT c.name AS company_name, d.name AS depot_name, d.timezone AS depot_timezone, COALESCE(h.name, '')::text AS haulier_name,
     (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections,
     COALESCE((SELECT e.payload->>'reason' FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected'
         ORDER BY e.seq DESC LIMIT 1), '')::text AS correction_reason
@@ -178,6 +178,7 @@ type EIRHeaderParams struct {
 type EIRHeaderRow struct {
 	CompanyName      string
 	DepotName        string
+	DepotTimezone    string
 	HaulierName      string
 	Corrections      int64
 	CorrectionReason string
@@ -190,6 +191,7 @@ func (q *Queries) EIRHeader(ctx context.Context, arg EIRHeaderParams) (EIRHeader
 	err := row.Scan(
 		&i.CompanyName,
 		&i.DepotName,
+		&i.DepotTimezone,
 		&i.HaulierName,
 		&i.Corrections,
 		&i.CorrectionReason,
@@ -1573,7 +1575,7 @@ const setMoveForm = `-- name: SetMoveForm :execrows
 UPDATE gate_moves SET visit_id = $1, order_id = $2, order_item_id = $3,
     truck_plate = $4, trailer_plate = $5, driver_name = $6,
     haulier_id = $7, seal = $8, full_empty = $9, condition = $10,
-    signature_photo_id = $11, form_saved_at = $12, updated_at = $12
+    signature_photo_id = $11, form_saved_at = COALESCE(form_saved_at, $12), updated_at = $12
 WHERE company_id = $13 AND ($14::text = '' OR depot_id = $14) AND id = $15
 `
 
@@ -1589,7 +1591,7 @@ type SetMoveFormParams struct {
 	FullEmpty        string
 	Condition        string
 	SignaturePhotoID *string
-	FormSavedAt      *time.Time
+	FormSavedAt      time.Time
 	CompanyID        string
 	DepotID          string
 	ID               string

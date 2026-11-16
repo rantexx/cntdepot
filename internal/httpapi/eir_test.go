@@ -24,8 +24,9 @@ var eirPNG = []byte("\x89PNG\r\n\x1a\n0000000000000000")
 
 type eirEnv struct {
 	*env
-	y *yard.Service
-	s *yard.Store
+	y    *yard.Service
+	rear string
+	s    *yard.Store
 }
 
 func newEIREnv(t *testing.T) *eirEnv {
@@ -42,8 +43,14 @@ func newEIREnv(t *testing.T) *eirEnv {
 // id, a fresh token and the damage photo's id.
 func (x *eirEnv) move(t *testing.T, number string) (id, token, photo string) {
 	t.Helper()
+	return x.moveFrom(t, number, "phone")
+}
+
+// moveFrom is move with the given source; it also adds a "rear" container photo, kept in x.rear.
+func (x *eirEnv) moveFrom(t *testing.T, number, source string) (id, token, photo string) {
+	t.Helper()
 	ctx := testkit.Ctx()
-	m, err := x.store.CreateMove(ctx, "1", false, "clerk")
+	m, err := x.store.CreateMoveWithSource(ctx, "1", source, false, "clerk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +62,13 @@ func (x *eirEnv) move(t *testing.T, number string) (id, token, photo string) {
 		MediaType: "image/png", AIMediaType: "image/png", Bytes: 1}, "clerk")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if rd, err := x.blobs.Put(append(eirPNG, "rear"+number...)); err != nil {
+		t.Fatal(err)
+	} else if rp, err := x.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "Rear", SHA256: rd, AISHA256: rd, MediaType: "image/png", AIMediaType: "image/png", Bytes: 1}, "clerk"); err != nil {
+		t.Fatal(err)
+	} else {
+		x.rear = rp.ID
 	}
 	form := yard.GateForm{MoveID: m.ID, Direction: "in", Number: number, TypeCode: "45G1", FullEmpty: "E", Seal: "SEAL77",
 		Condition: "damaged", TruckPlate: "34ABC12", DriverName: "Ali <b>Veli</b>",
@@ -168,20 +182,69 @@ func TestEIRShowsCorrectionAndVoidBanner(t *testing.T) {
 
 func TestEIRHeadersNoStoreNoIndex(t *testing.T) {
 	x := newEIREnv(t)
-	_, tok, _ := x.move(t, eirNumA)
-	for _, path := range []string{"/eir/" + tok, "/eir/nope"} {
+	_, tok, photo := x.move(t, eirNumA)
+	for _, path := range []string{"/eir/" + tok, "/eir/nope", "/eir/" + tok + "/photo/" + photo, "/eir/" + tok + "/photo/nope"} {
 		resp, _ := x.get(t, path)
 		h := resp.Header
 		if h.Get("Cache-Control") != "no-store" || h.Get("X-Robots-Tag") != "noindex" || h.Get("Referrer-Policy") != "no-referrer" {
 			t.Errorf("%s headers: %v", path, h)
 		}
 		csp := h.Get("Content-Security-Policy")
-		if !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "unsafe-inline") && !strings.Contains(csp, "style-src") {
+		if !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "script-src") || strings.Contains(csp, "unsafe-inline") {
 			t.Errorf("%s csp %q", path, csp)
 		}
 	}
 	// Needs no session and no client header, and does not require a known Host.
 	if code, _ := rawCall(t, "GET", x.srv.URL+"/eir/"+tok, "evil.example", "", ""); code != 200 {
 		t.Errorf("odd host: %d", code)
+	}
+}
+
+func TestEIRContainerPhotosOnlyForPhoneMoves(t *testing.T) {
+	x := newEIREnv(t)
+	_, tokP, _ := x.move(t, eirNumA)
+	rearP := x.rear
+	_, tokC, damC := x.moveFrom(t, eirNumB, "camera")
+	rearC := x.rear
+	_, body := x.get(t, "/eir/"+tokP)
+	if !strings.Contains(body, "/photo/"+rearP) {
+		t.Error("phone move lacks its container photo")
+	}
+	if resp, _ := x.get(t, "/eir/"+tokP+"/photo/"+rearP); resp.StatusCode != 200 {
+		t.Errorf("phone container photo: %d", resp.StatusCode)
+	}
+	_, body = x.get(t, "/eir/"+tokC)
+	if strings.Contains(body, "/photo/"+rearC) {
+		t.Error("camera move shows a camera frame")
+	}
+	if resp, _ := x.get(t, "/eir/"+tokC+"/photo/"+rearC); resp.StatusCode != 404 {
+		t.Errorf("camera frame: %d", resp.StatusCode)
+	}
+	if resp, _ := x.get(t, "/eir/"+tokC+"/photo/"+damC); resp.StatusCode != 200 {
+		t.Errorf("camera move damage photo: %d", resp.StatusCode)
+	}
+}
+
+func TestEIRTimeIsFirstSaveInDepotZone(t *testing.T) {
+	x := newEIREnv(t)
+	ctx := testkit.Ctx()
+	x.exec(t, "A", `UPDATE depots SET timezone = 'Europe/Istanbul' WHERE company_id = 'A'`)
+	id, tok, _ := x.move(t, eirNumA)
+	f, err := x.s.GetMoveForm(ctx, id)
+	if err != nil || f.FormSavedAt == nil {
+		t.Fatal(err)
+	}
+	first := *f.FormSavedAt
+	form := yard.GateForm{Direction: "in", Number: eirNumA, TypeCode: "45G1", FullEmpty: "F", Condition: "sound"}
+	if _, err := x.y.CorrectGateMove(ctx, id, form, "fix", "office"); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ = x.s.GetMoveForm(ctx, id); !f.FormSavedAt.Equal(first) {
+		t.Errorf("correction moved the time: %v -> %v", first, f.FormSavedAt)
+	}
+	ist, _ := time.LoadLocation("Europe/Istanbul")
+	want := strings.ReplaceAll(first.In(ist).Format("2006-01-02 15:04 MST"), "+", "&#43;")
+	if _, body := x.get(t, "/eir/"+tok); !strings.Contains(body, want) || !strings.Contains(body, "&#43;03") {
+		t.Errorf("page lacks %q", want)
 	}
 }

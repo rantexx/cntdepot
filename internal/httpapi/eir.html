@@ -17,7 +17,7 @@ h1 { margin:0; font-size:22px; text-transform:uppercase; letter-spacing:.04em; }
 .banner { margin:14px 0 0; padding:10px 14px; font-weight:700; letter-spacing:.05em; border:3px solid var(--stop); color:var(--stop); background:var(--panel); }
 .banner.corrected { border-color:var(--ink); color:var(--ink); background:var(--caution); }
 .banner span { display:block; font-weight:400; text-transform:none; letter-spacing:0; margin-top:2px; }
-.plate { display:inline-flex; align-items:stretch; margin:18px 0 6px; border:3px solid var(--ink); border-radius:14px; background:var(--panel); font-weight:700; font-size:34px; letter-spacing:.06em; font-variant-numeric:tabular-nums; }
+.plate { display:inline-flex; align-items:stretch; margin:18px 0 6px; border:3px solid var(--ink); border-radius:14px; background:var(--panel); font-weight:700; font-size:34px; letter-spacing:.03em; font-variant-numeric:tabular-nums; }
 .plate .n { padding:6px 14px; }
 .plate .cd { padding:6px 12px; border-left:3px solid var(--ink); border-radius:0 11px 11px 0; background:var(--ink); color:#fff; }
 .voided .plate .n { text-decoration:line-through; }
@@ -30,6 +30,8 @@ h2 { margin:22px 0 6px; font-size:15px; text-transform:uppercase; letter-spacing
 .imgs { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .imgs img { max-width:100%; width:220px; height:auto; border:1px solid var(--rule); }
 .sig img { background:var(--panel); border:1px solid var(--rule); max-width:100%; width:320px; height:auto; }
+@page { size:A4; margin:12mm }
+.banner, .plate, .plate .cd { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
 @media print { body { background:#fff; } main { padding:0; } .langs { display:none; } }
 </style>
 </head>
@@ -48,19 +50,20 @@ h2 { margin:22px 0 6px; font-size:15px; text-transform:uppercase; letter-spacing
 <dl>
   <dt>{{.L.direction}}</dt><dd>{{.Direction}}</dd>
   <dt>{{.L.time}}</dt><dd>{{.When}}</dd>
-  <dt>{{.L.iso}}</dt><dd>{{.E.TypeCode}}</dd>
-  <dt>{{.L.fullempty}}</dt><dd>{{.FullEmpty}}</dd>
-  <dt>{{.L.seal}}</dt><dd>{{.E.Seal}}</dd>
-  <dt>{{.L.condition}}</dt><dd>{{.Condition}}</dd>
-  <dt>{{.L.truck}}</dt><dd>{{.E.TruckPlate}}</dd>
-  <dt>{{.L.trailer}}</dt><dd>{{.E.TrailerPlate}}</dd>
-  <dt>{{.L.driver}}</dt><dd>{{.E.Driver}}</dd>
-  <dt>{{.L.haulier}}</dt><dd>{{.E.Haulier}}</dd>
+  <dt>{{.L.iso}}</dt><dd>{{or .E.TypeCode "—"}}</dd>
+  <dt>{{.L.fullempty}}</dt><dd>{{or .FullEmpty "—"}}</dd>
+  <dt>{{.L.seal}}</dt><dd>{{or .E.Seal "—"}}</dd>
+  <dt>{{.L.condition}}</dt><dd>{{or .Condition "—"}}</dd>
+  <dt>{{.L.truck}}</dt><dd>{{or .E.TruckPlate "—"}}</dd>
+  <dt>{{.L.trailer}}</dt><dd>{{or .E.TrailerPlate "—"}}</dd>
+  <dt>{{.L.driver}}</dt><dd>{{or .E.Driver "—"}}</dd>
+  <dt>{{.L.haulier}}</dt><dd>{{or .E.Haulier "—"}}</dd>
 </dl>
 <h2>{{.L.damages}}</h2>
 {{range .E.Damages}}<div class="dmg"><b>{{.Location}}</b>{{.Description}}
   <div class="imgs">{{range .PhotoIDs}}<a href="/eir/{{$.Token}}/photo/{{.}}"><img src="/eir/{{$.Token}}/photo/{{.}}" alt="{{$.L.damagephoto}}" loading="lazy"></a>{{end}}</div></div>
 {{else}}<p class="sub">{{.L.nodamage}}</p>{{end}}
+{{if .E.Photos}}<h2>{{.L.containerphotos}}</h2><div class="imgs">{{range .E.Photos}}<a href="/eir/{{$.Token}}/photo/{{.}}"><img src="/eir/{{$.Token}}/photo/{{.}}" alt="{{$.L.containerphoto}}" loading="lazy"></a>{{end}}</div>{{end}}
 {{if .E.SignatureID}}<h2>{{.L.signature}}</h2><div class="sig"><img src="/eir/{{.Token}}/photo/{{.E.SignatureID}}" alt="{{.L.signature}}"></div>{{end}}
 </main>
 </body>

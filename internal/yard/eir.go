@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"depot/internal/store"
@@ -46,7 +47,9 @@ type EIR struct {
 	TruckPlate, TrailerPlate, Driver, Haulier               string
 	At                                                      time.Time
 	Damages                                                 []EIRDamage
-	SignatureID                                             string // photo id, "" when none
+	SignatureID                                             string   // photo id, "" when none
+	Timezone                                                string   // the depot's IANA zone
+	Photos                                                  []string // container photo ids; none for camera-lane moves
 	Corrected                                               bool
 	CorrectionReason                                        string
 	Voided                                                  bool
@@ -89,7 +92,7 @@ func (s *Service) OpenEIR(ctx context.Context, token string) (EIR, error) {
 		CompanyID: company, MoveID: moveID, Company: hd.CompanyName, Depot: hd.DepotName, Haulier: hd.HaulierName,
 		Direction: m.Direction, Number: m.Number, TypeCode: m.TypeCode, FullEmpty: f.FullEmpty, Seal: f.Seal,
 		Condition: f.Condition, TruckPlate: f.TruckPlate, TrailerPlate: f.TrailerPlate, Driver: f.DriverName,
-		At: m.CreatedAt, SignatureID: deref(f.SignaturePhotoID),
+		Timezone: hd.DepotTimezone, Photos: eirContainerPhotos(m), At: m.CreatedAt, SignatureID: deref(f.SignaturePhotoID),
 		Corrected: hd.Corrections > 0, CorrectionReason: hd.CorrectionReason, Voided: f.Voided, VoidReason: f.VoidReason,
 	}
 	if f.FormSavedAt != nil {
@@ -108,7 +111,7 @@ func notFoundOf(err error) error {
 	return err
 }
 
-// EIRPhotoDigest returns the blob digest of a damage or signature photo of the
+// EIRPhotoDigest returns the blob digest of a damage, signature or container photo of the
 // token's move. Any other photo, of this move or another, is ErrNotFound.
 func (s *Service) EIRPhotoDigest(ctx context.Context, token, photoID string) (string, error) {
 	e, err := s.OpenEIR(ctx, token)
@@ -116,6 +119,7 @@ func (s *Service) EIRPhotoDigest(ctx context.Context, token, photoID string) (st
 		return "", err
 	}
 	shown := photoID == e.SignatureID
+	shown = shown || slices.Contains(e.Photos, photoID)
 	for _, d := range e.Damages {
 		shown = shown || slices.Contains(d.PhotoIDs, photoID)
 	}
@@ -130,4 +134,19 @@ func (s *Service) EIRPhotoDigest(ctx context.Context, token, photoID string) (st
 		return "", ErrNotFound
 	}
 	return p.SHA256, nil
+}
+
+// eirContainerPhotos are the container photos a phone-taken move shows. Camera
+// lane frames can show the driver, so they are never shown.
+func eirContainerPhotos(m store.Move) (ids []string) {
+	if m.Source != "phone" {
+		return nil
+	}
+	for _, p := range m.Photos {
+		switch strings.ToLower(p.Role) {
+		case "rear", "front", "left", "right", "door", "side", "other":
+			ids = append(ids, p.ID)
+		}
+	}
+	return ids
 }

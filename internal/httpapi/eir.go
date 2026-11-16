@@ -8,6 +8,8 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"time"
+	_ "time/tzdata" // depot zones work on minimal images
 
 	"depot/internal/yard"
 )
@@ -25,14 +27,14 @@ var eirText = map[string]map[string]string{
 		"title": "Equipment Interchange Receipt", "voided": "VOIDED", "corrected": "CORRECTED", "direction": "Direction",
 		"time": "Time", "iso": "ISO type", "fullempty": "Full / empty", "seal": "Seal", "condition": "Condition",
 		"truck": "Truck", "trailer": "Trailer", "driver": "Driver", "haulier": "Haulier", "damages": "Damages",
-		"nodamage": "No damage recorded.", "damagephoto": "Damage photo", "signature": "Signature",
+		"nodamage": "No damage recorded.", "damagephoto": "Damage photo", "containerphotos": "Container photos", "containerphoto": "Container photo", "signature": "Signature",
 		"in": "Gate in", "out": "Gate out", "F": "Full", "E": "Empty", "sound": "Sound", "damaged": "Damaged",
 	},
 	"tr": {
 		"title": "Ekipman Teslim Belgesi", "voided": "İPTAL EDİLDİ", "corrected": "DÜZELTİLDİ", "direction": "Yön",
 		"time": "Zaman", "iso": "ISO tipi", "fullempty": "Dolu / boş", "seal": "Mühür", "condition": "Durum",
 		"truck": "Çekici", "trailer": "Dorse", "driver": "Sürücü", "haulier": "Nakliyeci", "damages": "Hasarlar",
-		"nodamage": "Hasar kaydı yok.", "damagephoto": "Hasar fotoğrafı", "signature": "İmza",
+		"nodamage": "Hasar kaydı yok.", "damagephoto": "Hasar fotoğrafı", "containerphotos": "Konteyner fotoğrafları", "containerphoto": "Konteyner fotoğrafı", "signature": "İmza",
 		"in": "Giriş", "out": "Çıkış", "F": "Dolu", "E": "Boş", "sound": "Sağlam", "damaged": "Hasarlı",
 	},
 }
@@ -90,7 +92,7 @@ func (s *Server) eirPage(w http.ResponseWriter, r *http.Request) {
 	err = eirTemplate.Execute(w, map[string]any{
 		"E": e, "L": l, "Lang": lang, "Nonce": nonce, "Token": token, "Owner": owner, "Check": check,
 		"Direction": word(e.Direction), "FullEmpty": word(e.FullEmpty), "Condition": word(e.Condition),
-		"When": e.At.UTC().Format("2006-01-02 15:04 UTC"),
+		"When": whenIn(e.At, e.Timezone),
 	})
 	if err != nil {
 		log.Printf("eir: render: %v", err)
@@ -104,5 +106,19 @@ func (s *Server) eirPhoto(w http.ResponseWriter, r *http.Request) {
 		eirFail(w, err)
 		return
 	}
-	s.serveBlob(w, digest, 1200)
+	data, err := s.opts.Blobs.Get(digest)
+	if err != nil { // a plain empty 404, never the API's JSON error
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	writeBlob(w, data, 1200)
+}
+
+// whenIn shows t in the depot's time zone with its abbreviation (UTC when the zone is unknown).
+func whenIn(t time.Time, zone string) string {
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04 MST")
 }

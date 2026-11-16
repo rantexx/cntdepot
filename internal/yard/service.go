@@ -442,7 +442,7 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 		CompanyID: c, ID: m.ID, VisitID: &visitID, OrderID: orderID, OrderItemID: itemID,
 		TruckPlate: strings.TrimSpace(f.TruckPlate), TrailerPlate: strings.TrimSpace(f.TrailerPlate), DriverName: strings.TrimSpace(f.DriverName),
 		HaulierID: opt(f.HaulierID), Seal: strings.TrimSpace(f.Seal), FullEmpty: fullEmpty, Condition: condition,
-		SignaturePhotoID: sig, FormSavedAt: &now,
+		SignaturePhotoID: sig, FormSavedAt: now,
 	})); err != nil {
 		return Result{}, err
 	}

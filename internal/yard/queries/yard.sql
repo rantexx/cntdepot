@@ -175,7 +175,7 @@ SELECT * FROM line_prefixes WHERE company_id = @company_id ORDER BY prefix;
 UPDATE gate_moves SET visit_id = @visit_id, order_id = @order_id, order_item_id = @order_item_id,
     truck_plate = @truck_plate, trailer_plate = @trailer_plate, driver_name = @driver_name,
     haulier_id = @haulier_id, seal = @seal, full_empty = @full_empty, condition = @condition,
-    signature_photo_id = @signature_photo_id, form_saved_at = @form_saved_at, updated_at = @form_saved_at
+    signature_photo_id = @signature_photo_id, form_saved_at = COALESCE(form_saved_at, @form_saved_at), updated_at = @form_saved_at
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
 
 -- name: GetMoveForm :one
@@ -294,7 +294,7 @@ ORDER BY i.id;
 
 -- name: EIRHeader :one
 -- What the public EIR page shows beside the gate form: names, the haulier and the correction trail.
-SELECT c.name AS company_name, d.name AS depot_name, COALESCE(h.name, '')::text AS haulier_name,
+SELECT c.name AS company_name, d.name AS depot_name, d.timezone AS depot_timezone, COALESCE(h.name, '')::text AS haulier_name,
     (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections,
     COALESCE((SELECT e.payload->>'reason' FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected'
         ORDER BY e.seq DESC LIMIT 1), '')::text AS correction_reason

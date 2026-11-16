@@ -452,7 +452,7 @@ func (s *Store) SetMoveForm(ctx context.Context, moveID string, f MoveForm) erro
 			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: moveID, VisitID: f.VisitID, OrderID: f.OrderID,
 			OrderItemID: f.OrderItemID, TruckPlate: f.TruckPlate, TrailerPlate: f.TrailerPlate, DriverName: f.DriverName,
 			HaulierID: f.HaulierID, Seal: f.Seal, FullEmpty: f.FullEmpty, Condition: f.Condition,
-			SignaturePhotoID: f.SignaturePhotoID, FormSavedAt: &now,
+			SignaturePhotoID: f.SignaturePhotoID, FormSavedAt: now,
 		}))
 	})
 }

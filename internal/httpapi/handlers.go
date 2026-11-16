@@ -67,6 +67,11 @@ func (s *Server) serveBlob(w http.ResponseWriter, digest string, width int) {
 		writeServiceError(w, err)
 		return
 	}
+	writeBlob(w, data, width)
+}
+
+// writeBlob writes blob bytes, scaled to width when > 0.
+func writeBlob(w http.ResponseWriter, data []byte, width int) {
 	if width > 0 {
 		// Any Scale error, such as an image too large to decode, serves the
 		// original: the browser decodes it, not the server.
