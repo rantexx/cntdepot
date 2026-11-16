@@ -143,16 +143,20 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 }
 
 const listAttempts = `-- name: ListAttempts :many
-SELECT company_id, id, move_id, photo_id, engine, model, prompt_version, reading_json, raw, error, input_tokens, output_tokens, latency_ms, created_at FROM recognition_attempts WHERE company_id = $1 AND move_id = $2 ORDER BY id
+SELECT company_id, id, move_id, photo_id, engine, model, prompt_version, reading_json, raw, error, input_tokens, output_tokens, latency_ms, created_at FROM recognition_attempts a WHERE a.company_id = $1 AND a.move_id = $2
+  AND EXISTS (SELECT 1 FROM gate_moves m WHERE m.company_id = a.company_id AND m.id = a.move_id
+              AND ($3::text = '' OR m.depot_id = $3))
+ORDER BY a.id
 `
 
 type ListAttemptsParams struct {
 	CompanyID string
 	MoveID    string
+	DepotID   string
 }
 
 func (q *Queries) ListAttempts(ctx context.Context, arg ListAttemptsParams) ([]RecognitionAttempt, error) {
-	rows, err := q.db.Query(ctx, listAttempts, arg.CompanyID, arg.MoveID)
+	rows, err := q.db.Query(ctx, listAttempts, arg.CompanyID, arg.MoveID, arg.DepotID)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +229,7 @@ func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]Event
 }
 
 const listSettings = `-- name: ListSettings :many
-SELECT key, value FROM settings WHERE company_id = $1 AND depot_id = $2
+SELECT key, value FROM settings WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) ORDER BY depot_id, key
 `
 
 type ListSettingsParams struct {

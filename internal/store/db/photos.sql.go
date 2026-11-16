@@ -28,32 +28,41 @@ func (q *Queries) ChoosePhoto(ctx context.Context, arg ChoosePhotoParams) (int64
 }
 
 const getPhoto = `-- name: GetPhoto :one
-SELECT company_id, id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred, read_enabled FROM photos WHERE company_id = $1 AND id = $2
+SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
+JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id
+WHERE p.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND p.id = $3
 `
 
 type GetPhotoParams struct {
 	CompanyID string
+	DepotID   string
 	ID        string
 }
 
-func (q *Queries) GetPhoto(ctx context.Context, arg GetPhotoParams) (Photo, error) {
-	row := q.db.QueryRow(ctx, getPhoto, arg.CompanyID, arg.ID)
-	var i Photo
+type GetPhotoRow struct {
+	Photo   Photo
+	DepotID string
+}
+
+func (q *Queries) GetPhoto(ctx context.Context, arg GetPhotoParams) (GetPhotoRow, error) {
+	row := q.db.QueryRow(ctx, getPhoto, arg.CompanyID, arg.DepotID, arg.ID)
+	var i GetPhotoRow
 	err := row.Scan(
-		&i.CompanyID,
-		&i.ID,
-		&i.MoveID,
-		&i.Role,
-		&i.Sha256,
-		&i.AiSha256,
-		&i.MediaType,
-		&i.AiMediaType,
-		&i.Bytes,
-		&i.Width,
-		&i.Height,
-		&i.CapturedAt,
-		&i.Deferred,
-		&i.ReadEnabled,
+		&i.Photo.CompanyID,
+		&i.Photo.ID,
+		&i.Photo.MoveID,
+		&i.Photo.Role,
+		&i.Photo.Sha256,
+		&i.Photo.AiSha256,
+		&i.Photo.MediaType,
+		&i.Photo.AiMediaType,
+		&i.Photo.Bytes,
+		&i.Photo.Width,
+		&i.Photo.Height,
+		&i.Photo.CapturedAt,
+		&i.Photo.Deferred,
+		&i.Photo.ReadEnabled,
+		&i.DepotID,
 	)
 	return i, err
 }
@@ -103,38 +112,50 @@ func (q *Queries) InsertPhoto(ctx context.Context, arg InsertPhotoParams) error 
 }
 
 const listPhotos = `-- name: ListPhotos :many
-SELECT company_id, id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred, read_enabled FROM photos WHERE company_id = $1 AND move_id = $2 ORDER BY id
+
+SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
+JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id
+WHERE p.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND p.move_id = $3
+ORDER BY p.id
 `
 
 type ListPhotosParams struct {
 	CompanyID string
+	DepotID   string
 	MoveID    string
 }
 
-func (q *Queries) ListPhotos(ctx context.Context, arg ListPhotosParams) ([]Photo, error) {
-	rows, err := q.db.Query(ctx, listPhotos, arg.CompanyID, arg.MoveID)
+type ListPhotosRow struct {
+	Photo   Photo
+	DepotID string
+}
+
+// An empty depot_id means every depot of the company.
+func (q *Queries) ListPhotos(ctx context.Context, arg ListPhotosParams) ([]ListPhotosRow, error) {
+	rows, err := q.db.Query(ctx, listPhotos, arg.CompanyID, arg.DepotID, arg.MoveID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Photo
+	var items []ListPhotosRow
 	for rows.Next() {
-		var i Photo
+		var i ListPhotosRow
 		if err := rows.Scan(
-			&i.CompanyID,
-			&i.ID,
-			&i.MoveID,
-			&i.Role,
-			&i.Sha256,
-			&i.AiSha256,
-			&i.MediaType,
-			&i.AiMediaType,
-			&i.Bytes,
-			&i.Width,
-			&i.Height,
-			&i.CapturedAt,
-			&i.Deferred,
-			&i.ReadEnabled,
+			&i.Photo.CompanyID,
+			&i.Photo.ID,
+			&i.Photo.MoveID,
+			&i.Photo.Role,
+			&i.Photo.Sha256,
+			&i.Photo.AiSha256,
+			&i.Photo.MediaType,
+			&i.Photo.AiMediaType,
+			&i.Photo.Bytes,
+			&i.Photo.Width,
+			&i.Photo.Height,
+			&i.Photo.CapturedAt,
+			&i.Photo.Deferred,
+			&i.Photo.ReadEnabled,
+			&i.DepotID,
 		); err != nil {
 			return nil, err
 		}
@@ -147,7 +168,10 @@ func (q *Queries) ListPhotos(ctx context.Context, arg ListPhotosParams) ([]Photo
 }
 
 const listPhotosOfMoves = `-- name: ListPhotosOfMoves :many
-SELECT company_id, id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred, read_enabled FROM photos WHERE company_id = $1 AND move_id = ANY($2::text[]) ORDER BY id
+SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
+JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id
+WHERE p.company_id = $1 AND p.move_id = ANY($2::text[])
+ORDER BY p.id
 `
 
 type ListPhotosOfMovesParams struct {
@@ -155,30 +179,36 @@ type ListPhotosOfMovesParams struct {
 	MoveIds   []string
 }
 
-func (q *Queries) ListPhotosOfMoves(ctx context.Context, arg ListPhotosOfMovesParams) ([]Photo, error) {
+type ListPhotosOfMovesRow struct {
+	Photo   Photo
+	DepotID string
+}
+
+func (q *Queries) ListPhotosOfMoves(ctx context.Context, arg ListPhotosOfMovesParams) ([]ListPhotosOfMovesRow, error) {
 	rows, err := q.db.Query(ctx, listPhotosOfMoves, arg.CompanyID, arg.MoveIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Photo
+	var items []ListPhotosOfMovesRow
 	for rows.Next() {
-		var i Photo
+		var i ListPhotosOfMovesRow
 		if err := rows.Scan(
-			&i.CompanyID,
-			&i.ID,
-			&i.MoveID,
-			&i.Role,
-			&i.Sha256,
-			&i.AiSha256,
-			&i.MediaType,
-			&i.AiMediaType,
-			&i.Bytes,
-			&i.Width,
-			&i.Height,
-			&i.CapturedAt,
-			&i.Deferred,
-			&i.ReadEnabled,
+			&i.Photo.CompanyID,
+			&i.Photo.ID,
+			&i.Photo.MoveID,
+			&i.Photo.Role,
+			&i.Photo.Sha256,
+			&i.Photo.AiSha256,
+			&i.Photo.MediaType,
+			&i.Photo.AiMediaType,
+			&i.Photo.Bytes,
+			&i.Photo.Width,
+			&i.Photo.Height,
+			&i.Photo.CapturedAt,
+			&i.Photo.Deferred,
+			&i.Photo.ReadEnabled,
+			&i.DepotID,
 		); err != nil {
 			return nil, err
 		}
@@ -191,43 +221,53 @@ func (q *Queries) ListPhotosOfMoves(ctx context.Context, arg ListPhotosOfMovesPa
 }
 
 const photoByDigest = `-- name: PhotoByDigest :one
-SELECT company_id, id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred, read_enabled FROM photos WHERE company_id = $1 AND (sha256 = $2 OR ai_sha256 = $2)
-ORDER BY id LIMIT 1
+SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
+JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id
+WHERE p.company_id = $1 AND ($2::text = '' OR m.depot_id = $2)
+  AND (p.sha256 = $3 OR p.ai_sha256 = $3)
+ORDER BY p.id LIMIT 1
 `
 
 type PhotoByDigestParams struct {
 	CompanyID string
+	DepotID   string
 	Digest    string
 }
 
-func (q *Queries) PhotoByDigest(ctx context.Context, arg PhotoByDigestParams) (Photo, error) {
-	row := q.db.QueryRow(ctx, photoByDigest, arg.CompanyID, arg.Digest)
-	var i Photo
+type PhotoByDigestRow struct {
+	Photo   Photo
+	DepotID string
+}
+
+func (q *Queries) PhotoByDigest(ctx context.Context, arg PhotoByDigestParams) (PhotoByDigestRow, error) {
+	row := q.db.QueryRow(ctx, photoByDigest, arg.CompanyID, arg.DepotID, arg.Digest)
+	var i PhotoByDigestRow
 	err := row.Scan(
-		&i.CompanyID,
-		&i.ID,
-		&i.MoveID,
-		&i.Role,
-		&i.Sha256,
-		&i.AiSha256,
-		&i.MediaType,
-		&i.AiMediaType,
-		&i.Bytes,
-		&i.Width,
-		&i.Height,
-		&i.CapturedAt,
-		&i.Deferred,
-		&i.ReadEnabled,
+		&i.Photo.CompanyID,
+		&i.Photo.ID,
+		&i.Photo.MoveID,
+		&i.Photo.Role,
+		&i.Photo.Sha256,
+		&i.Photo.AiSha256,
+		&i.Photo.MediaType,
+		&i.Photo.AiMediaType,
+		&i.Photo.Bytes,
+		&i.Photo.Width,
+		&i.Photo.Height,
+		&i.Photo.CapturedAt,
+		&i.Photo.Deferred,
+		&i.Photo.ReadEnabled,
+		&i.DepotID,
 	)
 	return i, err
 }
 
 const photosWithoutAttempts = `-- name: PhotosWithoutAttempts :many
-SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled FROM photos p
-WHERE p.company_id = $1 AND p.read_enabled AND NOT p.deferred
+SELECT p.company_id, p.id, p.move_id, p.role, p.sha256, p.ai_sha256, p.media_type, p.ai_media_type, p.bytes, p.width, p.height, p.captured_at, p.deferred, p.read_enabled, m.depot_id FROM photos p
+JOIN gate_moves m ON m.company_id = p.company_id AND m.id = p.move_id
+WHERE p.company_id = $1 AND ($2::text = '' OR m.depot_id = $2)
+  AND p.read_enabled AND NOT p.deferred AND m.resolved_by = ''
   AND NOT EXISTS (SELECT 1 FROM recognition_attempts a WHERE a.company_id = p.company_id AND a.photo_id = p.id)
-  AND EXISTS (SELECT 1 FROM gate_moves m
-              WHERE m.company_id = p.company_id AND m.id = p.move_id AND m.depot_id = $2 AND m.resolved_by = '')
 ORDER BY p.id
 `
 
@@ -236,30 +276,36 @@ type PhotosWithoutAttemptsParams struct {
 	DepotID   string
 }
 
-func (q *Queries) PhotosWithoutAttempts(ctx context.Context, arg PhotosWithoutAttemptsParams) ([]Photo, error) {
+type PhotosWithoutAttemptsRow struct {
+	Photo   Photo
+	DepotID string
+}
+
+func (q *Queries) PhotosWithoutAttempts(ctx context.Context, arg PhotosWithoutAttemptsParams) ([]PhotosWithoutAttemptsRow, error) {
 	rows, err := q.db.Query(ctx, photosWithoutAttempts, arg.CompanyID, arg.DepotID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Photo
+	var items []PhotosWithoutAttemptsRow
 	for rows.Next() {
-		var i Photo
+		var i PhotosWithoutAttemptsRow
 		if err := rows.Scan(
-			&i.CompanyID,
-			&i.ID,
-			&i.MoveID,
-			&i.Role,
-			&i.Sha256,
-			&i.AiSha256,
-			&i.MediaType,
-			&i.AiMediaType,
-			&i.Bytes,
-			&i.Width,
-			&i.Height,
-			&i.CapturedAt,
-			&i.Deferred,
-			&i.ReadEnabled,
+			&i.Photo.CompanyID,
+			&i.Photo.ID,
+			&i.Photo.MoveID,
+			&i.Photo.Role,
+			&i.Photo.Sha256,
+			&i.Photo.AiSha256,
+			&i.Photo.MediaType,
+			&i.Photo.AiMediaType,
+			&i.Photo.Bytes,
+			&i.Photo.Width,
+			&i.Photo.Height,
+			&i.Photo.CapturedAt,
+			&i.Photo.Deferred,
+			&i.Photo.ReadEnabled,
+			&i.DepotID,
 		); err != nil {
 			return nil, err
 		}

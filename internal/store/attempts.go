@@ -36,7 +36,7 @@ func (s *Store) AddAttempt(ctx context.Context, a Attempt) (Attempt, error) {
 		a.Reading = json.RawMessage("{}")
 	}
 	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
-		if err := exists(ctx, q, sc, a.MoveID); err != nil {
+		if _, err := exists(ctx, q, sc, a.MoveID); err != nil {
 			return err
 		}
 		return q.InsertAttempt(ctx, sqlcdb.InsertAttemptParams{
@@ -52,7 +52,7 @@ func (s *Store) AddAttempt(ctx context.Context, a Attempt) (Attempt, error) {
 func (s *Store) ListAttempts(ctx context.Context, moveID string) ([]Attempt, error) {
 	attempts := []Attempt{}
 	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
-		rows, err := q.ListAttempts(ctx, sqlcdb.ListAttemptsParams{CompanyID: sc.CompanyID, MoveID: moveID})
+		rows, err := q.ListAttempts(ctx, sqlcdb.ListAttemptsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, MoveID: moveID})
 		for _, r := range rows {
 			attempts = append(attempts, Attempt{
 				ID: r.ID, MoveID: r.MoveID, PhotoID: r.PhotoID, Engine: r.Engine, Model: r.Model,

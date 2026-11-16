@@ -155,3 +155,76 @@ func TestCompanyIDsAndModules(t *testing.T) {
 		t.Fatalf("CompanyModules = %v, %v", mods, err)
 	}
 }
+
+func TestDepotScopeFiltersReadsAndWrites(t *testing.T) {
+	s, _ := openTest(t)
+	d1, d2, all := ctxDepot("d1"), ctxDepot("d2"), ctxDepot("")
+	m1, _ := s.CreateMove(d1, "1", false, "clerk")
+	m2, _ := s.CreateMove(d2, "1", false, "clerk")
+	p1 := addPhotoIn(t, s, d1, m1.ID)
+	p2 := addPhotoIn(t, s, d2, m2.ID)
+	if p1.DepotID != "d1" || p2.DepotID != "d2" {
+		t.Fatalf("photo depots = %q, %q", p1.DepotID, p2.DepotID)
+	}
+	if _, err := s.AddAttempt(d1, Attempt{MoveID: m1.ID, PhotoID: p1.ID, Engine: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// d2 cannot see or touch d1's move and photo.
+	if _, err := s.GetMove(d2, m1.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetMove = %v", err)
+	}
+	if _, err := s.GetPhoto(d2, p1.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetPhoto = %v", err)
+	}
+	if got, err := s.ListPhotos(d2, m1.ID); err != nil || len(got) != 0 {
+		t.Errorf("ListPhotos = %v, %v", got, err)
+	}
+	if got, err := s.ListAttempts(d2, m1.ID); err != nil || len(got) != 0 {
+		t.Errorf("ListAttempts = %v, %v", got, err)
+	}
+	if err := s.MarkForReading(d2, p1.ID, "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkForReading = %v", err)
+	}
+	if err := s.SetStatus(d2, m1.ID, StatusRefused); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetStatus = %v", err)
+	}
+	if _, err := s.Resolve(d2, m1.ID, ResolveUpdate{Status: StatusAccepted, By: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resolve = %v", err)
+	}
+	if got, err := s.ListMoves(d2, ListFilter{}); err != nil || len(got) != 1 || got[0].ID != m2.ID {
+		t.Errorf("ListMoves(d2) = %v, %v", ids(got), err)
+	}
+
+	// The empty depot sees the whole company.
+	if got, err := s.ListMoves(all, ListFilter{}); err != nil || len(got) != 2 {
+		t.Errorf("ListMoves(all) = %v, %v", ids(got), err)
+	}
+	if _, err := s.GetMove(all, m1.ID); err != nil {
+		t.Errorf("GetMove(all) = %v", err)
+	}
+	pending, err := s.PhotosWithoutAttempts(all)
+	if err != nil || len(pending) != 1 || pending[0].ID != p2.ID || pending[0].DepotID != "d2" {
+		t.Errorf("pending(all) = %+v, %v; want d2's photo only (d1's has an attempt)", pending, err)
+	}
+
+	// Depot-owned rows need a depot.
+	if _, err := s.CreateMove(all, "1", false, "c"); !errors.Is(err, tenancy.ErrNoScope) {
+		t.Errorf("CreateMove(all) = %v", err)
+	}
+	if err := s.SetSettings(all, map[string]string{"k": "v"}, "a"); !errors.Is(err, tenancy.ErrNoScope) {
+		t.Errorf("SetSettings(all) = %v", err)
+	}
+}
+
+func TestPendingPhotosOfEveryDepotUnderEmptyDepotScope(t *testing.T) {
+	s, _ := openTest(t)
+	for _, d := range []string{"d1", "d2"} {
+		m, _ := s.CreateMove(ctxDepot(d), "1", false, "clerk")
+		addPhotoIn(t, s, ctxDepot(d), m.ID)
+	}
+	got, err := s.PhotosWithoutAttempts(ctxDepot(""))
+	if err != nil || len(got) != 2 || got[0].DepotID != "d1" || got[1].DepotID != "d2" {
+		t.Fatalf("pending = %+v, %v", got, err)
+	}
+}

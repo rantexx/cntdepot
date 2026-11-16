@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Settings returns the depot's settings whose key starts with prefix. The
+// Settings returns the depot's settings (every depot's when the scope has none) whose key starts with prefix. The
 // table is tiny, so filtering happens here rather than in SQL.
 func (s *Store) Settings(ctx context.Context, prefix string) (map[string]string, error) {
 	out := map[string]string{}
@@ -41,6 +41,9 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string, actor
 	sort.Strings(keys)
 	now := s.now()
 	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		if sc.DepotID == "" {
+			return tenancy.ErrNoScope // settings belong to one depot
+		}
 		for _, k := range keys {
 			err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{
 				CompanyID: sc.CompanyID, DepotID: sc.DepotID, Key: k, Value: values[k], UpdatedAt: now,

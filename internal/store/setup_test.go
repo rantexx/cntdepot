@@ -49,7 +49,7 @@ func openTest(t *testing.T) (*Store, *pgxpool.Pool) {
 			t.Fatal(err)
 		}
 		err = db.InCompany(ctxOf(c), pool, func(tx pgx.Tx) error {
-			_, err := tx.Exec(bg, `INSERT INTO depots (company_id, id, name) VALUES ($1, 'd1', 'Depot')`, c)
+			_, err := tx.Exec(bg, `INSERT INTO depots (company_id, id, name) VALUES ($1, 'd1', 'Depot'), ($1, 'd2', 'Depot 2')`, c)
 			return err
 		})
 		if err != nil {
@@ -57,4 +57,11 @@ func openTest(t *testing.T) (*Store, *pgxpool.Pool) {
 		}
 	}
 	return New(pool), pool
+}
+
+// ctxDepot returns a context scoped to company A and the given depot ("" = all depots).
+func ctxDepot(depot string) context.Context {
+	sc := scopeOf("A")
+	sc.DepotID = depot
+	return tenancy.With(context.Background(), sc)
 }

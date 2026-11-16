@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -153,4 +154,13 @@ func ids(moves []Move) []string {
 		out = append(out, m.ID)
 	}
 	return out
+}
+
+func addPhotoIn(t *testing.T, s *Store, c context.Context, moveID string) Photo {
+	t.Helper()
+	p, err := s.AddPhoto(c, Photo{MoveID: moveID, Role: "rear", SHA256: "a", AISHA256: "b", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 10, ReadEnabled: true}, "clerk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

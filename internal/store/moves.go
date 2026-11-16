@@ -97,8 +97,8 @@ func withPhotos(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, rows [
 		return nil, err
 	}
 	for _, p := range photos {
-		m := &moves[at[p.MoveID]]
-		m.Photos = append(m.Photos, photoFrom(p))
+		m := &moves[at[p.Photo.MoveID]]
+		m.Photos = append(m.Photos, photoFrom(p.Photo, p.DepotID))
 	}
 	return moves, nil
 }
@@ -116,6 +116,9 @@ func (s *Store) CreateMoveWithSource(ctx context.Context, lane, source string, i
 		IsTest: isTest, CreatedAt: now, UpdatedAt: now, Photos: []Photo{},
 	}
 	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		if sc.DepotID == "" {
+			return tenancy.ErrNoScope // a move belongs to one depot
+		}
 		err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
 			CompanyID: sc.CompanyID, ID: m.ID, DepotID: sc.DepotID, Lane: lane, Direction: m.Direction,
 			Source: source, Status: m.Status, IsTest: isTest, CreatedAt: now,
@@ -185,10 +188,10 @@ func (s *Store) VerifiedMoves(ctx context.Context) ([]Move, error) {
 	return moves, err
 }
 
-// exists returns ErrNotFound when the move is not in the scope's depot.
-func exists(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, id string) error {
-	_, err := q.GetMove(ctx, sqlcdb.GetMoveParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
-	return notFound(err)
+// exists returns the move, or ErrNotFound when it is not in the scope's company and depot.
+func exists(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, id string) (sqlcdb.GateMove, error) {
+	m, err := q.GetMove(ctx, sqlcdb.GetMoveParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
+	return m, notFound(err)
 }
 
 // SetStatus changes the status of a move nobody has resolved yet. A move that
@@ -201,7 +204,8 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 		if err != nil {
 			return err
 		}
-		return exists(ctx, q, sc, id)
+		_, err = exists(ctx, q, sc, id)
+		return err
 	})
 }
 
@@ -222,7 +226,8 @@ func (s *Store) SetResult(ctx context.Context, id string, o ReadOutcome) error {
 			return err
 		}
 		if n == 0 {
-			return exists(ctx, q, sc, id)
+			_, err = exists(ctx, q, sc, id)
+			return err
 		}
 		return s.appendEvent(ctx, q, sc, id, "move.read", "engine", map[string]any{
 			"status": o.Status, "number": o.Number, "decision": o.Decision, "reason": o.Reason,
