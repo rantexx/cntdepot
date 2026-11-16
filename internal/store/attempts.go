@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	sqlcdb "depot/internal/store/db"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Attempt is one engine run on one photo. The table is append-only: raw
@@ -30,35 +35,32 @@ func (s *Store) AddAttempt(ctx context.Context, a Attempt) (Attempt, error) {
 	if len(a.Reading) == 0 {
 		a.Reading = json.RawMessage("{}")
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO recognition_attempts (id, tenant_id, move_id, photo_id, engine, model, prompt_version,
-		 reading_json, raw, error, input_tokens, output_tokens, latency_ms, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, s.tenant, a.MoveID, a.PhotoID, a.Engine, a.Model, a.PromptVersion,
-		string(a.Reading), a.Raw, a.Error, a.InputTokens, a.OutputTokens, a.LatencyMS, ts(a.CreatedAt))
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		if err := exists(ctx, q, sc, a.MoveID); err != nil {
+			return err
+		}
+		return q.InsertAttempt(ctx, sqlcdb.InsertAttemptParams{
+			CompanyID: sc.CompanyID, ID: a.ID, MoveID: a.MoveID, PhotoID: a.PhotoID, Engine: a.Engine, Model: a.Model,
+			PromptVersion: a.PromptVersion, ReadingJson: a.Reading, Raw: a.Raw, Error: a.Error,
+			InputTokens: a.InputTokens, OutputTokens: a.OutputTokens, LatencyMs: a.LatencyMS, CreatedAt: a.CreatedAt,
+		})
+	})
 	return a, err
 }
 
 // ListAttempts returns a move's engine runs, oldest first.
 func (s *Store) ListAttempts(ctx context.Context, moveID string) ([]Attempt, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, move_id, photo_id, engine, model, prompt_version, reading_json, raw, error,
-		 input_tokens, output_tokens, latency_ms, created_at
-		 FROM recognition_attempts WHERE move_id = ? ORDER BY id`, moveID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	attempts := []Attempt{}
-	for rows.Next() {
-		var a Attempt
-		var reading, created string
-		if err := rows.Scan(&a.ID, &a.MoveID, &a.PhotoID, &a.Engine, &a.Model, &a.PromptVersion, &reading, &a.Raw,
-			&a.Error, &a.InputTokens, &a.OutputTokens, &a.LatencyMS, &created); err != nil {
-			return nil, err
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.ListAttempts(ctx, sqlcdb.ListAttemptsParams{CompanyID: sc.CompanyID, MoveID: moveID})
+		for _, r := range rows {
+			attempts = append(attempts, Attempt{
+				ID: r.ID, MoveID: r.MoveID, PhotoID: r.PhotoID, Engine: r.Engine, Model: r.Model,
+				PromptVersion: r.PromptVersion, Reading: r.ReadingJson, Raw: r.Raw, Error: r.Error,
+				InputTokens: r.InputTokens, OutputTokens: r.OutputTokens, LatencyMS: r.LatencyMs, CreatedAt: r.CreatedAt,
+			})
 		}
-		a.Reading, a.CreatedAt = json.RawMessage(reading), parseTS(created)
-		attempts = append(attempts, a)
-	}
-	return attempts, rows.Err()
+		return err
+	})
+	return attempts, err
 }

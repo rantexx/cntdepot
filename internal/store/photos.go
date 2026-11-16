@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"time"
+
+	sqlcdb "depot/internal/store/db"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Photo is one picture of a move. SHA256 is the original as captured (kept
@@ -24,18 +27,25 @@ type Photo struct {
 	// Deferred photos are stored but not read until chosen: a camera visit
 	// takes a still every second and reads only a few of them.
 	Deferred bool `json:"deferred"`
+	// ReadEnabled is set when the photo is stored: nothing is ever read by AI
+	// unless it is true, so switching the ocr module on never reads older photos.
+	ReadEnabled bool `json:"read_enabled"`
 }
 
-const photoColumns = `id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, width, height, captured_at, deferred`
+func photoFrom(r sqlcdb.Photo) Photo {
+	return Photo{
+		ID: r.ID, MoveID: r.MoveID, Role: r.Role, SHA256: r.Sha256, AISHA256: r.AiSha256, MediaType: r.MediaType,
+		AIMediaType: r.AiMediaType, Bytes: r.Bytes, Width: int(r.Width), Height: int(r.Height),
+		CapturedAt: r.CapturedAt, Deferred: r.Deferred, ReadEnabled: r.ReadEnabled,
+	}
+}
 
-func scanPhoto(sc scanner) (Photo, error) {
-	var p Photo
-	var captured string
-	var deferred int
-	err := sc.Scan(&p.ID, &p.MoveID, &p.Role, &p.SHA256, &p.AISHA256, &p.MediaType, &p.AIMediaType,
-		&p.Bytes, &p.Width, &p.Height, &captured, &deferred)
-	p.CapturedAt, p.Deferred = parseTS(captured), deferred == 1
-	return p, err
+func photosFrom(rows []sqlcdb.Photo) []Photo {
+	out := make([]Photo, len(rows))
+	for i, r := range rows {
+		out[i] = photoFrom(r)
+	}
+	return out
 }
 
 // AddPhoto records a photo of a move.
@@ -44,16 +54,20 @@ func (s *Store) AddPhoto(ctx context.Context, p Photo, actor string) (Photo, err
 	if p.CapturedAt.IsZero() {
 		p.CapturedAt = s.now()
 	}
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO photos (id, tenant_id, move_id, role, sha256, ai_sha256, media_type, ai_media_type,
-			 bytes, width, height, captured_at, deferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, s.tenant, p.MoveID, p.Role, p.SHA256, p.AISHA256, p.MediaType, p.AIMediaType,
-			p.Bytes, p.Width, p.Height, ts(p.CapturedAt), boolInt(p.Deferred))
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		// The move must be this depot's; the composite foreign key covers the company only.
+		if err := exists(ctx, q, sc, p.MoveID); err != nil {
+			return err
+		}
+		err := q.InsertPhoto(ctx, sqlcdb.InsertPhotoParams{
+			CompanyID: sc.CompanyID, ID: p.ID, MoveID: p.MoveID, Role: p.Role, Sha256: p.SHA256, AiSha256: p.AISHA256,
+			MediaType: p.MediaType, AiMediaType: p.AIMediaType, Bytes: p.Bytes, Width: int64(p.Width),
+			Height: int64(p.Height), CapturedAt: p.CapturedAt, Deferred: p.Deferred, ReadEnabled: p.ReadEnabled,
+		})
 		if err != nil {
 			return err
 		}
-		return s.appendEvent(ctx, tx, p.MoveID, "photo.added", actor,
+		return s.appendEvent(ctx, q, sc, p.MoveID, "photo.added", actor,
 			map[string]any{"photo_id": p.ID, "role": p.Role, "sha256": p.SHA256})
 	})
 	return p, err
@@ -61,15 +75,35 @@ func (s *Store) AddPhoto(ctx context.Context, p Photo, actor string) (Photo, err
 
 // ListPhotos returns a move's photos in capture order.
 func (s *Store) ListPhotos(ctx context.Context, moveID string) ([]Photo, error) {
-	return s.queryPhotos(ctx, `SELECT `+photoColumns+` FROM photos WHERE move_id = ? ORDER BY id`, moveID)
+	var photos []Photo
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.ListPhotos(ctx, sqlcdb.ListPhotosParams{CompanyID: sc.CompanyID, MoveID: moveID})
+		photos = photosFrom(rows)
+		return err
+	})
+	return photos, err
 }
 
 // GetPhoto returns one photo.
 func (s *Store) GetPhoto(ctx context.Context, id string) (Photo, error) {
-	p, err := scanPhoto(s.db.QueryRowContext(ctx, `SELECT `+photoColumns+` FROM photos WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Photo{}, ErrNotFound
-	}
+	var p Photo
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		r, err := q.GetPhoto(ctx, sqlcdb.GetPhotoParams{CompanyID: sc.CompanyID, ID: id})
+		p = photoFrom(r)
+		return notFound(err)
+	})
+	return p, err
+}
+
+// PhotoByDigest finds a photo of the scope's company by the SHA-256 of its
+// original or of its AI copy. ErrNotFound when the company has none.
+func (s *Store) PhotoByDigest(ctx context.Context, digest string) (Photo, error) {
+	var p Photo
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		r, err := q.PhotoByDigest(ctx, sqlcdb.PhotoByDigestParams{CompanyID: sc.CompanyID, Digest: digest})
+		p = photoFrom(r)
+		return notFound(err)
+	})
 	return p, err
 }
 
@@ -77,55 +111,29 @@ func (s *Store) GetPhoto(ctx context.Context, id string) (Photo, error) {
 // chosen, or was never deferred, is left alone and writes no second event; an
 // unknown id is ErrNotFound.
 func (s *Store) MarkForReading(ctx context.Context, id, actor string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var moveID string
-		err := tx.QueryRowContext(ctx, `SELECT move_id FROM photos WHERE id = ?`, id).Scan(&moveID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		p, err := q.GetPhoto(ctx, sqlcdb.GetPhotoParams{CompanyID: sc.CompanyID, ID: id})
 		if err != nil {
-			return err
+			return notFound(err)
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE photos SET deferred = 0 WHERE id = ? AND deferred = 1`, id)
-		if err != nil {
-			return err
+		n, err := q.ChoosePhoto(ctx, sqlcdb.ChoosePhotoParams{CompanyID: sc.CompanyID, ID: id})
+		if err != nil || n == 0 {
+			return err // n == 0: the photo exists and is already chosen
 		}
-		changed, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if changed == 0 {
-			return nil // the photo exists and is already chosen
-		}
-		return s.appendEvent(ctx, tx, moveID, "photo.chosen", actor, map[string]any{"photo_id": id})
+		return s.appendEvent(ctx, q, sc, p.MoveID, "photo.chosen", actor, map[string]any{"photo_id": id})
 	})
 }
 
-// PhotosWithoutAttempts returns photos of open moves that should be read but
-// have not been yet, e.g. because the hub stopped mid-read. Start re-queues
-// them. Deferred photos are left alone: nobody chose them for reading.
+// PhotosWithoutAttempts returns read-enabled photos of open moves that have
+// not been read yet, e.g. because the depot service stopped mid-read. Start
+// re-queues them. Deferred photos are left alone: nobody chose them for
+// reading, and photos stored with read_enabled false are never read.
 func (s *Store) PhotosWithoutAttempts(ctx context.Context) ([]Photo, error) {
-	return s.queryPhotos(ctx,
-		`SELECT `+photoColumns+` FROM photos p
-		 WHERE p.deferred = 0
-		   AND NOT EXISTS (SELECT 1 FROM recognition_attempts a WHERE a.photo_id = p.id)
-		   AND p.move_id IN (SELECT id FROM gate_moves WHERE resolved_by = '')
-		 ORDER BY id`)
-}
-
-func (s *Store) queryPhotos(ctx context.Context, query string, args ...any) ([]Photo, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	photos := []Photo{}
-	for rows.Next() {
-		p, err := scanPhoto(rows)
-		if err != nil {
-			return nil, err
-		}
-		photos = append(photos, p)
-	}
-	return photos, rows.Err()
+	var photos []Photo
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.PhotosWithoutAttempts(ctx, sqlcdb.PhotosWithoutAttemptsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID})
+		photos = photosFrom(rows)
+		return err
+	})
+	return photos, err
 }

@@ -2,30 +2,29 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"sort"
 	"strings"
+
+	sqlcdb "depot/internal/store/db"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5"
 )
 
-// Settings returns every setting whose key starts with prefix. The table is
-// tiny, so filtering happens here rather than in SQL.
+// Settings returns the depot's settings whose key starts with prefix. The
+// table is tiny, so filtering happens here rather than in SQL.
 func (s *Store) Settings(ctx context.Context, prefix string) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM settings`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	out := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, err
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.ListSettings(ctx, sqlcdb.ListSettingsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID})
+		for _, r := range rows {
+			if strings.HasPrefix(r.Key, prefix) {
+				out[r.Key] = r.Value
+			}
 		}
-		if strings.HasPrefix(k, prefix) {
-			out[k] = v
-		}
-	}
-	return out, rows.Err()
+		return err
+	})
+	return out, err
 }
 
 // SetSettings stores values in one transaction. The event names the keys but
@@ -40,16 +39,16 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string, actor
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	now := ts(s.now())
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	now := s.now()
+	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
 		for _, k := range keys {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-				 ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-				k, values[k], now); err != nil {
+			err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{
+				CompanyID: sc.CompanyID, DepotID: sc.DepotID, Key: k, Value: values[k], UpdatedAt: now,
+			})
+			if err != nil {
 				return err
 			}
 		}
-		return s.appendEvent(ctx, tx, "settings", "settings.changed", actor, map[string]any{"keys": keys})
+		return s.appendEvent(ctx, q, sc, "settings", "settings.changed", actor, map[string]any{"keys": keys})
 	})
 }

@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
+
+	sqlcdb "depot/internal/store/db"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Move is one container passing the gate.
@@ -64,26 +67,40 @@ type ListFilter struct {
 	Before string
 }
 
-const moveColumns = `id, lane, direction, source, status, number, type_code, color, confidence, check_digit_valid,
-	decision, reason, result_json, verified, corrected_from, resolved_by, note, is_test, created_at, updated_at`
+func moveFrom(r sqlcdb.GateMove) Move {
+	res := r.ResultJson
+	if len(res) == 0 {
+		res = json.RawMessage("{}")
+	}
+	return Move{
+		ID: r.ID, Lane: r.Lane, Direction: r.Direction, Source: r.Source, Status: r.Status, Number: r.Number,
+		TypeCode: r.TypeCode, Color: r.Color, Confidence: r.Confidence, CheckDigitValid: r.CheckDigitValid,
+		Decision: r.Decision, Reason: r.Reason, Result: res, Verified: r.Verified, CorrectedFrom: r.CorrectedFrom,
+		ResolvedBy: r.ResolvedBy, Note: r.Note, IsTest: r.IsTest, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Photos: []Photo{},
+	}
+}
 
-func scanMove(sc scanner) (Move, error) {
-	var m Move
-	var result, created, updated string
-	var cdv, verified, isTest int
-	err := sc.Scan(&m.ID, &m.Lane, &m.Direction, &m.Source, &m.Status, &m.Number, &m.TypeCode, &m.Color, &m.Confidence, &cdv,
-		&m.Decision, &m.Reason, &result, &verified, &m.CorrectedFrom, &m.ResolvedBy, &m.Note, &isTest, &created, &updated)
+// withPhotos builds moves from rows and fills in their photos with one query.
+func withPhotos(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, rows []sqlcdb.GateMove) ([]Move, error) {
+	moves := make([]Move, len(rows))
+	ids := make([]string, len(rows))
+	at := map[string]int{}
+	for i, r := range rows {
+		moves[i], ids[i], at[r.ID] = moveFrom(r), r.ID, i
+	}
+	if len(ids) == 0 {
+		return moves, nil
+	}
+	photos, err := q.ListPhotosOfMoves(ctx, sqlcdb.ListPhotosOfMovesParams{CompanyID: sc.CompanyID, MoveIds: ids})
 	if err != nil {
-		return Move{}, err
+		return nil, err
 	}
-	if result == "" {
-		result = "{}"
+	for _, p := range photos {
+		m := &moves[at[p.MoveID]]
+		m.Photos = append(m.Photos, photoFrom(p))
 	}
-	m.Result = json.RawMessage(result)
-	m.CheckDigitValid, m.Verified, m.IsTest = cdv == 1, verified == 1, isTest == 1
-	m.CreatedAt, m.UpdatedAt = parseTS(created), parseTS(updated)
-	m.Photos = []Photo{}
-	return m, nil
+	return moves, nil
 }
 
 // CreateMove starts a phone gate-in on a lane.
@@ -98,30 +115,39 @@ func (s *Store) CreateMoveWithSource(ctx context.Context, lane, source string, i
 		ID: newID(), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
 		IsTest: isTest, CreatedAt: now, UpdatedAt: now, Photos: []Photo{},
 	}
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO gate_moves (id, tenant_id, depot_id, lane, direction, source, status, is_test, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, s.tenant, s.depot, lane, m.Direction, source, m.Status, boolInt(isTest), ts(now), ts(now))
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
+			CompanyID: sc.CompanyID, ID: m.ID, DepotID: sc.DepotID, Lane: lane, Direction: m.Direction,
+			Source: source, Status: m.Status, IsTest: isTest, CreatedAt: now,
+		})
 		if err != nil {
 			return err
 		}
-		return s.appendEvent(ctx, tx, m.ID, "move.created", actor, map[string]any{"lane": lane, "source": source, "is_test": isTest})
+		return s.appendEvent(ctx, q, sc, m.ID, "move.created", actor, map[string]any{"lane": lane, "source": source, "is_test": isTest})
 	})
 	return m, err
 }
 
 // GetMove returns a move with its photos.
 func (s *Store) GetMove(ctx context.Context, id string) (Move, error) {
-	m, err := scanMove(s.db.QueryRowContext(ctx, `SELECT `+moveColumns+` FROM gate_moves WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Move{}, ErrNotFound
+	var m Move
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) (err error) {
+		m, err = getMove(ctx, q, sc, id)
+		return err
+	})
+	return m, err
+}
+
+func getMove(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, id string) (Move, error) {
+	r, err := q.GetMove(ctx, sqlcdb.GetMoveParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
+	if err != nil {
+		return Move{}, notFound(err)
 	}
+	ms, err := withPhotos(ctx, q, sc, []sqlcdb.GateMove{r})
 	if err != nil {
 		return Move{}, err
 	}
-	m.Photos, err = s.ListPhotos(ctx, id)
-	return m, err
+	return ms[0], nil
 }
 
 // ListMoves returns moves newest first, each with its photos.
@@ -129,77 +155,76 @@ func (s *Store) ListMoves(ctx context.Context, f ListFilter) ([]Move, error) {
 	if f.Limit <= 0 || f.Limit > 200 {
 		f.Limit = 50
 	}
-	return s.queryMoves(ctx,
-		`SELECT `+moveColumns+` FROM gate_moves
-		 WHERE (? = '' OR status = ?) AND (? = '' OR source = ?) AND (? = '' OR id < ?)
-		 ORDER BY id DESC LIMIT ?`,
-		f.Status, f.Status, f.Source, f.Source, f.Before, f.Before, f.Limit)
+	var moves []Move
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.ListMoves(ctx, sqlcdb.ListMovesParams{
+			CompanyID: sc.CompanyID, DepotID: sc.DepotID, Status: f.Status, Source: f.Source,
+			Before: f.Before, RowLimit: int32(f.Limit),
+		})
+		if err != nil {
+			return err
+		}
+		moves, err = withPhotos(ctx, q, sc, rows)
+		return err
+	})
+	return moves, err
 }
 
 // VerifiedMoves returns accepted, person-verified, non-practice moves, oldest
 // first: the training set and the benchmark set.
 func (s *Store) VerifiedMoves(ctx context.Context) ([]Move, error) {
-	return s.queryMoves(ctx,
-		`SELECT `+moveColumns+` FROM gate_moves
-		 WHERE status = 'accepted' AND verified = 1 AND is_test = 0 ORDER BY id`)
-}
-
-func (s *Store) queryMoves(ctx context.Context, query string, args ...any) ([]Move, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	moves := []Move{}
-	for rows.Next() {
-		m, err := scanMove(rows)
+	var moves []Move
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.VerifiedMoves(ctx, sqlcdb.VerifiedMovesParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID})
 		if err != nil {
-			rows.Close()
-			return nil, err
+			return err
 		}
-		moves = append(moves, m)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close() // must be closed before the next query (single connection)
-	for i := range moves {
-		if moves[i].Photos, err = s.ListPhotos(ctx, moves[i].ID); err != nil {
-			return nil, err
-		}
-	}
-	return moves, nil
+		moves, err = withPhotos(ctx, q, sc, rows)
+		return err
+	})
+	return moves, err
 }
 
-// SetStatus changes the status of a move nobody has resolved yet.
+// exists returns ErrNotFound when the move is not in the scope's depot.
+func exists(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, id string) error {
+	_, err := q.GetMove(ctx, sqlcdb.GetMoveParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
+	return notFound(err)
+}
+
+// SetStatus changes the status of a move nobody has resolved yet. A move that
+// is already resolved is left alone; an unknown id is ErrNotFound.
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE gate_moves SET status = ?, updated_at = ? WHERE id = ? AND resolved_by = ''`,
-		status, ts(s.now()), id)
-	return err
+	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		err := q.SetStatus(ctx, sqlcdb.SetStatusParams{
+			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id, Status: status, UpdatedAt: s.now(),
+		})
+		if err != nil {
+			return err
+		}
+		return exists(ctx, q, sc, id)
+	})
 }
 
 // SetResult records what the engines concluded. A move a person has already
-// resolved is left alone: the human decision stands.
+// resolved is left alone: the human decision stands. An unknown id is ErrNotFound.
 func (s *Store) SetResult(ctx context.Context, id string, o ReadOutcome) error {
 	result := o.ResultJSON
 	if len(result) == 0 {
 		result = []byte("{}")
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE gate_moves SET status = ?, number = ?, type_code = ?, color = ?, confidence = ?,
-			 check_digit_valid = ?, decision = ?, reason = ?, result_json = ?, updated_at = ?
-			 WHERE id = ? AND resolved_by = ''`,
-			o.Status, o.Number, o.TypeCode, o.Color, o.Confidence, boolInt(o.CheckDigitValid),
-			o.Decision, o.Reason, string(result), ts(s.now()), id)
+	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		n, err := q.SetResult(ctx, sqlcdb.SetResultParams{
+			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id, Status: o.Status, Number: o.Number,
+			TypeCode: o.TypeCode, Color: o.Color, Confidence: o.Confidence, CheckDigitValid: o.CheckDigitValid,
+			Decision: o.Decision, Reason: o.Reason, ResultJson: result, UpdatedAt: s.now(),
+		})
 		if err != nil {
 			return err
 		}
-		if n, err := res.RowsAffected(); err != nil || n == 0 {
-			return err
+		if n == 0 {
+			return exists(ctx, q, sc, id)
 		}
-		return s.appendEvent(ctx, tx, id, "move.read", "engine", map[string]any{
+		return s.appendEvent(ctx, q, sc, id, "move.read", "engine", map[string]any{
 			"status": o.Status, "number": o.Number, "decision": o.Decision, "reason": o.Reason,
 			"confidence": o.Confidence, "type_code": o.TypeCode, "color": o.Color,
 		})
@@ -208,23 +233,23 @@ func (s *Store) SetResult(ctx context.Context, id string, o ReadOutcome) error {
 
 // Resolve records a person's decision.
 func (s *Store) Resolve(ctx context.Context, id string, u ResolveUpdate) (Move, error) {
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE gate_moves SET status = ?, number = ?, verified = ?, corrected_from = ?, resolved_by = ?,
-			 note = ?, updated_at = ? WHERE id = ?`,
-			u.Status, u.Number, boolInt(u.Verified), u.CorrectedFrom, u.By, u.Note, ts(s.now()), id)
+	var m Move
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		n, err := q.ResolveMove(ctx, sqlcdb.ResolveMoveParams{
+			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id, Status: u.Status, Number: u.Number,
+			Verified: u.Verified, CorrectedFrom: u.CorrectedFrom, ResolvedBy: u.By, Note: u.Note, UpdatedAt: s.now(),
+		})
 		if err != nil {
 			return err
 		}
-		if n, err := res.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
+		if n == 0 {
 			return ErrNotFound
 		}
-		return s.appendEvent(ctx, tx, id, "move.resolved", u.By, u)
+		if err := s.appendEvent(ctx, q, sc, id, "move.resolved", u.By, u); err != nil {
+			return err
+		}
+		m, err = getMove(ctx, q, sc, id)
+		return err
 	})
-	if err != nil {
-		return Move{}, err
-	}
-	return s.GetMove(ctx, id)
+	return m, err
 }

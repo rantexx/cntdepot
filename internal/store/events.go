@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	sqlcdb "depot/internal/store/db"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Event is one entry of the append-only log.
@@ -19,21 +24,16 @@ type Event struct {
 
 // Events returns a stream's events in order.
 func (s *Store) Events(ctx context.Context, stream string) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, id, stream, kind, actor, payload, occurred_at FROM events WHERE stream = ? ORDER BY seq`, stream)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	events := []Event{}
-	for rows.Next() {
-		var e Event
-		var payload, occurred string
-		if err := rows.Scan(&e.Seq, &e.ID, &e.Stream, &e.Kind, &e.Actor, &payload, &occurred); err != nil {
-			return nil, err
+	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
+		rows, err := q.ListEvents(ctx, sqlcdb.ListEventsParams{CompanyID: sc.CompanyID, Stream: stream})
+		for _, r := range rows {
+			events = append(events, Event{
+				Seq: r.Seq, ID: r.ID, Stream: r.Stream, Kind: r.Kind, Actor: r.Actor,
+				Payload: r.Payload, OccurredAt: r.OccurredAt,
+			})
 		}
-		e.Payload, e.OccurredAt = json.RawMessage(payload), parseTS(occurred)
-		events = append(events, e)
-	}
-	return events, rows.Err()
+		return err
+	})
+	return events, err
 }

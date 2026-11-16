@@ -1,31 +1,14 @@
 package store
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
-
-	"depot/internal/testdir"
 )
-
-var ctx = context.Background()
-
-func openTest(t *testing.T) (*Store, string) {
-	t.Helper()
-	path := filepath.Join(testdir.New(t), "depot.db")
-	s, err := Open(path, "local", "own-depot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s, path
-}
 
 func addPhoto(t *testing.T, s *Store, moveID string) Photo {
 	t.Helper()
-	p, err := s.AddPhoto(ctx, Photo{MoveID: moveID, Role: "rear", SHA256: "a", AISHA256: "b", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 10}, "clerk")
+	p, err := s.AddPhoto(ctx, Photo{MoveID: moveID, Role: "rear", SHA256: "a", AISHA256: "b", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 10, ReadEnabled: true}, "clerk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,20 +144,6 @@ func TestVerifiedMovesExcludesTestAndUnverified(t *testing.T) {
 	got, err := s.VerifiedMoves(ctx)
 	if err != nil || len(got) != 1 || got[0].ID != good.ID {
 		t.Fatalf("verified = %v, %v", ids(got), err)
-	}
-}
-
-func TestReopenKeepsData(t *testing.T) {
-	s, path := openTest(t)
-	m, _ := s.CreateMove(ctx, "1", false, "clerk")
-	s.Close()
-	again, err := Open(path, "local", "own-depot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer again.Close()
-	if _, err := again.GetMove(ctx, m.ID); err != nil {
-		t.Fatalf("move lost after reopen: %v", err)
 	}
 }
 

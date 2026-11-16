@@ -1,13 +1,13 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"depot/internal/testdir"
+	"depot/internal/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestMovesRecordTheirSource(t *testing.T) {
@@ -39,7 +39,7 @@ func TestMovesRecordTheirSource(t *testing.T) {
 func TestDeferredPhotosWaitUntilChosen(t *testing.T) {
 	s, _ := openTest(t)
 	m, _ := s.CreateMoveWithSource(ctx, "camera", SourceCamera, false, "camera")
-	p, err := s.AddPhoto(ctx, Photo{MoveID: m.ID, Role: "rear", SHA256: "a", AISHA256: "a", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera")
+	p, err := s.AddPhoto(ctx, Photo{MoveID: m.ID, Role: "rear", SHA256: "a", AISHA256: "a", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true, ReadEnabled: true}, "camera")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,10 @@ func TestDeferredPhotosWaitUntilChosen(t *testing.T) {
 func countEvents(t *testing.T, s *Store, kind string) int {
 	t.Helper()
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE kind = ?`, kind).Scan(&n); err != nil {
+	err := db.InCompany(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT COUNT(*) FROM events WHERE kind = $1`, kind).Scan(&n)
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -79,7 +82,7 @@ func countEvents(t *testing.T, s *Store, kind string) int {
 func TestChoosingAPhotoTwiceWritesOneEvent(t *testing.T) {
 	s, _ := openTest(t)
 	m, _ := s.CreateMoveWithSource(ctx, "camera", SourceCamera, false, "camera")
-	p, err := s.AddPhoto(ctx, Photo{MoveID: m.ID, Role: "rear", SHA256: "a", AISHA256: "a", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera")
+	p, err := s.AddPhoto(ctx, Photo{MoveID: m.ID, Role: "rear", SHA256: "a", AISHA256: "a", MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true, ReadEnabled: true}, "camera")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,16 +146,17 @@ func TestSettingsRoundTripWithoutLeakingValues(t *testing.T) {
 		t.Fatalf("settings = %v", got)
 	}
 	var payloads []string
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM events WHERE kind = 'settings.changed'`)
+	err = db.InCompany(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT payload::text FROM events WHERE kind = 'settings.changed'`)
+		if err != nil {
+			return err
+		}
+		payloads, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for rows.Next() {
-		var p string
-		_ = rows.Scan(&p)
-		payloads = append(payloads, p)
-	}
-	rows.Close()
 	if len(payloads) != 2 {
 		t.Fatalf("settings events = %d; want 2", len(payloads))
 	}
@@ -160,91 +164,5 @@ func TestSettingsRoundTripWithoutLeakingValues(t *testing.T) {
 		if strings.Contains(p, "pw-secret") || strings.Contains(p, "192.168") {
 			t.Fatalf("event payload carries a value: %s", p)
 		}
-	}
-}
-
-func TestMigratesAVersion1Database(t *testing.T) {
-	path := filepath.Join(testdir.New(t), "depot.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, stmt := range strings.Split(schemaV1, ";") {
-		if strings.TrimSpace(stmt) == "" {
-			continue
-		}
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mustExec := func(q string, args ...any) {
-		t.Helper()
-		if _, err := db.Exec(q, args...); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mustExec(`CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(`INSERT INTO schema_version (version) VALUES (1)`)
-	// An open move whose phone photo was never read: the hub stopped mid-read.
-	mustExec(`INSERT INTO gate_moves (id, tenant_id, depot_id, status, created_at, updated_at) VALUES ('m1', 'local', 'own-depot', 'reading', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`)
-	mustExec(`INSERT INTO photos (id, tenant_id, move_id, role, sha256, ai_sha256, media_type, ai_media_type, bytes, captured_at) VALUES ('p1', 'local', 'm1', 'rear', 'a', 'a', 'image/jpeg', 'image/jpeg', 1, '2026-10-01T00:00:00Z')`)
-	db.Close()
-
-	// schemaVersion reads the highest applied version and how many rows
-	// schema_version has, straight from the file.
-	schemaVersion := func(s *Store) (version, rows int) {
-		t.Helper()
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0), COUNT(*) FROM schema_version`).Scan(&version, &rows)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return version, rows
-	}
-	// checkMigrated holds after every open: old data intact, new data available.
-	checkMigrated := func(s *Store) {
-		t.Helper()
-		if v, rows := schemaVersion(s); v != 2 || rows != 2 {
-			t.Fatalf("schema_version = %d in %d rows; want version 2 recorded once on top of 1", v, rows)
-		}
-		m, err := s.GetMove(ctx, "m1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if m.Source != SourcePhone || len(m.Photos) != 1 || m.Photos[0].Deferred {
-			t.Fatalf("migrated move = %+v", m)
-		}
-		// Backward compatibility: restart recovery must still re-read the old
-		// phone photo that has no attempt, so it must not look deferred.
-		pending, err := s.PhotosWithoutAttempts(ctx)
-		if err != nil || len(pending) != 1 || pending[0].ID != "p1" {
-			t.Fatalf("PhotosWithoutAttempts = %+v, %v; want the v1 photo p1", pending, err)
-		}
-	}
-
-	s, err := Open(path, "local", "own-depot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkMigrated(s)
-	// The settings table is there and works.
-	if err := s.SetSettings(ctx, map[string]string{"camera.host": "10.0.0.5"}, "admin"); err != nil {
-		t.Fatalf("SetSettings on a migrated database: %v", err)
-	}
-	if got, err := s.Settings(ctx, "camera."); err != nil || got["camera.host"] != "10.0.0.5" {
-		t.Fatalf("Settings = %v, %v; want the saved host", got, err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Opening the migrated database again changes nothing and loses nothing.
-	again, err := Open(path, "local", "own-depot")
-	if err != nil {
-		t.Fatalf("reopening a migrated database: %v", err)
-	}
-	defer again.Close()
-	checkMigrated(again)
-	if got, err := again.Settings(ctx, "camera."); err != nil || got["camera.host"] != "10.0.0.5" {
-		t.Fatalf("Settings after reopen = %v, %v; want the saved host", got, err)
 	}
 }
