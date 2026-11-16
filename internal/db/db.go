@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"depot/internal/refdata"
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
@@ -103,7 +104,7 @@ func Migrate(ctx context.Context, ownerURL string, o MigrateOptions) error {
 				return err
 			}
 		}
-		return nil
+		return refdata.Load(ctx, tx)
 	})
 	if err != nil {
 		return fmt.Errorf("db: migrate: %w", err)

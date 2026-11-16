@@ -780,9 +780,9 @@ func TestSearchLinersAndLocodesPutCodesFirst(t *testing.T) {
 	}
 	defer conn.Close(bg)
 	if _, err := conn.Exec(bg, `INSERT INTO ref_smdg_liners (code, name, version) VALUES
-		('AAA', 'Msc feeder partner', 't'), ('MSC', 'Mediterranean Shipping Company', 't'), ('ZIM', 'Zim', 't');
+		('AAA', 'Msc feeder partner', 't'), ('MSC', 'Mediterranean Shipping Company', 't'), ('ZIM', 'Zim', 't') ON CONFLICT DO NOTHING;
 		INSERT INTO ref_locodes (code, country, name, version) VALUES
-		('TRMER', 'TR', 'Mersin', 't'), ('AAMER', 'AA', 'Trmer town', 't')`); err != nil {
+		('TRMER', 'TR', 'Mersin', 't'), ('AAMER', 'AA', 'Trmer town', 't') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
 	u := e.as(t, "A", "gate")
@@ -798,6 +798,24 @@ func TestSearchLinersAndLocodesPutCodesFirst(t *testing.T) {
 	_, body = u.call("GET", "/api/ref/locodes?q=trmer", "")
 	if err := json.Unmarshal(body, &locodes); err != nil || len(locodes) != 2 || locodes[0].Code != "TRMER" || locodes[0].Country != "TR" {
 		t.Fatalf("locodes = %s", body)
+	}
+}
+
+func TestSearchLiners(t *testing.T) {
+	e := newEnv(t, nil)
+	conn, err := pgx.Connect(bg, e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(bg)
+	if _, err := conn.Exec(bg, `INSERT INTO ref_smdg_liners (code, name, version) VALUES
+		('ZZZ', 'Not a match', 't'), ('SGL', 'Sealand - A Maersk Company', 't'), ('MSK', 'Maersk', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	var liners []api.Liner
+	_, body := e.as(t, "A", "gate").call("GET", "/api/ref/liners?q=maer", "")
+	if err := json.Unmarshal(body, &liners); err != nil || len(liners) != 2 || liners[0].Code != "MSK" || liners[0].Name != "Maersk" {
+		t.Fatalf("liners = %s", body)
 	}
 }
 
