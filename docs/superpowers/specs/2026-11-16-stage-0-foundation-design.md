@@ -251,3 +251,13 @@ The gate OCR keeps working and becomes a **module** that can be switched on per 
 - Current depot on the session; depot limits enforced in app code.
 - With OCR off, the clerk types the number; switching OCR on never reads older photos.
 - `hub` mode is a developer tool only in Stage 0.
+
+## 9. Built (Part 0a) - deviations from this design
+- No BYPASSRLS `system` role. Cross-company access goes only through SECURITY DEFINER functions: `memberships_for_user`, `accept_invitations`, `set_company_modules`.
+- WorkOS is deferred to Part 0b. Only the dev identity provider exists; `api -env production` refuses to start until a real provider is configured.
+- sqlc is used (pinned Windows/Linux release via `scripts/tools.sh`); the fallback was not needed.
+- Wrong-password lockout is removed; the identity provider handles passwords.
+- The reference-data loader ships with no bundled SMDG or UN/LOCODE data. SMDG requires written permission for commercial use and UN/LOCODE redistribution terms are unclear. The owner must obtain permission before data files are added (`internal/refdata/README.md`).
+- Store depot semantics: an empty depot in scope means all depots of the company for reads; creating depot-owned rows requires a depot.
+- Hub mode is a developer tool: dev login, listens on 127.0.0.1 by default; camera stills are served from the hub-only `/api/camera/stills/{digest}`.
+- The session lists each company's allowed depots. The plan's ManualEntry example digits were swapped (MSCU1234566 is valid).
