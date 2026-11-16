@@ -11,3 +11,6 @@
 /web/node_modules/
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
+
+# Local tool downloads
+/.tools/
