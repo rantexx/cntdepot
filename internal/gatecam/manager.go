@@ -11,6 +11,7 @@ import (
 
 	"depot/internal/camera"
 	"depot/internal/store"
+	"depot/internal/tenancy"
 )
 
 // LiveSink receives the camera's live video address. The live supervisor
@@ -49,6 +50,7 @@ type Manager struct {
 	watcher *Watcher
 	live    LiveSink
 	build   Builder
+	scope   tenancy.Scope // the one company and depot this camera belongs to
 
 	// saveMu makes each Save, Load and Reconnect whole: read the settings,
 	// store them, apply them. Two pages saving at once must not lose either
@@ -61,9 +63,10 @@ type Manager struct {
 	applied bool
 }
 
-// NewManager wires the pieces together. Call Load next.
-func NewManager(st *store.Store, w *Watcher, live LiveSink, build Builder) *Manager {
-	return &Manager{store: st, watcher: w, live: live, build: build}
+// NewManager wires the pieces together. Call Load next. The camera belongs to
+// scope's company and depot, whatever scope the callers' contexts carry.
+func NewManager(st *store.Store, w *Watcher, live LiveSink, build Builder, scope tenancy.Scope) *Manager {
+	return &Manager{store: st, watcher: w, live: live, build: build, scope: scope}
 }
 
 // UseFixed makes the manager use cam, whatever the saved settings say.
@@ -77,7 +80,7 @@ func (m *Manager) UseFixed(cam camera.Camera) {
 func (m *Manager) Load(ctx context.Context) error {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
-	vals, err := m.store.Settings(ctx, "camera.")
+	vals, err := m.store.Settings(tenancy.With(ctx, m.scope), "camera.")
 	if err != nil {
 		return err
 	}
@@ -128,7 +131,7 @@ func (m *Manager) Save(ctx context.Context, u Update) (camera.Settings, error) {
 	if s.Auto {
 		auto = "1"
 	}
-	err := m.store.SetSettings(ctx, map[string]string{keyHost: s.Host, keyUser: s.User, keyPassword: s.Password, keyAuto: auto}, "admin")
+	err := m.store.SetSettings(tenancy.With(ctx, m.scope), map[string]string{keyHost: s.Host, keyUser: s.User, keyPassword: s.Password, keyAuto: auto}, "admin")
 	if err != nil {
 		return s, err
 	}

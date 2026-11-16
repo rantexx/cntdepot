@@ -13,9 +13,10 @@ import (
 	"depot/internal/gate"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/testkit"
 )
 
-var ctx = context.Background()
+var ctx = testkit.Ctx()
 
 // fakeGate records what the watcher asks of the gate service.
 type fakeGate struct {

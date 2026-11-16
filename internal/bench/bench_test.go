@@ -24,7 +24,7 @@ func TestBenchScoresMovesAndPhotos(t *testing.T) {
 		"photo-bad":  reads("CSQU3054383"),
 	}}
 
-	rep, err := Run(context.Background(), st, bl, fake, 0.85, 0)
+	rep, err := Run(testkit.Ctx(), st, bl, fake, 0.85, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestBenchHonoursLimit(t *testing.T) {
 	st, bl := testkit.Open(t)
 	testkit.SeedVerifiedMove(t, st, bl, "CSQU3054383", "a", recognition.Reading{}, false)
 	testkit.SeedVerifiedMove(t, st, bl, "CSQU3054383", "b", recognition.Reading{}, false)
-	rep, err := Run(context.Background(), st, bl, &recognition.Fake{Reading: reads("CSQU3054383")}, 0.85, 1)
+	rep, err := Run(testkit.Ctx(), st, bl, &recognition.Fake{Reading: reads("CSQU3054383")}, 0.85, 1)
 	if err != nil || rep.Moves != 1 {
 		t.Fatalf("report = %+v, %v", rep, err)
 	}
@@ -52,7 +52,7 @@ func TestBenchHonoursLimit(t *testing.T) {
 func TestBenchCountsEngineErrors(t *testing.T) {
 	st, bl := testkit.Open(t)
 	testkit.SeedVerifiedMove(t, st, bl, "CSQU3054383", "a", recognition.Reading{}, false)
-	rep, err := Run(context.Background(), st, bl, &recognition.Fake{Err: recognition.ErrUnavailable}, 0.85, 0)
+	rep, err := Run(testkit.Ctx(), st, bl, &recognition.Fake{Err: recognition.ErrUnavailable}, 0.85, 0)
 	if err != nil || rep.Errors != 1 || rep.MovesCorrect != 0 || len(rep.Misses) != 1 {
 		t.Fatalf("report = %+v, %v", rep, err)
 	}
@@ -66,7 +66,7 @@ func TestBenchSkipsDeferredPhotos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AddPhoto(context.Background(), store.Photo{
+	if _, err := st.AddPhoto(testkit.Ctx(), store.Photo{
 		MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg",
 		Bytes: 8, Deferred: true,
 	}, "camera"); err != nil {
@@ -76,7 +76,7 @@ func TestBenchSkipsDeferredPhotos(t *testing.T) {
 		"chosen":   reads("CSQU3054383"),
 		"deferred": reads("TEXU1234569"),
 	}}
-	rep, err := Run(context.Background(), st, bl, fake, 0.85, 0)
+	rep, err := Run(testkit.Ctx(), st, bl, fake, 0.85, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,14 +102,14 @@ func (d *detailEngine) Read(ctx context.Context, img recognition.Image) (recogni
 
 func TestBenchReadsCameraStillsInUltraHighDetail(t *testing.T) {
 	st, bl := testkit.Open(t)
-	ctx := context.Background()
+	ctx := testkit.Ctx()
 	testkit.SeedVerifiedMove(t, st, bl, "CSQU3054383", "phone", recognition.Reading{}, false)
 	m, err := st.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
 	if err != nil {
 		t.Fatal(err)
 	}
 	sha, _ := bl.Put([]byte("\xff\xd8\xff\xe0still"))
-	if _, err := st.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 9}, "camera"); err != nil {
+	if _, err := st.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 9, ReadEnabled: true}, "camera"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Resolve(ctx, m.ID, store.ResolveUpdate{Status: store.StatusAccepted, Number: "CSQU3054383", Verified: true, By: "seed"}); err != nil {

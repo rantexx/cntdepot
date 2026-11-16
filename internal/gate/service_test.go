@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,43 +11,42 @@ import (
 	"depot/internal/blob"
 	"depot/internal/recognition"
 	"depot/internal/store"
-	"depot/internal/testdir"
+	"depot/internal/testkit"
+
+	"github.com/jackc/pgx/v5"
 )
 
-var ctx = context.Background()
+var ctx = testkit.Ctx()
 
 type harness struct {
-	svc    *Service
-	store  *store.Store
-	blobs  *blob.Store
-	dbPath string
+	svc      *Service
+	store    *store.Store
+	blobs    *blob.Store
+	ownerURL string // the database owner, for tests that change the schema
+	notified chan [2]string
 }
 
 func newHarness(t *testing.T, rec recognition.Recognizer, cfg Config, start bool) *harness {
 	t.Helper()
-	dir := testdir.New(t)
-	dbPath := filepath.Join(dir, "depot.db")
-	st, err := store.Open(dbPath, "local", "own-depot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bl, err := blob.Open(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := New(st, bl, rec, cfg, nil)
+	st, bl, owner := testkit.OpenCompanies(t, "A", "B")
+	h := &harness{store: st, blobs: bl, ownerURL: owner, notified: make(chan [2]string, 256)}
+	h.svc = New(st, bl, rec, cfg, func(company, move string) {
+		select {
+		case h.notified <- [2]string{company, move}:
+		default:
+		}
+	})
 	runCtx, cancel := context.WithCancel(context.Background())
 	if start {
-		if err := svc.Start(runCtx); err != nil {
+		if err := h.svc.Start(runCtx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Cleanup(func() {
 		cancel()
-		svc.Wait()
-		st.Close()
+		h.svc.Wait()
 	})
-	return &harness{svc: svc, store: st, blobs: bl, dbPath: dbPath}
+	return h
 }
 
 func reading(number string, conf float64) recognition.Reading {
@@ -68,6 +66,11 @@ func (h *harness) photo(t *testing.T, moveID, role, content string) {
 }
 
 func waitStatus(t *testing.T, st *store.Store, id, want string) store.Move {
+	t.Helper()
+	return waitStatusCtx(t, ctx, st, id, want)
+}
+
+func waitStatusCtx(t *testing.T, ctx context.Context, st *store.Store, id, want string) store.Move {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -244,7 +247,7 @@ func TestStartRereadsPhotosLeftUnread(t *testing.T) {
 	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
 	// Simulate a photo saved just before a power cut: stored, never read.
 	ai, _ := h.blobs.Put([]byte("a"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "clerk"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "clerk"); err != nil {
 		t.Fatal(err)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -265,7 +268,7 @@ func TestStartRecomputesMovesStuckReading(t *testing.T) {
 	// Simulate a re-read cut short by a shutdown: the photo already has an
 	// attempt, but the move was left saying "reading" and no job remains.
 	ai, _ := h.blobs.Put([]byte("a"))
-	p, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "clerk")
+	p, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "clerk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,4 +325,64 @@ func TestTestReadDoesNotStoreAnything(t *testing.T) {
 	if len(moves) != 0 {
 		t.Fatalf("test read created moves: %d", len(moves))
 	}
+}
+
+func TestStartRecoversEachCompanyInItsOwnScope(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, false)
+	moves := map[string]store.Move{}
+	for _, c := range []string{"A", "B"} {
+		cctx := testkit.CtxOf(c)
+		m, err := h.svc.NewMove(cctx, "1", false, "clerk")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ai, _ := h.blobs.Put([]byte("photo-" + c))
+		if _, err := h.store.AddPhoto(cctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: ai, AISHA256: ai, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "clerk"); err != nil {
+			t.Fatal(err)
+		}
+		moves[c] = m
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.svc.Start(runCtx); err != nil {
+		t.Fatal(err)
+	}
+	for c, m := range moves {
+		cctx := testkit.CtxOf(c)
+		waitStatusCtx(t, cctx, h.store, m.ID, store.StatusNeedsReview)
+		attempts, err := h.store.ListAttempts(cctx, m.ID)
+		if err != nil || len(attempts) != 1 {
+			t.Fatalf("company %s: attempts = %d, %v; want 1", c, len(attempts), err)
+		}
+		var company string
+		err = h.ownerQueryRow(t, `SELECT company_id FROM recognition_attempts WHERE id = $1`, attempts[0].ID).Scan(&company)
+		if err != nil || company != c {
+			t.Fatalf("attempt of company %s has company_id %q, %v", c, company, err)
+		}
+	}
+	if fake.Calls() != 2 {
+		t.Fatalf("engine calls = %d; want 2", fake.Calls())
+	}
+	got := map[string]string{}
+	for len(h.notified) > 0 {
+		n := <-h.notified
+		got[n[1]] = n[0]
+	}
+	for c, m := range moves {
+		if got[m.ID] != c {
+			t.Fatalf("move %s notified for company %q; want %q", m.ID, got[m.ID], c)
+		}
+	}
+}
+
+// ownerQueryRow runs a query as the database owner, outside row-level security.
+func (h *harness) ownerQueryRow(t *testing.T, sql string, args ...any) pgx.Row {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), h.ownerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close(context.Background()) })
+	return conn.QueryRow(context.Background(), sql, args...)
 }

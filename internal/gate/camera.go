@@ -26,7 +26,7 @@ func (s *Service) NewCameraMove(ctx context.Context, actor string) (store.Move, 
 	s.visitMu.Lock()
 	s.visits[m.ID] = true
 	s.visitMu.Unlock()
-	s.notify(m.ID)
+	s.notifyMove(ctx, m.ID)
 	return m, nil
 }
 
@@ -50,12 +50,12 @@ func (s *Service) AddFrame(ctx context.Context, moveID string, jpeg []byte, widt
 	}
 	p, err := s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg",
-		Bytes: int64(len(jpeg)), Width: width, Height: height, Deferred: true,
+		Bytes: int64(len(jpeg)), Width: width, Height: height, Deferred: true, ReadEnabled: true,
 	}, "camera")
 	if err != nil {
 		return store.Photo{}, err
 	}
-	s.notify(m.ID)
+	s.notifyMove(ctx, m.ID)
 	return p, nil
 }
 
@@ -78,8 +78,8 @@ func (s *Service) ReadFrame(ctx context.Context, photoID string) error {
 	if err := s.store.SetStatus(ctx, p.MoveID, store.StatusReading); err != nil {
 		log.Printf("gate: mark move %s reading: %v", p.MoveID, err)
 	}
-	s.notify(p.MoveID)
-	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType,
+	s.notifyMove(ctx, p.MoveID)
+	s.enqueue(job{scope: scopeOf(ctx), moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType,
 		detail: recognition.DetailUltraHigh})
 	return nil
 }
@@ -94,7 +94,7 @@ func (s *Service) SettleCamera(ctx context.Context, moveID string) error {
 	if err := s.recompute(context.WithoutCancel(ctx), moveID); err != nil {
 		return err
 	}
-	s.notify(moveID)
+	s.notifyMove(ctx, moveID)
 	return nil
 }
 

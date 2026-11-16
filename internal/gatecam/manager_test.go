@@ -42,7 +42,7 @@ func TestManagerSavesAppliesAndKeepsThePassword(t *testing.T) {
 		built = append(built, s)
 		return camera.NewReolink(s)
 	}
-	m := NewManager(st, w, live, build)
+	m := NewManager(st, w, live, build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestManagerSavesAppliesAndKeepsThePassword(t *testing.T) {
 	}
 
 	// A new manager over the same database loads the same settings.
-	m2 := NewManager(st, New(newFakeGate(), DefaultConfig()), &fakeLive{}, build)
+	m2 := NewManager(st, New(newFakeGate(), DefaultConfig()), &fakeLive{}, build, testkit.Scope)
 	if err := m2.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestChangingTheAddressOrUserNeedsThePasswordAgain(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	b := &fakeBuilder{}
-	m := NewManager(st, w, &fakeLive{}, b.build)
+	m := NewManager(st, w, &fakeLive{}, b.build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func describe(u Update) string {
 
 func TestManagerRejectsAnythingButAnAddress(t *testing.T) {
 	st, _ := testkit.Open(t)
-	m := NewManager(st, New(newFakeGate(), DefaultConfig()), &fakeLive{}, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) })
+	m := NewManager(st, New(newFakeGate(), DefaultConfig()), &fakeLive{}, func(s camera.Settings) camera.Camera { return camera.NewReolink(s) }, testkit.Scope)
 	for _, host := range []string{
 		"http://192.168.1.50", "192.168.1.50/cgi-bin", "admin@192.168.1.50", "192.168.1.50:99999", "cam era", "fe80::1",
 		"cam\nera", "cam\x00", "host:+80", "[192.168.1.50]:80", "cam]era", "<x>",
@@ -186,7 +186,7 @@ func TestManagerUseFixedIgnoresSavedSettings(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	fake := camera.NewFake(camera.DemoStill())
-	m := NewManager(st, w, &fakeLive{}, func(s camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil })
+	m := NewManager(st, w, &fakeLive{}, func(s camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil }, testkit.Scope)
 	m.UseFixed(fake)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestResavingTheSameSettingsReconnectsAStoppedCamera(t *testing.T) {
 			st, _ := testkit.Open(t)
 			w := New(newFakeGate(), DefaultConfig())
 			b := &fakeBuilder{firstErr: tc.err}
-			m := NewManager(st, w, &fakeLive{}, b.build)
+			m := NewManager(st, w, &fakeLive{}, b.build, testkit.Scope)
 			if err := m.Load(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -316,7 +316,7 @@ func TestReconnectAfterAWrongPassword(t *testing.T) {
 	w := New(newFakeGate(), DefaultConfig())
 	b := &fakeBuilder{firstErr: fmt.Errorf("%w: login failed", camera.ErrAuth)}
 	live := &fakeLive{}
-	m := NewManager(st, w, live, b.build)
+	m := NewManager(st, w, live, b.build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestReconnectUsesTheFixedCamera(t *testing.T) {
 	w := New(newFakeGate(), DefaultConfig())
 	fixed := camera.NewFake(camera.DemoStill())
 	fixed.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
-	m := NewManager(st, w, &fakeLive{}, func(camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil })
+	m := NewManager(st, w, &fakeLive{}, func(camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil }, testkit.Scope)
 	m.UseFixed(fixed)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
@@ -363,7 +363,7 @@ func TestConcurrentSavesKeepBothChanges(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	b := &fakeBuilder{}
-	m := NewManager(st, w, &fakeLive{}, b.build)
+	m := NewManager(st, w, &fakeLive{}, b.build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestReplacedCamerasAreClosed(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	b := &fakeBuilder{firstErr: fmt.Errorf("%w: login failed", camera.ErrAuth)}
-	m := NewManager(st, w, &fakeLive{}, b.build)
+	m := NewManager(st, w, &fakeLive{}, b.build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestCloseClosesTheCurrentCamera(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	b := &fakeBuilder{}
-	m := NewManager(st, w, &fakeLive{}, b.build)
+	m := NewManager(st, w, &fakeLive{}, b.build, testkit.Scope)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestTheFixedCameraIsClosedOnlyByClose(t *testing.T) {
 	st, _ := testkit.Open(t)
 	w := New(newFakeGate(), DefaultConfig())
 	fixed := &closeCounter{Fake: camera.NewFake(camera.DemoStill())}
-	m := NewManager(st, w, &fakeLive{}, func(camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil })
+	m := NewManager(st, w, &fakeLive{}, func(camera.Settings) camera.Camera { t.Fatal("must not build a camera"); return nil }, testkit.Scope)
 	m.UseFixed(fixed)
 	if err := m.Load(ctx); err != nil {
 		t.Fatal(err)

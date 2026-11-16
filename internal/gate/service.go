@@ -14,6 +14,7 @@ import (
 	"depot/internal/iso6346"
 	"depot/internal/recognition"
 	"depot/internal/store"
+	"depot/internal/tenancy"
 )
 
 var (
@@ -39,7 +40,7 @@ type Service struct {
 	blobs  *blob.Store
 	rec    recognition.Recognizer
 	cfg    Config
-	notify func(moveID string)
+	notify func(companyID, moveID string)
 	jobs   chan job
 	ctx    context.Context
 	mu     sync.Mutex // serializes recompute and resolve
@@ -52,6 +53,7 @@ type Service struct {
 }
 
 type job struct {
+	scope                                tenancy.Scope // the company and depot the job was created under
 	moveID, photoID, role, aiSHA, aiType string
 	detail                               string // recognition.Image.Detail: ultra-high for camera stills
 }
@@ -66,8 +68,8 @@ func detailFor(source string) string {
 }
 
 // New builds the service. notify is called whenever a move changes (live
-// screen updates); it may be nil.
-func New(st *store.Store, bl *blob.Store, rec recognition.Recognizer, cfg Config, notify func(string)) *Service {
+// screen updates), with the move's company; it may be nil.
+func New(st *store.Store, bl *blob.Store, rec recognition.Recognizer, cfg Config, notify func(companyID, moveID string)) *Service {
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
@@ -75,7 +77,7 @@ func New(st *store.Store, bl *blob.Store, rec recognition.Recognizer, cfg Config
 		cfg.AutoAcceptThreshold = 0.85
 	}
 	if notify == nil {
-		notify = func(string) {}
+		notify = func(string, string) {}
 	}
 	return &Service{store: st, blobs: bl, rec: rec, cfg: cfg, notify: notify, jobs: make(chan job, 256), ctx: context.Background(), visits: map[string]bool{}}
 }
@@ -91,12 +93,28 @@ func (s *Service) Start(ctx context.Context) error {
 		s.wg.Add(1)
 		go s.worker()
 	}
+	companies, err := s.store.CompanyIDs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range companies {
+		// Reads span the company's depots; each job keeps its photo's depot.
+		if err := s.recoverCompany(tenancy.With(ctx, tenancy.Scope{CompanyID: id}), id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recoverCompany re-queues the company's unread photos and settles its
+// moves left open by a previous run. ctx carries the company's scope.
+func (s *Service) recoverCompany(ctx context.Context, companyID string) error {
 	pending, err := s.store.PhotosWithoutAttempts(ctx)
 	if err != nil {
 		return err
 	}
 	unread := map[string]bool{}
-	details := map[string]string{} // move ID → engine detail, one lookup per move
+	details := map[string]string{} // move ID -> engine detail, one lookup per move
 	for _, p := range pending {
 		detail, ok := details[p.MoveID]
 		if !ok {
@@ -108,7 +126,7 @@ func (s *Service) Start(ctx context.Context) error {
 			details[p.MoveID] = detail
 		}
 		unread[p.MoveID] = true
-		s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
+		s.enqueue(job{scope: tenancy.Scope{CompanyID: companyID, DepotID: p.DepotID}, moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
 	}
 	// A re-read cut short by a shutdown leaves its move saying "reading" with
 	// every photo already read and no job left to finish it. Camera visits do
@@ -138,7 +156,7 @@ func (s *Service) settleOpen(ctx context.Context, f store.ListFilter, skip map[s
 				log.Printf("gate: recompute move %s: %v", m.ID, err)
 				continue
 			}
-			s.notify(m.ID)
+			s.notifyMove(ctx, m.ID)
 		}
 		if len(moves) < page {
 			return nil
@@ -180,8 +198,8 @@ func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, err
 	if err != nil || !added {
 		return p, err
 	}
-	s.notify(p.MoveID)
-	s.enqueue(job{moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType}) // a phone photo: default detail
+	s.notifyMove(ctx, p.MoveID)
+	s.enqueue(job{scope: scopeOf(ctx), moveID: p.MoveID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType}) // a phone photo: default detail
 	return p, nil
 }
 
@@ -214,6 +232,7 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 	p, err = s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
 		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,
+		ReadEnabled: true, // until the ocr module switch (Task 6)
 	}, in.Actor)
 	if err != nil {
 		return store.Photo{}, false, err
@@ -243,10 +262,10 @@ func (s *Service) Reread(ctx context.Context, moveID string) error {
 	if err := s.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
 		return err
 	}
-	s.notify(m.ID)
+	s.notifyMove(ctx, m.ID)
 	detail := detailFor(m.Source)
 	for _, p := range photos {
-		s.enqueue(job{moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
+		s.enqueue(job{scope: scopeOf(ctx), moveID: m.ID, photoID: p.ID, role: p.Role, aiSHA: p.AISHA256, aiType: p.AIMediaType, detail: detail})
 	}
 	return nil
 }
@@ -294,7 +313,7 @@ func (s *Service) Resolve(ctx context.Context, moveID string, r Resolution) (sto
 	}
 	out, err := s.store.Resolve(ctx, moveID, u)
 	if err == nil {
-		s.notify(moveID)
+		s.notifyMove(ctx, moveID)
 	}
 	return out, err
 }
@@ -341,6 +360,18 @@ func (s *Service) openMove(ctx context.Context, id string) (store.Move, error) {
 	return m, nil
 }
 
+// scopeOf is ctx's scope; the zero scope when there is none, so the job's
+// store calls fail with tenancy.ErrNoScope instead of reading another company.
+func scopeOf(ctx context.Context) tenancy.Scope {
+	sc, _ := tenancy.From(ctx)
+	return sc
+}
+
+// notifyMove tells the live screens that a move of ctx's company changed.
+func (s *Service) notifyMove(ctx context.Context, moveID string) {
+	s.notify(scopeOf(ctx).CompanyID, moveID)
+}
+
 func (s *Service) enqueue(j job) {
 	select {
 	case s.jobs <- j:
@@ -361,7 +392,7 @@ func (s *Service) worker() {
 }
 
 func (s *Service) process(j job) {
-	ctx := s.ctx
+	ctx := tenancy.With(s.ctx, j.scope)
 	img := recognition.Image{MediaType: j.aiType, Detail: j.detail}
 	data, err := s.blobs.Get(j.aiSHA)
 	att := recognition.Attempt{Engine: s.rec.Name(), Model: s.rec.Model(), PromptVersion: recognition.PromptVersion}
@@ -397,7 +428,7 @@ func (s *Service) process(j job) {
 	if err := s.recompute(ctx, j.moveID); err != nil {
 		log.Printf("gate: recompute move %s: %v", j.moveID, err)
 	}
-	s.notify(j.moveID)
+	s.notifyMove(ctx, j.moveID)
 }
 
 // recompute rebuilds a move's result from the latest attempt of each photo.

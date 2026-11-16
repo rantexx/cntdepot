@@ -2,9 +2,9 @@ package gate
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +12,8 @@ import (
 
 	"depot/internal/recognition"
 	"depot/internal/store"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // still is a fake camera still: the JPEG signature satisfies content
@@ -222,18 +224,18 @@ func TestStartSettlesCameraVisitsCutShortByARestart(t *testing.T) {
 	// had one photo chosen but not read yet.
 	a, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
 	sha, _ := h.blobs.Put(still("a1"))
-	pa, _ := h.store.AddPhoto(ctx, store.Photo{MoveID: a.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "camera")
+	pa, _ := h.store.AddPhoto(ctx, store.Photo{MoveID: a.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "camera")
 	raw, _ := json.Marshal(reading("CSQU3054383", 0.9))
 	if _, err := h.store.AddAttempt(ctx, store.Attempt{MoveID: a.ID, PhotoID: pa.ID, Engine: "fake", Model: "fake-1", Reading: raw, Raw: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
 	sha2, _ := h.blobs.Put(still("a2"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: a.ID, Role: "rear", SHA256: sha2, AISHA256: sha2, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: a.ID, Role: "rear", SHA256: sha2, AISHA256: sha2, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true, ReadEnabled: true}, "camera"); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
 	sha3, _ := h.blobs.Put(still("b1"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: b.ID, Role: "rear", SHA256: sha3, AISHA256: sha3, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "camera"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: b.ID, Role: "rear", SHA256: sha3, AISHA256: sha3, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "camera"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,7 +303,7 @@ func TestRestartBeforeTheFirstReadNeedsReview(t *testing.T) {
 	// Before the restart the visit stored a still but never chose one.
 	m, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
 	sha, _ := h.blobs.Put(still("d1"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true}, "camera"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, Deferred: true, ReadEnabled: true}, "camera"); err != nil {
 		t.Fatal(err)
 	}
 	startWithHook(t, h)
@@ -376,7 +378,7 @@ func TestCameraConfidenceIsOneStillsConfidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
-	if got.Confidence != 0.95 {
+	if math.Abs(got.Confidence-0.95) > 1e-6 { // the column is REAL (float4)
 		t.Fatalf("confidence = %v; want 0.95, the best single still (no bonus for stills of one side)", got.Confidence)
 	}
 	var res recognition.Result
@@ -391,12 +393,12 @@ func TestCameraPhotosKeepUltraHighDetailOnRereadAndRestart(t *testing.T) {
 	// Before the restart: a camera photo and a phone photo were chosen but not read.
 	cam, _ := h.store.CreateMoveWithSource(ctx, "camera", store.SourceCamera, false, "camera")
 	sha, _ := h.blobs.Put(still("restart"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: cam.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "camera"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: cam.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "camera"); err != nil {
 		t.Fatal(err)
 	}
 	phone, _ := h.store.CreateMove(ctx, "1", false, "clerk")
 	sha2, _ := h.blobs.Put([]byte("phone"))
-	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: phone.ID, Role: "rear", SHA256: sha2, AISHA256: sha2, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1}, "clerk"); err != nil {
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: phone.ID, Role: "rear", SHA256: sha2, AISHA256: sha2, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "clerk"); err != nil {
 		t.Fatal(err)
 	}
 	reads := startWithHook(t, h)
@@ -428,13 +430,16 @@ func TestReadFrameQueuesThePhotoEvenWhenTheStatusCannotBeSet(t *testing.T) {
 
 	// Make every "reading" status write fail, as a full disk or a locked
 	// database would, while choosing the photo still works.
-	db, err := sql.Open("sqlite", h.dbPath)
+	conn, err := pgx.Connect(context.Background(), h.ownerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TRIGGER fail_reading BEFORE UPDATE OF status ON gate_moves
-		WHEN NEW.status = 'reading' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
-	db.Close()
+	defer conn.Close(context.Background())
+	_, err = conn.Exec(context.Background(), `
+		CREATE FUNCTION fail_reading() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected failure'; END $$;
+		CREATE TRIGGER fail_reading BEFORE UPDATE OF status ON gate_moves
+		FOR EACH ROW WHEN (NEW.status = 'reading') EXECUTE FUNCTION fail_reading()`)
 	if err != nil {
 		t.Fatal(err)
 	}

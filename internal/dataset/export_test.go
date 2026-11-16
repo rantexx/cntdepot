@@ -2,7 +2,6 @@ package dataset
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ func TestExportWritesImagesLabelsAndYOLO(t *testing.T) {
 	testkit.SeedVerifiedMove(t, st, bl, "TEXU1234569", "ai-2", recognition.Reading{}, true) // practice: excluded
 
 	out := testdir.New(t)
-	sum, err := Export(context.Background(), st, bl, out)
+	sum, err := Export(testkit.Ctx(), st, bl, out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +71,7 @@ func TestExportSkipsBoxesAroundADifferentNumber(t *testing.T) {
 	}, false)
 
 	out := testdir.New(t)
-	sum, err := Export(context.Background(), st, bl, out)
+	sum, err := Export(testkit.Ctx(), st, bl, out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +115,7 @@ func TestBoxMatchesTheConfirmedNumber(t *testing.T) {
 func TestReadmeSaysTypeAndColorAreTheEnginesReading(t *testing.T) {
 	st, bl := testkit.Open(t)
 	out := testdir.New(t)
-	if _, err := Export(context.Background(), st, bl, out); err != nil {
+	if _, err := Export(testkit.Ctx(), st, bl, out); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(out, "README.txt"))
@@ -134,7 +133,7 @@ func TestReadmeSaysTypeAndColorAreTheEnginesReading(t *testing.T) {
 // can keep a still out of yolo/.
 func seedCameraMove(t *testing.T, st *store.Store, bl *blob.Store, number string, unread int) (store.Move, store.Photo, []store.Photo) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := testkit.Ctx()
 	m, err := st.CreateMoveWithSource(ctx, "1", store.SourceCamera, false, "camera")
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +185,7 @@ func TestExportKeepsUnreadCameraStillsApart(t *testing.T) {
 	m, read, stills := seedCameraMove(t, st, bl, "CSQU3054383", 2)
 
 	out := testdir.New(t)
-	sum, err := Export(context.Background(), st, bl, out)
+	sum, err := Export(testkit.Ctx(), st, bl, out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +232,7 @@ func TestExportKeepsUnreadCameraStillsApart(t *testing.T) {
 func TestReadmeExplainsUnreadCameraStills(t *testing.T) {
 	st, bl := testkit.Open(t)
 	out := testdir.New(t)
-	if _, err := Export(context.Background(), st, bl, out); err != nil {
+	if _, err := Export(testkit.Ctx(), st, bl, out); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(out, "README.txt"))
