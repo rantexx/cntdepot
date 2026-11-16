@@ -206,15 +206,32 @@ SELECT timezone FROM depots WHERE company_id = @company_id AND id = @id;
 -- name: MovePhotoIDs :many
 SELECT id FROM photos WHERE company_id = @company_id AND move_id = @move_id;
 
--- The items of a depot's orders of one kind that can match a container:
+-- The items of a depot's open orders of one kind that can match a container:
 -- named for its number, or a quantity of the same size, height and group.
--- name: MatchOrderItems :many
+-- Locked, so two saves cannot both use the last unit.
+-- name: MatchOpenOrderItems :many
 SELECT o.kind, o.line_id, o.customer_id, o.status, o.valid_until, sqlc.embed(i)
 FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
-WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.kind = @kind
+WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.kind = @kind AND o.status = 'open'
   AND (i.number = @number::text OR left(i.type_code, 3) = left(@type_code::text, 3))
 ORDER BY i.id
 FOR UPDATE OF i;
+
+-- The same from cancelled or done orders, only to tell the clerk the order
+-- is no longer open: not locked, the 50 most recent.
+-- name: MatchOtherOrderItems :many
+SELECT o.kind, o.line_id, o.customer_id, o.status, o.valid_until, sqlc.embed(i)
+FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.kind = @kind AND o.status <> 'open'
+  AND (i.number = @number::text OR left(i.type_code, 3) = left(@type_code::text, 3))
+ORDER BY o.created_at DESC, i.id
+LIMIT 50;
+
+-- Whether the form's optional references exist in the company (an empty id: none given).
+-- name: FormRefs :one
+SELECT (@line_id::text = '' OR EXISTS (SELECT 1 FROM shipping_lines l WHERE l.company_id = @company_id::text AND l.id = @line_id::text))::boolean AS line_ok,
+    (@customer_id::text = '' OR EXISTS (SELECT 1 FROM customers cu WHERE cu.company_id = @company_id::text AND cu.id = @customer_id::text))::boolean AS customer_ok,
+    (@haulier_id::text = '' OR EXISTS (SELECT 1 FROM hauliers h WHERE h.company_id = @company_id::text AND h.id = @haulier_id::text))::boolean AS haulier_ok;
 
 -- name: MatchBlock :one
 SELECT * FROM block_list b
@@ -225,9 +242,8 @@ WHERE b.company_id = @company_id AND b.active
 ORDER BY b.kind, b.id
 LIMIT 1;
 
--- name: PendingApproval :one
-SELECT * FROM approvals WHERE company_id = @company_id AND move_id = @move_id AND status = 'pending'
-ORDER BY id LIMIT 1;
+-- name: ApprovalsOfMove :many
+SELECT * FROM approvals WHERE company_id = @company_id AND move_id = @move_id ORDER BY id;
 
 -- name: SetMoveIdentity :execrows
 UPDATE gate_moves SET direction = @direction, number = @number, type_code = @type_code,
@@ -245,12 +261,18 @@ WHERE company_id = @company_id AND id = @id;
 SELECT * FROM visits WHERE company_id = @company_id AND (in_move_id = @move_id::text OR out_move_id = @move_id::text)
 ORDER BY id FOR UPDATE;
 
--- name: DeleteVisit :exec
-DELETE FROM visits WHERE company_id = @company_id AND id = @id;
-
 -- name: ReopenVisit :exec
 UPDATE visits SET status = 'in_yard', out_move_id = NULL, out_at = NULL, close_reason = ''
 WHERE company_id = @company_id AND id = @id;
+
+-- A corrected move rewrites its visit in place: position, grade and holds stay.
+-- name: RewriteVisit :exec
+UPDATE visits SET number = @number, type_code = @type_code, line_id = @line_id, customer_id = @customer_id,
+    full_empty = @full_empty, status = @status, out_move_id = @out_move_id, out_at = @out_at, close_reason = @close_reason
+WHERE company_id = @company_id AND id = @id;
+
+-- name: SetVisitCloseReason :exec
+UPDATE visits SET close_reason = @close_reason WHERE company_id = @company_id AND id = @id AND status = 'out';
 
 -- name: DeleteDamages :exec
 DELETE FROM damages WHERE company_id = @company_id AND move_id = @move_id;

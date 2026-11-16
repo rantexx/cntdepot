@@ -11,6 +11,45 @@ import (
 	"time"
 )
 
+const approvalsOfMove = `-- name: ApprovalsOfMove :many
+SELECT company_id, id, move_id, reasons, requested_by, requested_at, status, decided_by, decided_at FROM approvals WHERE company_id = $1 AND move_id = $2 ORDER BY id
+`
+
+type ApprovalsOfMoveParams struct {
+	CompanyID string
+	MoveID    string
+}
+
+func (q *Queries) ApprovalsOfMove(ctx context.Context, arg ApprovalsOfMoveParams) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, approvalsOfMove, arg.CompanyID, arg.MoveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.ID,
+			&i.MoveID,
+			&i.Reasons,
+			&i.RequestedBy,
+			&i.RequestedAt,
+			&i.Status,
+			&i.DecidedBy,
+			&i.DecidedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const closeVisit = `-- name: CloseVisit :execrows
 UPDATE visits SET status = 'out', out_move_id = $1, out_at = $2, close_reason = $3
 WHERE company_id = $4 AND ($5::text = '' OR depot_id = $5) AND id = $6 AND status = 'in_yard'
@@ -86,20 +125,6 @@ func (q *Queries) DeleteDamages(ctx context.Context, arg DeleteDamagesParams) er
 	return err
 }
 
-const deleteVisit = `-- name: DeleteVisit :exec
-DELETE FROM visits WHERE company_id = $1 AND id = $2
-`
-
-type DeleteVisitParams struct {
-	CompanyID string
-	ID        string
-}
-
-func (q *Queries) DeleteVisit(ctx context.Context, arg DeleteVisitParams) error {
-	_, err := q.db.Exec(ctx, deleteVisit, arg.CompanyID, arg.ID)
-	return err
-}
-
 const depotTimezone = `-- name: DepotTimezone :one
 SELECT timezone FROM depots WHERE company_id = $1 AND id = $2
 `
@@ -129,6 +154,38 @@ func (q *Queries) EIRLookup(ctx context.Context, tokenHash string) (EIRLookupRow
 	row := q.db.QueryRow(ctx, eIRLookup, tokenHash)
 	var i EIRLookupRow
 	err := row.Scan(&i.CompanyID, &i.MoveID)
+	return i, err
+}
+
+const formRefs = `-- name: FormRefs :one
+SELECT ($1::text = '' OR EXISTS (SELECT 1 FROM shipping_lines l WHERE l.company_id = $2::text AND l.id = $1::text))::boolean AS line_ok,
+    ($3::text = '' OR EXISTS (SELECT 1 FROM customers cu WHERE cu.company_id = $2::text AND cu.id = $3::text))::boolean AS customer_ok,
+    ($4::text = '' OR EXISTS (SELECT 1 FROM hauliers h WHERE h.company_id = $2::text AND h.id = $4::text))::boolean AS haulier_ok
+`
+
+type FormRefsParams struct {
+	LineID     string
+	CompanyID  string
+	CustomerID string
+	HaulierID  string
+}
+
+type FormRefsRow struct {
+	LineOk     bool
+	CustomerOk bool
+	HaulierOk  bool
+}
+
+// Whether the form's optional references exist in the company (an empty id: none given).
+func (q *Queries) FormRefs(ctx context.Context, arg FormRefsParams) (FormRefsRow, error) {
+	row := q.db.QueryRow(ctx, formRefs,
+		arg.LineID,
+		arg.CompanyID,
+		arg.CustomerID,
+		arg.HaulierID,
+	)
+	var i FormRefsRow
+	err := row.Scan(&i.LineOk, &i.CustomerOk, &i.HaulierOk)
 	return i, err
 }
 
@@ -1121,16 +1178,16 @@ func (q *Queries) MatchBlock(ctx context.Context, arg MatchBlockParams) (BlockLi
 	return i, err
 }
 
-const matchOrderItems = `-- name: MatchOrderItems :many
+const matchOpenOrderItems = `-- name: MatchOpenOrderItems :many
 SELECT o.kind, o.line_id, o.customer_id, o.status, o.valid_until, i.company_id, i.id, i.order_id, i.number, i.type_code, i.full_empty, i.quantity, i.used
 FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
-WHERE i.company_id = $1 AND o.depot_id = $2 AND o.kind = $3
+WHERE i.company_id = $1 AND o.depot_id = $2 AND o.kind = $3 AND o.status = 'open'
   AND (i.number = $4::text OR left(i.type_code, 3) = left($5::text, 3))
 ORDER BY i.id
 FOR UPDATE OF i
 `
 
-type MatchOrderItemsParams struct {
+type MatchOpenOrderItemsParams struct {
 	CompanyID string
 	DepotID   string
 	Kind      string
@@ -1138,7 +1195,7 @@ type MatchOrderItemsParams struct {
 	TypeCode  string
 }
 
-type MatchOrderItemsRow struct {
+type MatchOpenOrderItemsRow struct {
 	Kind       string
 	LineID     *string
 	CustomerID *string
@@ -1147,10 +1204,11 @@ type MatchOrderItemsRow struct {
 	OrderItem  OrderItem
 }
 
-// The items of a depot's orders of one kind that can match a container:
+// The items of a depot's open orders of one kind that can match a container:
 // named for its number, or a quantity of the same size, height and group.
-func (q *Queries) MatchOrderItems(ctx context.Context, arg MatchOrderItemsParams) ([]MatchOrderItemsRow, error) {
-	rows, err := q.db.Query(ctx, matchOrderItems,
+// Locked, so two saves cannot both use the last unit.
+func (q *Queries) MatchOpenOrderItems(ctx context.Context, arg MatchOpenOrderItemsParams) ([]MatchOpenOrderItemsRow, error) {
+	rows, err := q.db.Query(ctx, matchOpenOrderItems,
 		arg.CompanyID,
 		arg.DepotID,
 		arg.Kind,
@@ -1161,9 +1219,77 @@ func (q *Queries) MatchOrderItems(ctx context.Context, arg MatchOrderItemsParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []MatchOrderItemsRow
+	var items []MatchOpenOrderItemsRow
 	for rows.Next() {
-		var i MatchOrderItemsRow
+		var i MatchOpenOrderItemsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.LineID,
+			&i.CustomerID,
+			&i.Status,
+			&i.ValidUntil,
+			&i.OrderItem.CompanyID,
+			&i.OrderItem.ID,
+			&i.OrderItem.OrderID,
+			&i.OrderItem.Number,
+			&i.OrderItem.TypeCode,
+			&i.OrderItem.FullEmpty,
+			&i.OrderItem.Quantity,
+			&i.OrderItem.Used,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const matchOtherOrderItems = `-- name: MatchOtherOrderItems :many
+SELECT o.kind, o.line_id, o.customer_id, o.status, o.valid_until, i.company_id, i.id, i.order_id, i.number, i.type_code, i.full_empty, i.quantity, i.used
+FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = $1 AND o.depot_id = $2 AND o.kind = $3 AND o.status <> 'open'
+  AND (i.number = $4::text OR left(i.type_code, 3) = left($5::text, 3))
+ORDER BY o.created_at DESC, i.id
+LIMIT 50
+`
+
+type MatchOtherOrderItemsParams struct {
+	CompanyID string
+	DepotID   string
+	Kind      string
+	Number    string
+	TypeCode  string
+}
+
+type MatchOtherOrderItemsRow struct {
+	Kind       string
+	LineID     *string
+	CustomerID *string
+	Status     string
+	ValidUntil *time.Time
+	OrderItem  OrderItem
+}
+
+// The same from cancelled or done orders, only to tell the clerk the order
+// is no longer open: not locked, the 50 most recent.
+func (q *Queries) MatchOtherOrderItems(ctx context.Context, arg MatchOtherOrderItemsParams) ([]MatchOtherOrderItemsRow, error) {
+	rows, err := q.db.Query(ctx, matchOtherOrderItems,
+		arg.CompanyID,
+		arg.DepotID,
+		arg.Kind,
+		arg.Number,
+		arg.TypeCode,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MatchOtherOrderItemsRow
+	for rows.Next() {
+		var i MatchOtherOrderItemsRow
 		if err := rows.Scan(
 			&i.Kind,
 			&i.LineID,
@@ -1258,33 +1384,6 @@ func (q *Queries) OpenOrderItems(ctx context.Context, arg OpenOrderItemsParams) 
 	return items, nil
 }
 
-const pendingApproval = `-- name: PendingApproval :one
-SELECT company_id, id, move_id, reasons, requested_by, requested_at, status, decided_by, decided_at FROM approvals WHERE company_id = $1 AND move_id = $2 AND status = 'pending'
-ORDER BY id LIMIT 1
-`
-
-type PendingApprovalParams struct {
-	CompanyID string
-	MoveID    string
-}
-
-func (q *Queries) PendingApproval(ctx context.Context, arg PendingApprovalParams) (Approval, error) {
-	row := q.db.QueryRow(ctx, pendingApproval, arg.CompanyID, arg.MoveID)
-	var i Approval
-	err := row.Scan(
-		&i.CompanyID,
-		&i.ID,
-		&i.MoveID,
-		&i.Reasons,
-		&i.RequestedBy,
-		&i.RequestedAt,
-		&i.Status,
-		&i.DecidedBy,
-		&i.DecidedAt,
-	)
-	return i, err
-}
-
 const releaseHold = `-- name: ReleaseHold :execrows
 UPDATE holds h SET released_by = $1, released_at = $2
 WHERE h.company_id = $3 AND h.id = $4 AND h.released_at IS NULL
@@ -1356,6 +1455,44 @@ func (q *Queries) ResolveFlag(ctx context.Context, arg ResolveFlagParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rewriteVisit = `-- name: RewriteVisit :exec
+UPDATE visits SET number = $1, type_code = $2, line_id = $3, customer_id = $4,
+    full_empty = $5, status = $6, out_move_id = $7, out_at = $8, close_reason = $9
+WHERE company_id = $10 AND id = $11
+`
+
+type RewriteVisitParams struct {
+	Number      string
+	TypeCode    string
+	LineID      *string
+	CustomerID  *string
+	FullEmpty   string
+	Status      string
+	OutMoveID   *string
+	OutAt       *time.Time
+	CloseReason string
+	CompanyID   string
+	ID          string
+}
+
+// A corrected move rewrites its visit in place: position, grade and holds stay.
+func (q *Queries) RewriteVisit(ctx context.Context, arg RewriteVisitParams) error {
+	_, err := q.db.Exec(ctx, rewriteVisit,
+		arg.Number,
+		arg.TypeCode,
+		arg.LineID,
+		arg.CustomerID,
+		arg.FullEmpty,
+		arg.Status,
+		arg.OutMoveID,
+		arg.OutAt,
+		arg.CloseReason,
+		arg.CompanyID,
+		arg.ID,
+	)
+	return err
 }
 
 const setBlockActive = `-- name: SetBlockActive :execrows
@@ -1483,6 +1620,21 @@ func (q *Queries) SetOrderStatus(ctx context.Context, arg SetOrderStatusParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setVisitCloseReason = `-- name: SetVisitCloseReason :exec
+UPDATE visits SET close_reason = $1 WHERE company_id = $2 AND id = $3 AND status = 'out'
+`
+
+type SetVisitCloseReasonParams struct {
+	CloseReason string
+	CompanyID   string
+	ID          string
+}
+
+func (q *Queries) SetVisitCloseReason(ctx context.Context, arg SetVisitCloseReasonParams) error {
+	_, err := q.db.Exec(ctx, setVisitCloseReason, arg.CloseReason, arg.CompanyID, arg.ID)
+	return err
 }
 
 const setVisitGrade = `-- name: SetVisitGrade :execrows

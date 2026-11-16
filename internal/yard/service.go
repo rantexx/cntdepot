@@ -26,6 +26,8 @@ var (
 	ErrReasonRequired = errors.New("a reason is required")
 	ErrOrderClosed    = errors.New("the order is not open")
 	ErrVisitMoved     = errors.New("the visit this move opened has been closed since: correct or void that move first")
+	ErrVisitConflict  = errors.New("the container is in the yard again under a newer visit: correct or void that move first")
+	ErrDirectionFixed = errors.New("a correction cannot change the direction: void the move and record a new one")
 )
 
 // GateForm is the clerk's gate form for one move.
@@ -48,11 +50,13 @@ type DamageInput struct {
 type Override struct{ Reason string }
 
 // Refusal says why a move was not saved. ApprovalID names the manager
-// approval that may pass it (refusal mode manager_approval).
+// approval that may pass it (refusal mode manager_approval), and
+// ApprovalStatus says whether it is "pending" or "denied".
 type Refusal struct {
-	Blocked    bool
-	Reasons    []Reason
-	ApprovalID string
+	Blocked        bool
+	Reasons        []Reason
+	ApprovalID     string
+	ApprovalStatus string
 }
 
 // Result of a save. Refused or Candidates (several order items match: the
@@ -120,7 +124,7 @@ func (s *Service) SaveGateMove(ctx context.Context, f GateForm, actor string) (R
 		case m.Voided:
 			return ErrVoided
 		}
-		res, err = s.apply(ctx, q, sc, m, f, actor, "", notes)
+		res, err = s.apply(ctx, q, sc, m, f, actor, "", nil, notes)
 		return err
 	})
 	res.Move.ID = f.MoveID
@@ -130,8 +134,9 @@ func (s *Service) SaveGateMove(ctx context.Context, f GateForm, actor string) (R
 var errChoose = errors.New("several order items match")
 
 // CorrectGateMove undoes a saved move's visit and order item and applies the
-// corrected form. Refusals do not stop a correction: they become override
-// flags with the reason.
+// corrected form; the move's own visit is rewritten in place, so its
+// position, grade and holds stay. Refusals do not stop a correction: they
+// become override flags with the reason. The direction cannot change.
 func (s *Service) CorrectGateMove(ctx context.Context, moveID string, f GateForm, reason, actor string) (Result, error) {
 	if reason = strings.TrimSpace(reason); reason == "" {
 		return Result{}, ErrReasonRequired
@@ -147,14 +152,17 @@ func (s *Service) CorrectGateMove(ctx context.Context, moveID string, f GateForm
 			return ErrVoided
 		case m.FormSavedAt == nil:
 			return ErrNotSaved
+		case f.Direction != m.Direction:
+			return ErrDirectionFixed
 		}
-		if err := reverse(ctx, q, sc, m); err != nil {
+		own, err := reverse(ctx, q, sc, m, s.st.now())
+		if err != nil {
 			return err
 		}
 		if err := q.DeleteDamages(ctx, sqlcdb.DeleteDamagesParams{CompanyID: sc.CompanyID, MoveID: m.ID}); err != nil {
 			return err
 		}
-		if res, err = s.apply(ctx, q, sc, m, f, actor, reason, notes); err == nil && len(res.Candidates) > 0 {
+		if res, err = s.apply(ctx, q, sc, m, f, actor, reason, own, notes); err == nil && len(res.Candidates) > 0 {
 			return errChoose // roll the reversal back; the office picks an item
 		}
 		return err
@@ -166,8 +174,8 @@ func (s *Service) CorrectGateMove(ctx context.Context, moveID string, f GateForm
 	return s.withMove(ctx, res, err)
 }
 
-// VoidGateMove releases the move's order item, reopens the visit it closed
-// or deletes the one it opened, and marks it void.
+// VoidGateMove releases the move's order item, reopens the visits it closed,
+// closes the visit it opened (close_reason "voided"), and marks it void.
 func (s *Service) VoidGateMove(ctx context.Context, moveID, reason, actor string) error {
 	if reason = strings.TrimSpace(reason); reason == "" {
 		return ErrReasonRequired
@@ -180,10 +188,10 @@ func (s *Service) VoidGateMove(ctx context.Context, moveID, reason, actor string
 		if m.Voided {
 			return ErrVoided
 		}
-		if err := reverse(ctx, q, sc, m); err != nil {
+		now := s.st.now()
+		if _, err := reverse(ctx, q, sc, m, now); err != nil {
 			return err
 		}
-		now := s.st.now()
 		if err := one(q.VoidMove(ctx, sqlcdb.VoidMoveParams{CompanyID: sc.CompanyID, ID: m.ID, VoidReason: reason, UpdatedAt: now})); err != nil {
 			return err
 		}
@@ -227,8 +235,9 @@ func (s *Service) event(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 }
 
 // apply runs the gate rules on f and, unless refused, applies it to move m.
-// correction is the office's reason when m is being corrected, else "".
-func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.LockMoveRow, f GateForm, actor, correction string, notes *[]note) (Result, error) {
+// correction is the office's reason when m is being corrected, else "";
+// own is then the move's visit as reverse left it, rewritten in place.
+func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.LockMoveRow, f GateForm, actor, correction string, own *Visit, notes *[]note) (Result, error) {
 	c := sc.CompanyID
 	dir, number, typeCode := f.Direction, iso6346.Normalize(f.Number), iso6346.Normalize(f.TypeCode)
 	fullEmpty := cmp.Or(norm(f.FullEmpty), "E")
@@ -257,6 +266,15 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 		}
 	}
 
+	refs, err := q.FormRefs(ctx, sqlcdb.FormRefsParams{CompanyID: c, LineID: strings.TrimSpace(f.LineID),
+		CustomerID: strings.TrimSpace(f.CustomerID), HaulierID: strings.TrimSpace(f.HaulierID)})
+	if err != nil {
+		return Result{}, err
+	}
+	if !refs.LineOk || !refs.CustomerOk || !refs.HaulierOk {
+		return Result{}, ErrBadLink
+	}
+
 	// The facts.
 	if err := q.LockNumber(ctx, sqlcdb.LockNumberParams{CompanyID: c, Number: number}); err != nil {
 		return Result{}, err
@@ -274,14 +292,14 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 	}
 	facts := Facts{Direction: dir, Number: number, TypeCode: typeCode, FullEmpty: fullEmpty, Now: now.In(loc),
 		WalkinsAllowed: settings.WalkinsAllowed, ChosenOrderItemID: f.ChosenOrderItemID}
-	// Gate-in sees an open visit in any depot of the company (missed gate-out);
-	// gate-out closes only one in the move's own depot.
+	// The open visit, in any depot of the company: a gate-in closes it as a
+	// missed gate-out, a gate-out closes it even at another depot (flagged).
 	open, err := q.InYardVisit(ctx, sqlcdb.InYardVisitParams{CompanyID: c, Number: number})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Result{}, err
 	}
 	var visit *Visit
-	if err == nil && (dir == "in" || open.DepotID == m.DepotID) {
+	if err == nil {
 		visit = &open
 		facts.OpenVisit = &VisitFact{open.ID, open.DepotID}
 	}
@@ -307,12 +325,16 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 		}
 	}
 	kind := map[string]string{"in": "redelivery", "out": "release"}[dir]
-	rows, err := q.MatchOrderItems(ctx, sqlcdb.MatchOrderItemsParams{CompanyID: c, DepotID: m.DepotID, Kind: kind, Number: number, TypeCode: typeCode})
+	openRows, err := q.MatchOpenOrderItems(ctx, sqlcdb.MatchOpenOrderItemsParams{CompanyID: c, DepotID: m.DepotID, Kind: kind, Number: number, TypeCode: typeCode})
 	if err != nil {
 		return Result{}, err
 	}
-	items := map[string]sqlcdb.MatchOrderItemsRow{}
-	for _, r := range rows {
+	otherRows, err := q.MatchOtherOrderItems(ctx, sqlcdb.MatchOtherOrderItemsParams{CompanyID: c, DepotID: m.DepotID, Kind: kind, Number: number, TypeCode: typeCode})
+	if err != nil {
+		return Result{}, err
+	}
+	items := map[string]sqlcdb.MatchOpenOrderItemsRow{}
+	for _, r := range append(openRows, convertRows(otherRows)...) {
 		it := r.OrderItem
 		items[it.ID] = r
 		fact := ItemFact{it.ID, deref(it.Number), deref(it.TypeCode), it.FullEmpty, int(it.Quantity - it.Used)}
@@ -329,6 +351,9 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 
 	// Refusals: blocked never passes at the gate; the others per refusal mode.
 	flags := slices.Clone(d.Flags)
+	if dir == "out" && visit != nil && visit.DepotID != m.DepotID {
+		flags = append(flags, Reason{"other_depot", visit.DepotID})
+	}
 	if len(d.Refusals) > 0 {
 		refused := &Refusal{Blocked: d.Blocked, Reasons: d.Refusals}
 		pass := correction
@@ -342,12 +367,12 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 			}
 			pass = strings.TrimSpace(f.Override.Reason)
 		case settings.RefusalMode == "manager_approval":
-			a, err := s.approval(ctx, q, sc, m.ID, f.ApprovalID, d.Refusals, actor, notes)
+			a, ok, err := s.approval(ctx, q, sc, m.ID, f.ApprovalID, d.Refusals, actor, notes)
 			if err != nil {
 				return Result{}, err
 			}
-			if a.Status != "approved" {
-				refused.ApprovalID = a.ID
+			if !ok {
+				refused.ApprovalID, refused.ApprovalStatus = a.ID, a.Status
 				return Result{Refused: refused}, nil
 			}
 			pass = "approved by " + a.DecidedBy
@@ -375,20 +400,32 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 	}
 	newVisit := sqlcdb.InsertVisitParams{CompanyID: c, ID: newID(), DepotID: m.DepotID, Number: number, TypeCode: typeCode,
 		LineID: lineID, CustomerID: customerID, Status: "in_yard", FullEmpty: fullEmpty, InMoveID: &m.ID, InAt: now}
+	if dir == "out" && visit == nil { // a gate-out of a container the yard did not know: record its stay as closed
+		newVisit.Status, newVisit.InMoveID, newVisit.OutMoveID, newVisit.OutAt, newVisit.CloseReason = "out", nil, &m.ID, &now, "no_open_visit"
+	}
 	visitID := newVisit.ID
 	switch {
-	case dir == "in":
-		if facts.OpenVisit != nil { // the truth at the gate wins: it left without a gate-out
-			if err := closeVisit(ctx, q, c, open.ID, m.ID, now, "missed_gate_out"); err != nil {
-				return Result{}, err
-			}
+	case dir == "in" && visit != nil: // the truth at the gate wins: it left without a gate-out
+		err = closeVisit(ctx, q, c, visit.ID, m.ID, now, "missed_gate_out")
+	case visit != nil: // a gate-out closes its visit, even at another depot
+		why := ""
+		if visit.DepotID != m.DepotID {
+			why = "other_depot_gate_out"
 		}
-		err = q.InsertVisit(ctx, newVisit)
-	case visit != nil:
 		visitID = visit.ID
-		err = closeVisit(ctx, q, c, visit.ID, m.ID, now, "")
-	default: // a gate-out of a container the yard did not know: record its stay as closed
-		newVisit.Status, newVisit.InMoveID, newVisit.OutMoveID, newVisit.OutAt, newVisit.CloseReason = "out", nil, &m.ID, &now, "no_open_visit"
+		err = closeVisit(ctx, q, c, visit.ID, m.ID, now, why)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	switch {
+	case visitID != newVisit.ID: // closed above
+	case own != nil: // a correction keeps its visit
+		visitID = own.ID
+		err = q.RewriteVisit(ctx, sqlcdb.RewriteVisitParams{CompanyID: c, ID: own.ID, Number: number, TypeCode: typeCode,
+			LineID: lineID, CustomerID: customerID, FullEmpty: fullEmpty, Status: newVisit.Status, OutMoveID: newVisit.OutMoveID,
+			OutAt: newVisit.OutAt, CloseReason: newVisit.CloseReason})
+	default:
 		err = q.InsertVisit(ctx, newVisit)
 	}
 	if err != nil {
@@ -431,76 +468,139 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 }
 
 func closeVisit(ctx context.Context, q *sqlcdb.Queries, companyID, id, moveID string, at time.Time, reason string) error {
-	return one(q.CloseVisit(ctx, sqlcdb.CloseVisitParams{CompanyID: companyID, ID: id, OutMoveID: &moveID, OutAt: &at, CloseReason: reason}))
+	return closeVisitBy(ctx, q, companyID, id, &moveID, at, reason)
 }
 
-// approval returns the approval that may pass a refused move: the one the
-// clerk names (it must be this move's), else the pending one, else a new one.
-func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, moveID, id string, reasons []Reason, actor string, notes *[]note) (Approval, error) {
-	if id != "" {
-		a, err := q.GetApproval(ctx, sqlcdb.GetApprovalParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && a.MoveID != moveID) {
-			return a, ErrBadLink
-		}
-		return a, err
-	}
-	a, err := q.PendingApproval(ctx, sqlcdb.PendingApprovalParams{CompanyID: sc.CompanyID, MoveID: moveID})
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return a, err
-	}
-	body, err := json.Marshal(reasons)
+func closeVisitBy(ctx context.Context, q *sqlcdb.Queries, companyID, id string, moveID *string, at time.Time, reason string) error {
+	return one(q.CloseVisit(ctx, sqlcdb.CloseVisitParams{CompanyID: companyID, ID: id, OutMoveID: moveID, OutAt: &at, CloseReason: reason}))
+}
+
+// approval decides a refused move under manager_approval. It passes (ok)
+// with an approved approval of this move whose reasons cover every current
+// refusal: the one the clerk names, else any. Otherwise it returns the
+// approval to wait for: the named one or a pending one with exactly these
+// reasons, else a new pending one.
+func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, moveID, id string, refusals []Reason, actor string, notes *[]note) (Approval, bool, error) {
+	all, err := q.ApprovalsOfMove(ctx, sqlcdb.ApprovalsOfMoveParams{CompanyID: sc.CompanyID, MoveID: moveID})
 	if err != nil {
-		return a, err
+		return Approval{}, false, err
 	}
-	a = Approval{ID: newID(), MoveID: moveID, Status: "pending"}
+	want := reasonCodes(refusals)
+	covers := func(a Approval) bool {
+		have := approvalCodes(a)
+		return a.Status == "approved" && !slices.ContainsFunc(want, func(c string) bool { return !slices.Contains(have, c) })
+	}
+	same := func(a Approval) bool { return slices.Equal(approvalCodes(a), want) }
+	if id != "" {
+		i := slices.IndexFunc(all, func(a Approval) bool { return a.ID == id })
+		switch {
+		case i < 0:
+			return Approval{}, false, ErrBadLink // not this move's
+		case covers(all[i]):
+			return all[i], true, nil
+		case all[i].Status != "approved" && same(all[i]):
+			return all[i], false, nil // pending or denied
+		}
+	}
+	if i := slices.IndexFunc(all, covers); i >= 0 {
+		return all[i], true, nil
+	}
+	if i := slices.IndexFunc(all, func(a Approval) bool { return a.Status == "pending" && same(a) }); i >= 0 {
+		return all[i], false, nil
+	}
+	body, err := json.Marshal(refusals)
+	if err != nil {
+		return Approval{}, false, err
+	}
+	a := Approval{ID: newID(), MoveID: moveID, Status: "pending", Reasons: body}
 	err = one(q.InsertApproval(ctx, sqlcdb.InsertApprovalParams{CompanyID: sc.CompanyID, ID: a.ID, MoveID: moveID,
 		Reasons: body, RequestedBy: actor, RequestedAt: s.st.now()}))
 	*notes = append(*notes, note{"approval", a.ID})
-	return a, err
+	return a, false, err
 }
 
-// reverse undoes what a saved move did: it gives its order item back,
-// deletes the visit it opened (or created closed), and reopens the visits it closed.
-func reverse(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.LockMoveRow) error {
+func reasonCodes(rs []Reason) []string {
+	var out []string
+	for _, r := range rs {
+		if !slices.Contains(out, r.Code) {
+			out = append(out, r.Code)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func approvalCodes(a Approval) []string {
+	var rs []Reason
+	_ = json.Unmarshal(a.Reasons, &rs) // an unreadable row covers nothing
+	return reasonCodes(rs)
+}
+
+func convertRows(rs []sqlcdb.MatchOtherOrderItemsRow) []sqlcdb.MatchOpenOrderItemsRow {
+	out := make([]sqlcdb.MatchOpenOrderItemsRow, len(rs))
+	for i, r := range rs {
+		out[i] = sqlcdb.MatchOpenOrderItemsRow(r)
+	}
+	return out
+}
+
+// reverse undoes what a saved move did, without deleting any visit: it
+// gives its order item back, closes the visit it opened ("voided"), and
+// reopens the visits it closed. It returns the move's own visit, if any. A
+// visit that cannot be reopened because the container has a newer open visit
+// is ErrVisitConflict; the caller's transaction then changes nothing.
+func reverse(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.LockMoveRow, now time.Time) (*Visit, error) {
 	c := sc.CompanyID
 	if err := q.LockNumber(ctx, sqlcdb.LockNumberParams{CompanyID: c, Number: m.Number}); err != nil {
-		return err
+		return nil, err
 	}
 	if m.OrderItemID != nil {
 		if err := one(q.UseItem(ctx, sqlcdb.UseItemParams{CompanyID: c, ID: *m.OrderItemID, N: -1})); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := q.UnlinkMove(ctx, sqlcdb.UnlinkMoveParams{CompanyID: c, ID: m.ID}); err != nil {
-		return err
+		return nil, err
 	}
 	visits, err := q.VisitsOfMove(ctx, sqlcdb.VisitsOfMoveParams{CompanyID: c, MoveID: m.ID})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	opened := func(v Visit) bool {
-		return deref(v.InMoveID) == m.ID || (v.InMoveID == nil && !v.Imported && v.CloseReason == "no_open_visit")
-	}
-	// Deletes first, so a reopened visit never meets the one being removed.
-	for _, v := range visits {
-		if !opened(v) {
+	// The move's own visit first, so the visits it closed can reopen.
+	var own *Visit
+	for i, v := range visits {
+		switch {
+		case deref(v.InMoveID) == m.ID: // opened by this gate-in
+			if v.Status != "in_yard" {
+				return nil, ErrVisitMoved
+			}
+			err = closeVisitBy(ctx, q, c, v.ID, nil, now, "voided")
+		case v.InMoveID == nil && v.CloseReason == "no_open_visit": // recorded closed by this gate-out
+			err = q.SetVisitCloseReason(ctx, sqlcdb.SetVisitCloseReasonParams{CompanyID: c, ID: v.ID, CloseReason: "voided"})
+		default:
 			continue
 		}
-		if deref(v.InMoveID) == m.ID && v.Status != "in_yard" {
-			return ErrVisitMoved
+		if err != nil {
+			return nil, err
 		}
-		if err := q.DeleteVisit(ctx, sqlcdb.DeleteVisitParams{CompanyID: c, ID: v.ID}); err != nil {
-			return err
-		}
+		own = &visits[i]
 	}
 	for _, v := range visits {
-		if !opened(v) {
-			if err := q.ReopenVisit(ctx, sqlcdb.ReopenVisitParams{CompanyID: c, ID: v.ID}); err != nil {
-				return err
-			}
+		if own != nil && v.ID == own.ID {
+			continue
+		}
+		_, err := q.InYardVisit(ctx, sqlcdb.InYardVisitParams{CompanyID: c, Number: v.Number})
+		if err == nil {
+			return nil, ErrVisitConflict
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err := q.ReopenVisit(ctx, sqlcdb.ReopenVisitParams{CompanyID: c, ID: v.ID}); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return own, nil
 }
 
 func opt(s string) *string {
@@ -547,7 +647,9 @@ func (s *Service) CreateOrder(ctx context.Context, o Order, items []OrderItem, a
 	return s.st.CreateOrder(ctx, o, items, actor)
 }
 
-// CancelOrder cancels an open order; its remaining items no longer match at the gate.
+// CancelOrder cancels an open order. Its remaining items are closed with it:
+// they never match as open again, and a gate move against them is refused
+// with order_not_open (passable per the refusal mode).
 func (s *Service) CancelOrder(ctx context.Context, id, actor string) error {
 	return s.tx(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ *[]note) error {
 		o, err := q.GetOrder(ctx, sqlcdb.GetOrderParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})

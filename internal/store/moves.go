@@ -10,6 +10,7 @@ import (
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Move is one container passing the gate.
@@ -35,6 +36,7 @@ type Move struct {
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 	Photos          []Photo         `json:"photos"`
+	FormSavedAt     *time.Time      `json:"form_saved_at,omitempty"` // when the clerk's gate form was saved
 }
 
 // ReadOutcome is what the engines concluded about a move.
@@ -79,8 +81,15 @@ func moveFrom(r sqlcdb.GateMove) Move {
 		TypeCode: r.TypeCode, Color: r.Color, Confidence: r.Confidence, CheckDigitValid: r.CheckDigitValid,
 		Decision: r.Decision, Reason: r.Reason, Result: res, Verified: r.Verified, CorrectedFrom: r.CorrectedFrom,
 		ResolvedBy: r.ResolvedBy, Note: r.Note, IsTest: r.IsTest, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		Photos: []Photo{},
+		Photos: []Photo{}, FormSavedAt: timePtr(r.FormSavedAt),
 	}
+}
+
+func timePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
 }
 
 // withPhotos builds moves from rows and fills in their photos with one query.

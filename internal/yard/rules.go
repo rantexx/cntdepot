@@ -157,8 +157,8 @@ func Decide(f Facts) Decision {
 	switch {
 	case len(matches) == 1:
 		d.Item = &matches[0]
-		if notOpen {
-			d.Flags = append(d.Flags, Reason{Code: "order_not_open"})
+		if notOpen { // a cancelled or done order releases nothing unless passed (refusal mode)
+			d.Refusals = append(d.Refusals, Reason{Code: "order_not_open"})
 		}
 	case len(matches) > 1:
 		d.Candidates = matches

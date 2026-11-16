@@ -190,6 +190,9 @@ func (s *Service) NewMove(ctx context.Context, lane string, isTest bool, actor s
 	return s.CreateMove(ctx, "", lane, isTest, actor)
 }
 
+// readableRoles are the photo roles that show container marks, the only ones sent to OCR.
+var readableRoles = map[string]bool{"front": true, "rear": true, "left": true, "right": true, "door": true, "top": true, "other": true}
+
 var clientID = regexp.MustCompile(`^[0-9A-Za-z_-]{16,64}$`) // a ULID or a UUID
 
 // CreateMove starts a phone gate-in. id is optional: a phone's outbox sends
@@ -259,19 +262,19 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 			return existing, false, nil
 		}
 	}
-	if m.ResolvedBy != "" {
+	role := cmp.Or(strings.ToLower(strings.TrimSpace(in.Role)), "other")
+	// Damage and signature photos belong to the gate form, so they are taken
+	// until the form is saved, even after the number was confirmed.
+	evidence := role == "damage" || role == "signature"
+	if m.ResolvedBy != "" && (!evidence || m.FormSavedAt != nil) {
 		return store.Photo{}, false, ErrClosed
 	}
 	aiSHA, err := s.blobs.Put(in.AI)
 	if err != nil {
 		return store.Photo{}, false, err
 	}
-	role := strings.TrimSpace(in.Role)
-	if role == "" {
-		role = "other"
-	}
-	// Damage and signature photos are evidence, never container marks: never read.
-	readEnabled := role != "damage" && role != "signature" && s.ocrOn(ctx)
+	// Only views of the container are read; damage and signature photos never are.
+	readEnabled := readableRoles[role] && s.ocrOn(ctx)
 	p, err = s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
 		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,

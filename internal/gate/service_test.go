@@ -396,7 +396,9 @@ func TestDamageAndSignaturePhotosAreNeverRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.photo(t, m.ID, "damage", "dent")
-	h.photo(t, m.ID, "signature", "sig")
+	h.photo(t, m.ID, "SIGNATURE", "sig")
+	h.photo(t, m.ID, " Damage ", "dent2")
+	h.photo(t, m.ID, "seal", "seal") // not a view of the marks
 	h.photo(t, m.ID, "rear", "a")
 	// The move settles on the one readable photo: the others are not waited for.
 	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
@@ -404,7 +406,7 @@ func TestDamageAndSignaturePhotosAreNeverRead(t *testing.T) {
 		t.Fatalf("engine calls = %d, want 1 (the rear photo only)", n)
 	}
 	for _, p := range got.Photos {
-		if p.ReadEnabled != (p.Role == "rear") {
+		if p.ReadEnabled != (p.Role == "rear") || p.Role != strings.ToLower(p.Role) {
 			t.Fatalf("photo %s read_enabled = %v", p.Role, p.ReadEnabled)
 		}
 	}
@@ -452,5 +454,41 @@ func TestCreateMoveWithClientIDIsIdempotent(t *testing.T) {
 		if _, err := h.svc.CreateMove(ctx, bad, "1", false, "clerk"); !errors.Is(err, ErrBadID) {
 			t.Fatalf("id %q: %v", bad, err)
 		}
+	}
+}
+
+func TestEvidencePhotosUntilFormSaved(t *testing.T) {
+	h := newHarness(t, &recognition.Fake{}, Config{}, false)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	if _, err := h.svc.ManualEntry(ctx, m.ID, "CSQU3054383", "clerk"); err != nil { // confirmed: resolved
+		t.Fatal(err)
+	}
+	add := func(role, content string) error {
+		_, err := h.svc.AddPhoto(ctx, PhotoInput{MoveID: m.ID, Role: role, Actor: "clerk",
+			Original: []byte("o-" + content), OriginalType: "image/jpeg", AI: []byte(content), AIType: "image/jpeg"})
+		return err
+	}
+	if err := add("rear", "r"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("rear on a resolved move = %v", err)
+	}
+	if err := add("damage", "d"); err != nil {
+		t.Fatalf("damage before the form is saved: %v", err)
+	}
+	if err := add("signature", "s"); err != nil {
+		t.Fatalf("signature before the form is saved: %v", err)
+	}
+	conn, err := pgx.Connect(ctx, h.ownerURL) // the yard service saves forms; here only the column matters
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `UPDATE gate_moves SET form_saved_at = now() WHERE id = $1`, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("damage", "d2"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("damage after the form is saved = %v", err)
+	}
+	if err := add("damage", "d"); err != nil { // a resend is still answered
+		t.Fatalf("resend: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package yard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -383,12 +384,19 @@ func TestOfflineGateOutAfterOrderCancelledIsFlaggedNotLost(t *testing.T) {
 	}
 	f := gateOut(numA)
 	f.MoveID = x.move(ctxA)
+	// A cancelled order releases nothing by itself.
+	if r := x.save(ctxA, f); r.Refused == nil || codes(r.Refused.Reasons)[0] != "order_not_open" {
+		t.Fatalf("without override: %+v", r)
+	}
+	if v := x.visit(ctxA, in.VisitID); v.Status != "in_yard" {
+		t.Fatalf("a refused gate-out closed the visit: %+v", v)
+	}
 	f.Override = &Override{Reason: "saved offline"}
 	r := x.save(ctxA, f)
-	if r.Refused != nil || !slices.Contains(codes(r.Flags), "order_not_open") {
+	if r.Refused != nil || !slices.Contains(codes(r.Flags), "override:order_not_open") {
 		t.Fatalf("result = %+v", r)
 	}
-	if got := flagCodes(t, x.st, ctxA, f.MoveID); !slices.Contains(got, "order_not_open") {
+	if got := flagCodes(t, x.st, ctxA, f.MoveID); !slices.Contains(got, "override:order_not_open") {
 		t.Fatalf("stored flags = %v", got)
 	}
 	if v := x.visit(ctxA, in.VisitID); v.Status != "out" || *v.OutMoveID != f.MoveID {
@@ -430,22 +438,35 @@ func TestCorrectionMovesVisitAndItem(t *testing.T) {
 	if x.visit(ctxA, imported).Status != "out" {
 		t.Fatal("setup: the gate-in did not close the imported visit")
 	}
+	if err := x.svc.SetPosition(ctxA, r.VisitID, "A", "3", "2"); err != nil {
+		t.Fatal(err)
+	}
+	holdID, err := x.svc.PlaceHold(ctxA, r.VisitID, "customs", "office")
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.Number = numB
 	c, err := x.svc.CorrectGateMove(ctxA, f.MoveID, f, "OCR misread", "office")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.VisitID == "" || c.VisitID == r.VisitID || c.Move.Number != numB || c.Move.CorrectedFrom != numA {
+	// The move's visit is corrected in place: same id, its position and hold kept.
+	if c.VisitID != r.VisitID || c.Move.Number != numB || c.Move.CorrectedFrom != numA {
 		t.Fatalf("correction = %+v", c)
-	}
-	if _, err := x.st.GetVisit(ctxA, r.VisitID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("the wrong visit remains: %v", err)
 	}
 	if v := x.visit(ctxA, imported); v.Status != "in_yard" || v.OutMoveID != nil || v.CloseReason != "" {
 		t.Fatalf("the visit closed by the misread was not reopened: %+v", v)
 	}
-	if v := x.visit(ctxA, c.VisitID); v.Number != numB || v.Status != "in_yard" {
+	if v := x.visit(ctxA, c.VisitID); v.Number != numB || v.Status != "in_yard" || v.Block != "A" || v.Tier != "2" || v.OutAt != nil {
 		t.Fatalf("corrected visit = %+v", v)
+	}
+	if h, _ := x.st.ListHolds(ctxA, c.VisitID, true); len(h) != 1 || h[0].ID != holdID {
+		t.Fatalf("holds = %+v", h)
+	}
+	// The direction cannot change.
+	f.Direction = "out"
+	if _, err := x.svc.CorrectGateMove(ctxA, f.MoveID, f, "x", "office"); !errors.Is(err, ErrDirectionFixed) {
+		t.Fatalf("direction change = %v", err)
 	}
 	if got := x.used(ctxA, orderID); !slices.Equal(got, []int64{0, 1}) { // items in creation order: numA, numB
 		t.Fatalf("used = %v", got)
@@ -480,12 +501,21 @@ func TestVoidReleasesItem(t *testing.T) {
 	if err := x.svc.VoidGateMove(ctxA, out.MoveID, "again", "office"); !errors.Is(err, ErrVoided) {
 		t.Fatalf("second void = %v", err)
 	}
-	// Voiding the gate-in removes the visit it opened.
+	// Voiding the gate-in closes the visit it opened as voided; it keeps its hold and grade.
+	if _, err := x.svc.PlaceHold(ctxA, inRes.VisitID, "customs", "office"); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.svc.SetGrade(ctxA, inRes.VisitID, "B"); err != nil {
+		t.Fatal(err)
+	}
 	if err := x.svc.VoidGateMove(ctxA, in.MoveID, "test truck", "office"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := x.st.GetVisit(ctxA, inRes.VisitID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("visit after voiding its gate-in: %v", err)
+	if v := x.visit(ctxA, inRes.VisitID); v.Status != "out" || v.CloseReason != "voided" || v.Grade != "B" {
+		t.Fatalf("visit after voiding its gate-in: %+v", v)
+	}
+	if h, _ := x.st.ListHolds(ctxA, inRes.VisitID, true); len(h) != 1 {
+		t.Fatalf("holds = %+v", h)
 	}
 	ev, _ := x.moves.Events(ctxA, out.MoveID)
 	if !slices.ContainsFunc(ev, func(e store.Event) bool { return e.Kind == "move.voided" }) {
@@ -634,5 +664,164 @@ func TestVisitCloseNormaliseAndDefaults(t *testing.T) {
 		return tx.QueryRow(ctxA, `SELECT count(*) FROM block_list`).Scan(&n)
 	}); err != nil || n != 2 {
 		t.Fatalf("block rows %d %v", n, err)
+	}
+}
+
+func TestApprovalCoversOnlyWhatWasApproved(t *testing.T) {
+	x := newFixture(t)
+	in := x.save(ctxA, gateIn(numA))
+	if err := x.st.SetSettings(ctxA, Settings{RefusalMode: "manager_approval", WalkinsAllowed: true, EirTtlDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	f := gateOut(numA)
+	f.MoveID = x.move(ctxA)
+	r := x.save(ctxA, f) // no_order
+	first := r.Refused.ApprovalID
+	if r.Refused.ApprovalStatus != "pending" {
+		t.Fatalf("first: %+v", r.Refused)
+	}
+	// The form changes the refusals: the pending approval is not reused.
+	holdID, err := x.svc.PlaceHold(ctxA, in.VisitID, "customs", "office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = x.save(ctxA, f) // hold_open + no_order
+	second := r.Refused.ApprovalID
+	if second == "" || second == first || r.Refused.ApprovalStatus != "pending" {
+		t.Fatalf("changed refusals reused %s: %+v", first, r.Refused)
+	}
+	if r2 := x.save(ctxA, f); r2.Refused.ApprovalID != second {
+		t.Fatalf("identical refusals did not reuse %s: %+v", second, r2.Refused)
+	}
+	// An approval of no_order alone does not pass hold_open + no_order.
+	if err := x.svc.DecideApproval(ctxA, first, true, "manager"); err != nil {
+		t.Fatal(err)
+	}
+	f.ApprovalID = first
+	if r := x.save(ctxA, f); r.Refused == nil || r.Refused.ApprovalID != second {
+		t.Fatalf("narrow approval passed: %+v", r)
+	}
+	// Denied: the clerk is told.
+	if err := x.svc.DecideApproval(ctxA, second, false, "manager"); err != nil {
+		t.Fatal(err)
+	}
+	f.ApprovalID = second
+	if r := x.save(ctxA, f); r.Refused == nil || r.Refused.ApprovalID != second || r.Refused.ApprovalStatus != "denied" {
+		t.Fatalf("denied: %+v", r)
+	}
+	// With the hold released only no_order is left, which the first approval
+	// covers: a save without an approval id finds it.
+	if err := x.svc.ReleaseHold(ctxA, holdID, "office"); err != nil {
+		t.Fatal(err)
+	}
+	f.ApprovalID = ""
+	r = x.save(ctxA, f)
+	if r.Refused != nil || codes(r.Flags)[0] != "override:no_order" {
+		t.Fatalf("covered save: %+v", r)
+	}
+	if got, _ := x.st.ListApprovals(ctxA, ""); len(got) != 2 {
+		t.Fatalf("approvals = %d", len(got))
+	}
+}
+
+func TestReverseNeverOverwritesNewerVisit(t *testing.T) {
+	x := newFixture(t)
+	x.save(ctxA, gateIn(numA))
+	out := gateOut(numA)
+	out.MoveID = x.move(ctxA)
+	out.Override = &Override{Reason: "no paper"}
+	x.save(ctxA, out)
+	again := x.save(ctxA, gateIn(numA)) // the container is back
+	for name, fn := range map[string]func() error{
+		"void":    func() error { return x.svc.VoidGateMove(ctxA, out.MoveID, "wrong", "office") },
+		"correct": func() error { _, err := x.svc.CorrectGateMove(ctxA, out.MoveID, out, "wrong", "office"); return err },
+	} {
+		if err := fn(); !errors.Is(err, ErrVisitConflict) {
+			t.Fatalf("%s = %v, want ErrVisitConflict", name, err)
+		}
+	}
+	// Nothing changed.
+	if form, _ := x.st.GetMoveForm(ctxA, out.MoveID); form.Voided || form.VisitID == nil {
+		t.Fatalf("out move changed: %+v", form)
+	}
+	if v, _ := x.st.ListVisits(ctxA, "in_yard"); len(v) != 1 || v[0].ID != again.VisitID {
+		t.Fatalf("in yard = %+v", v)
+	}
+}
+
+func TestGateOutAtOtherDepotClosesThatVisit(t *testing.T) {
+	x := newFixture(t)
+	in := x.save(ctxA, gateIn(numA)) // in at d1
+	f := gateOut(numA)
+	f.MoveID = x.move(ctxD2)
+	f.Override = &Override{Reason: "no paper"}
+	r := x.save(ctxD2, f)
+	if r.Refused != nil || r.VisitID != in.VisitID || !slices.Contains(codes(r.Flags), "other_depot") || slices.Contains(codes(r.Flags), "no_open_visit") {
+		t.Fatalf("result = %+v", r)
+	}
+	if v := x.visit(ctxA, in.VisitID); v.Status != "out" || v.CloseReason != "other_depot_gate_out" || *v.OutMoveID != f.MoveID {
+		t.Fatalf("visit = %+v", v)
+	}
+}
+
+// Saves racing for the last unit of a quantity item: exactly one uses it, the
+// others are stored as used-up walk-ins, and none fails.
+func TestLastUnitRaceUsesItOnce(t *testing.T) {
+	x := newFixture(t)
+	const rounds, racers = 5, 4
+	for round := range rounds {
+		orderID, _ := x.order(ctxA, "redelivery", OrderItem{TypeCode: ptr("45G1"), Quantity: 1})
+		forms := make([]GateForm, racers)
+		for i := range forms {
+			forms[i] = gateIn(fmt.Sprintf("RACE%02d%05d", round, i))
+			forms[i].MoveID = x.move(ctxA)
+		}
+		results, errs := make([]Result, racers), make([]error, racers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range forms {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				results[i], errs[i] = x.svc.SaveGateMove(ctxA, forms[i], "clerk")
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := x.used(ctxA, orderID); got[0] != 1 {
+			t.Fatalf("round %d: used = %v", round, got)
+		}
+		usedUp := 0
+		for _, r := range results {
+			if slices.Contains(codes(r.Flags), "item_used_up") {
+				usedUp++
+			}
+		}
+		if usedUp != racers-1 {
+			t.Fatalf("round %d: %d used-up of %d: %+v", round, usedUp, racers, results)
+		}
+	}
+}
+
+func TestUnknownReferencesAreBadLinks(t *testing.T) {
+	x := newFixture(t)
+	for name, mod := range map[string]func(*GateForm){
+		"line":     func(f *GateForm) { f.LineID = "nope" },
+		"customer": func(f *GateForm) { f.CustomerID = "nope" },
+		"haulier":  func(f *GateForm) { f.HaulierID = "nope" },
+		"B's line": func(f *GateForm) { f.LineID = "lB" },
+	} {
+		f := gateIn(numA)
+		f.MoveID = x.move(ctxA)
+		mod(&f)
+		if _, err := x.svc.SaveGateMove(ctxA, f, "clerk"); !errors.Is(err, ErrBadLink) {
+			t.Errorf("%s: %v, want ErrBadLink", name, err)
+		}
 	}
 }

@@ -64,7 +64,7 @@ func TestDecide(t *testing.T) {
 		{name: "line match", f: func() Facts { f := out(qty); f.Orders[0].LineID = "A"; f.LineID = "A"; return f }(), item: "qty", noRefuse: true},
 		{name: "expired order", f: func() Facts { f := out(qty); f.Orders[0].ValidUntil = day(16); return f }(), refuse: []string{"order_expired"}},
 		{name: "valid until today is valid", f: func() Facts { f := out(qty); f.Orders[0].ValidUntil = day(17); return f }(), item: "qty", noRefuse: true},
-		{name: "order not open flags", f: func() Facts { f := out(qty); f.Orders[0].Status = "draft"; return f }(), item: "qty", flag: []string{"order_not_open"}, noRefuse: true},
+		{name: "order not open refuses", f: func() Facts { f := out(qty); f.Orders[0].Status = "cancelled"; return f }(), item: "qty", refuse: []string{"order_not_open"}},
 		{name: "several matches give candidates", f: out(qty, ItemFact{ItemID: "q2", TypeCode: "45G1", FullEmpty: "empty", Remaining: 1}), cands: 2, noRefuse: true},
 		{name: "chosen item resolves", f: func() Facts {
 			f := out(qty, ItemFact{ItemID: "q2", TypeCode: "45G1", FullEmpty: "empty", Remaining: 1})
@@ -173,11 +173,11 @@ func TestDecideFixRound1(t *testing.T) {
 	cancelled.OrderID, cancelled.Status = "o2", "cancelled"
 	g := out(qty)
 	g.Orders = append(g.Orders, cancelled)
-	if d := Decide(g); d.Item == nil || d.Item.ItemID != "qty" || has(d.Flags, "order_not_open") {
+	if d := Decide(g); d.Item == nil || d.Item.ItemID != "qty" || has(d.Refusals, "order_not_open") {
 		t.Errorf("open order must win over cancelled named item: %+v", d)
 	}
 	g.Orders = g.Orders[1:]
-	if d := Decide(g); d.Item == nil || d.Item.ItemID != "named" || !has(d.Flags, "order_not_open") {
-		t.Errorf("only non-open match should flag: %+v", d)
+	if d := Decide(g); d.Item == nil || d.Item.ItemID != "named" || !has(d.Refusals, "order_not_open") {
+		t.Errorf("only non-open match should refuse: %+v", d)
 	}
 }
