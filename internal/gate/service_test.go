@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -385,4 +386,71 @@ func (h *harness) ownerQueryRow(t *testing.T, sql string, args ...any) pgx.Row {
 	}
 	t.Cleanup(func() { conn.Close(context.Background()) })
 	return conn.QueryRow(context.Background(), sql, args...)
+}
+
+func TestDamageAndSignaturePhotosAreNeverRead(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, true)
+	m, err := h.svc.NewMove(ctx, "1", false, "clerk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.photo(t, m.ID, "damage", "dent")
+	h.photo(t, m.ID, "signature", "sig")
+	h.photo(t, m.ID, "rear", "a")
+	// The move settles on the one readable photo: the others are not waited for.
+	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	if n := fake.Calls(); n != 1 {
+		t.Fatalf("engine calls = %d, want 1 (the rear photo only)", n)
+	}
+	for _, p := range got.Photos {
+		if p.ReadEnabled != (p.Role == "rear") {
+			t.Fatalf("photo %s read_enabled = %v", p.Role, p.ReadEnabled)
+		}
+	}
+	// Nor are they queued again after a restart.
+	h2 := New(h.store, h.blobs, fake, Config{}, nil)
+	runCtx, cancel := context.WithCancel(context.Background())
+	if err := h2.Start(runCtx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	h2.Wait()
+	if n := fake.Calls(); n != 1 {
+		t.Fatalf("engine calls after restart = %d", n)
+	}
+}
+
+func TestCreateMoveWithClientIDIsIdempotent(t *testing.T) {
+	h := newHarness(t, &recognition.Fake{}, Config{}, false)
+	const id = "01JD0000000000000000000001"
+	a, err := h.svc.CreateMove(ctx, id, "1", false, "clerk")
+	if err != nil || a.ID != id {
+		t.Fatalf("first create = %+v %v", a, err)
+	}
+	h.photo(t, id, "rear", "a")
+	b, err := h.svc.CreateMove(ctx, id, "2", true, "clerk")
+	if err != nil || b.ID != id || b.Lane != "1" || b.IsTest || len(b.Photos) != 1 {
+		t.Fatalf("second create = %+v %v", b, err)
+	}
+	if moves, _ := h.store.ListMoves(ctx, store.ListFilter{}); len(moves) != 1 {
+		t.Fatalf("moves = %d", len(moves))
+	}
+	ev, _ := h.store.Events(ctx, id)
+	if n := len(slices.DeleteFunc(ev, func(e store.Event) bool { return e.Kind != "move.created" })); n != 1 {
+		t.Fatalf("move.created events = %d", n)
+	}
+	// Another company may use the same id; it gets its own move.
+	if c, err := h.svc.CreateMove(testkit.CtxOf("B"), id, "1", false, "clerk"); err != nil || c.ID != id || len(c.Photos) != 0 {
+		t.Fatalf("company B = %+v %v", c, err)
+	}
+	if m, err := h.svc.CreateMove(ctx, "", "1", false, "clerk"); err != nil || m.ID == "" || m.ID == id {
+		t.Fatalf("without an id = %+v %v", m, err)
+	}
+	for _, bad := range []string{"x", "has space 000000000000000", strings.Repeat("a", 65)} {
+		if _, err := h.svc.CreateMove(ctx, bad, "1", false, "clerk"); !errors.Is(err, ErrBadID) {
+			t.Fatalf("id %q: %v", bad, err)
+		}
+	}
 }

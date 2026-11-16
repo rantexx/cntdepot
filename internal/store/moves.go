@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"time"
@@ -111,20 +112,32 @@ func (s *Store) CreateMove(ctx context.Context, lane string, isTest bool, actor 
 
 // CreateMoveWithSource starts a gate-in whose photos come from source.
 func (s *Store) CreateMoveWithSource(ctx context.Context, lane, source string, isTest bool, actor string) (Move, error) {
+	return s.CreateMoveWithID(ctx, "", lane, source, isTest, actor)
+}
+
+// CreateMoveWithID is CreateMoveWithSource with the move's id chosen by the
+// caller (a phone's outbox); "" makes a new one. When the company already has
+// a move with that id, it returns that move unchanged: ErrNotFound if it is
+// outside the scope's depot.
+func (s *Store) CreateMoveWithID(ctx context.Context, id, lane, source string, isTest bool, actor string) (Move, error) {
 	now := s.now()
 	m := Move{
-		ID: newID(), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
+		ID: cmp.Or(id, newID()), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
 		IsTest: isTest, CreatedAt: now, UpdatedAt: now, Photos: []Photo{},
 	}
 	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
 		if sc.DepotID == "" {
 			return tenancy.ErrNoScope // a move belongs to one depot
 		}
-		err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
+		n, err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
 			CompanyID: sc.CompanyID, ID: m.ID, DepotID: sc.DepotID, Lane: lane, Direction: m.Direction,
 			Source: source, Status: m.Status, IsTest: isTest, CreatedAt: now,
 		})
 		if err != nil {
+			return err
+		}
+		if n == 0 { // a resend: the move exists
+			m, err = getMove(ctx, q, sc, m.ID)
 			return err
 		}
 		return s.appendEvent(ctx, q, sc, m.ID, "move.created", actor, map[string]any{"lane": lane, "source": source, "is_test": isTest})

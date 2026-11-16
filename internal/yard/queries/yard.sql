@@ -53,9 +53,10 @@ WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id
   AND (@status::text = '' OR status = @status)
 ORDER BY id DESC;
 
+-- Only an open visit closes: a replay must not overwrite a closed one.
 -- name: CloseVisit :execrows
 UPDATE visits SET status = 'out', out_move_id = @out_move_id, out_at = @out_at, close_reason = @close_reason
-WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
+WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id AND status = 'in_yard';
 
 -- name: SetVisitPosition :execrows
 UPDATE visits SET block = @block, row_no = @row_no, tier = @tier
@@ -185,3 +186,80 @@ FROM gate_moves WHERE company_id = @company_id AND (@depot_id::text = '' OR depo
 -- name: VoidMove :execrows
 UPDATE gate_moves SET voided = true, void_reason = @void_reason, updated_at = @updated_at
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
+
+
+-- The gate save (yard.Service). Every query is confined to the company; the
+-- move itself is read under the scope's depot.
+
+-- name: LockMove :one
+SELECT id, depot_id, direction, number, visit_id, order_id, order_item_id, form_saved_at, voided
+FROM gate_moves WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id
+FOR UPDATE;
+
+-- Serialises saves of one container number in a company (one open visit per number).
+-- name: LockNumber :exec
+SELECT pg_advisory_xact_lock(hashtextextended(@company_id::text || '/' || @number::text, 0));
+
+-- name: DepotTimezone :one
+SELECT timezone FROM depots WHERE company_id = @company_id AND id = @id;
+
+-- name: MovePhotoIDs :many
+SELECT id FROM photos WHERE company_id = @company_id AND move_id = @move_id;
+
+-- The items of a depot's orders of one kind that can match a container:
+-- named for its number, or a quantity of the same size, height and group.
+-- name: MatchOrderItems :many
+SELECT o.kind, o.line_id, o.customer_id, o.status, o.valid_until, sqlc.embed(i)
+FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.kind = @kind
+  AND (i.number = @number::text OR left(i.type_code, 3) = left(@type_code::text, 3))
+ORDER BY i.id
+FOR UPDATE OF i;
+
+-- name: MatchBlock :one
+SELECT * FROM block_list b
+WHERE b.company_id = @company_id AND b.active
+  AND ((b.kind = 'container' AND b.value = @number)
+    OR (b.kind = 'line' AND b.value = (SELECT upper(trim(l.code)) FROM shipping_lines l
+                                      WHERE l.company_id = @company_id AND l.id = @line_id::text)))
+ORDER BY b.kind, b.id
+LIMIT 1;
+
+-- name: PendingApproval :one
+SELECT * FROM approvals WHERE company_id = @company_id AND move_id = @move_id AND status = 'pending'
+ORDER BY id LIMIT 1;
+
+-- name: SetMoveIdentity :execrows
+UPDATE gate_moves SET direction = @direction, number = @number, type_code = @type_code,
+    corrected_from = CASE WHEN number <> '' AND number <> @number THEN number ELSE corrected_from END,
+    status = 'accepted', verified = @verified,
+    resolved_by = CASE WHEN resolved_by = '' THEN @actor ELSE resolved_by END
+WHERE company_id = @company_id AND id = @id;
+
+-- name: UnlinkMove :exec
+UPDATE gate_moves SET visit_id = NULL, order_id = NULL, order_item_id = NULL
+WHERE company_id = @company_id AND id = @id;
+
+-- The visits a move opened or closed.
+-- name: VisitsOfMove :many
+SELECT * FROM visits WHERE company_id = @company_id AND (in_move_id = @move_id::text OR out_move_id = @move_id::text)
+ORDER BY id FOR UPDATE;
+
+-- name: DeleteVisit :exec
+DELETE FROM visits WHERE company_id = @company_id AND id = @id;
+
+-- name: ReopenVisit :exec
+UPDATE visits SET status = 'in_yard', out_move_id = NULL, out_at = NULL, close_reason = ''
+WHERE company_id = @company_id AND id = @id;
+
+-- name: DeleteDamages :exec
+DELETE FROM damages WHERE company_id = @company_id AND move_id = @move_id;
+
+-- name: InsertEvent :exec
+INSERT INTO events (id, company_id, stream, kind, actor, payload, occurred_at)
+VALUES (@id, @company_id, @stream, @kind, @actor, @payload, @occurred_at);
+
+-- name: OpenOrderItems :many
+SELECT i.* FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = @company_id AND o.depot_id = @depot_id AND o.status = 'open'
+ORDER BY i.id;

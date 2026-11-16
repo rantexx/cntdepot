@@ -3,6 +3,7 @@ package yard
 import (
 	"testing"
 	"time"
+	_ "time/tzdata" // the Istanbul case must run on every machine
 )
 
 var now = time.Date(2026, 11, 17, 15, 30, 0, 0, time.UTC)
@@ -136,7 +137,7 @@ func TestTypeMatches(t *testing.T) {
 func TestDecideFixRound1(t *testing.T) {
 	ist, err := time.LoadLocation("Europe/Istanbul")
 	if err != nil {
-		t.Skip("no tzdata:", err)
+		t.Fatal("no tzdata:", err)
 	}
 	qty := ItemFact{ItemID: "qty", TypeCode: "45G0", FullEmpty: "empty", Remaining: 2}
 	until := day(17)

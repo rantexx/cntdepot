@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ var (
 	ErrNumberRequired = errors.New("a container number is required")
 	ErrOCROff         = errors.New("the ocr module is off")
 	ErrBadPhoto       = errors.New("photo missing or not a JPEG, PNG or WebP image")
+	ErrBadID          = errors.New("a move id is 16 to 64 letters, digits, '-' or '_'")
 )
 
 // ModuleOCR is the company module that lets AI read gate photos.
@@ -185,7 +187,22 @@ func (s *Service) Wait() { s.wg.Wait() }
 
 // NewMove starts a gate-in.
 func (s *Service) NewMove(ctx context.Context, lane string, isTest bool, actor string) (store.Move, error) {
-	return s.store.CreateMove(ctx, lane, isTest, actor)
+	return s.CreateMove(ctx, "", lane, isTest, actor)
+}
+
+var clientID = regexp.MustCompile(`^[0-9A-Za-z_-]{16,64}$`) // a ULID or a UUID
+
+// CreateMove starts a phone gate-in. id is optional: a phone's outbox sends
+// its own, and a resend of the same id returns the move already stored.
+func (s *Service) CreateMove(ctx context.Context, id, lane string, isTest bool, actor string) (store.Move, error) {
+	if id != "" && !clientID.MatchString(id) {
+		return store.Move{}, ErrBadID
+	}
+	m, err := s.store.CreateMoveWithID(ctx, id, lane, store.SourcePhone, isTest, actor)
+	if errors.Is(err, store.ErrNotFound) {
+		return m, ErrNotFound
+	}
+	return m, err
 }
 
 // PhotoInput is one uploaded photo: the original as captured, and a
@@ -225,7 +242,10 @@ func (s *Service) AddPhoto(ctx context.Context, in PhotoInput) (store.Photo, err
 func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo, added bool, err error) {
 	s.addMu.Lock() // so two concurrent uploads of the same photo cannot both insert it
 	defer s.addMu.Unlock()
-	m, err := s.openMove(ctx, in.MoveID)
+	m, err := s.store.GetMove(ctx, in.MoveID)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Photo{}, false, ErrNotFound
+	}
 	if err != nil {
 		return store.Photo{}, false, err
 	}
@@ -233,10 +253,14 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 	if err != nil {
 		return store.Photo{}, false, err
 	}
+	// A resend is answered even once the move is resolved (a replayed outbox).
 	for _, existing := range m.Photos {
 		if existing.SHA256 == origSHA {
 			return existing, false, nil
 		}
+	}
+	if m.ResolvedBy != "" {
+		return store.Photo{}, false, ErrClosed
 	}
 	aiSHA, err := s.blobs.Put(in.AI)
 	if err != nil {
@@ -246,7 +270,8 @@ func (s *Service) storePhoto(ctx context.Context, in PhotoInput) (p store.Photo,
 	if role == "" {
 		role = "other"
 	}
-	readEnabled := s.ocrOn(ctx)
+	// Damage and signature photos are evidence, never container marks: never read.
+	readEnabled := role != "damage" && role != "signature" && s.ocrOn(ctx)
 	p, err = s.store.AddPhoto(ctx, store.Photo{
 		MoveID: m.ID, Role: role, SHA256: origSHA, AISHA256: aiSHA, MediaType: in.OriginalType,
 		AIMediaType: in.AIType, Bytes: int64(len(in.Original)), Width: in.Width, Height: in.Height,
@@ -573,8 +598,8 @@ func (s *Service) recompute(ctx context.Context, moveID string) error {
 	var frames []recognition.Frame
 	pending := 0
 	for _, p := range m.Photos {
-		if p.Deferred {
-			continue // stored for training, never chosen for reading
+		if p.Deferred || !p.ReadEnabled {
+			continue // stored for training or as evidence, never read
 		}
 		// Every camera still is its own view, so stills that agree count as
 		// agreement. Camera moves are never auto-accepted anyway.

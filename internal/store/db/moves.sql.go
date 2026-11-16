@@ -65,9 +65,10 @@ func (q *Queries) GetMove(ctx context.Context, arg GetMoveParams) (GateMove, err
 	return i, err
 }
 
-const insertMove = `-- name: InsertMove :exec
+const insertMove = `-- name: InsertMove :execrows
 INSERT INTO gate_moves (company_id, id, depot_id, lane, direction, source, status, is_test, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+ON CONFLICT (company_id, id) DO NOTHING
 `
 
 type InsertMoveParams struct {
@@ -82,8 +83,8 @@ type InsertMoveParams struct {
 	CreatedAt time.Time
 }
 
-func (q *Queries) InsertMove(ctx context.Context, arg InsertMoveParams) error {
-	_, err := q.db.Exec(ctx, insertMove,
+func (q *Queries) InsertMove(ctx context.Context, arg InsertMoveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertMove,
 		arg.CompanyID,
 		arg.ID,
 		arg.DepotID,
@@ -94,7 +95,10 @@ func (q *Queries) InsertMove(ctx context.Context, arg InsertMoveParams) error {
 		arg.IsTest,
 		arg.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listMoves = `-- name: ListMoves :many

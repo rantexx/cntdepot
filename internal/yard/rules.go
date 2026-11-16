@@ -36,7 +36,10 @@ type VisitFact struct{ VisitID, DepotID string }
 type BlockFact struct{ Kind, Value, Reason string }
 type HoldFact struct{ HoldID, Reason string }
 
-type Reason struct{ Code, Detail string }
+type Reason struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
 
 type MatchedItem struct {
 	OrderID, ItemID, Number, TypeCode, FullEmpty string

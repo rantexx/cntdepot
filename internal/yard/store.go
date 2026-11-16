@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"depot/internal/db"
+	"depot/internal/iso6346"
 	"depot/internal/tenancy"
 	sqlcdb "depot/internal/yard/db"
 
@@ -75,6 +76,15 @@ func one(n int64, err error) error {
 	return err
 }
 
+func ptrTo[T any](v T) *T { return &v }
+
+func blockValue(kind, value string) string {
+	if kind == "container" {
+		return iso6346.Normalize(value)
+	}
+	return norm(value)
+}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def
@@ -99,6 +109,13 @@ func (s *Store) CreateOrder(ctx context.Context, o Order, items []OrderItem, by 
 			}
 			if it.Quantity == 0 {
 				it.Quantity = 1
+			}
+			// Stored as the gate compares them.
+			if it.Number != nil {
+				it.Number = ptrTo(iso6346.Normalize(*it.Number))
+			}
+			if it.TypeCode != nil {
+				it.TypeCode = ptrTo(iso6346.Normalize(*it.TypeCode))
 			}
 			err = q.InsertOrderItem(ctx, sqlcdb.InsertOrderItemParams{
 				CompanyID: sc.CompanyID, ID: newID(), OrderID: id, Number: it.Number, TypeCode: it.TypeCode,
@@ -146,14 +163,18 @@ func (s *Store) UseItem(ctx context.Context, itemID string, n int64) error {
 
 // CreateVisit stores a visit in the scope's depot and returns its id. A
 // second in_yard visit of a number in the company violates visits_one_in_yard.
+// The number is stored normalised; a zero InAt is now.
 func (s *Store) CreateVisit(ctx context.Context, v Visit) (string, error) {
 	id := newID()
+	if v.InAt.IsZero() {
+		v.InAt = s.now()
+	}
 	return id, s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
 		if sc.DepotID == "" {
 			return tenancy.ErrNoScope // a visit belongs to one depot
 		}
 		return q.InsertVisit(ctx, sqlcdb.InsertVisitParams{
-			CompanyID: sc.CompanyID, ID: id, DepotID: sc.DepotID, Number: v.Number, TypeCode: v.TypeCode,
+			CompanyID: sc.CompanyID, ID: id, DepotID: sc.DepotID, Number: iso6346.Normalize(v.Number), TypeCode: v.TypeCode,
 			LineID: v.LineID, CustomerID: v.CustomerID, Status: orDefault(v.Status, "in_yard"),
 			FullEmpty: orDefault(v.FullEmpty, "E"), Grade: v.Grade, Block: v.Block, RowNo: v.RowNo, Tier: v.Tier,
 			InMoveID: v.InMoveID, OutMoveID: v.OutMoveID, InAt: v.InAt, OutAt: v.OutAt, Imported: v.Imported,
@@ -173,7 +194,7 @@ func (s *Store) GetVisit(ctx context.Context, id string) (v Visit, err error) {
 // InYardVisit returns the open visit of a container number.
 func (s *Store) InYardVisit(ctx context.Context, number string) (v Visit, err error) {
 	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
-		v, err = q.InYardVisit(ctx, sqlcdb.InYardVisitParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Number: number})
+		v, err = q.InYardVisit(ctx, sqlcdb.InYardVisitParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Number: iso6346.Normalize(number)})
 		return notFound(err)
 	})
 	return v, err
@@ -188,7 +209,7 @@ func (s *Store) ListVisits(ctx context.Context, status string) (out []Visit, err
 	return out, err
 }
 
-// CloseVisit marks a visit out. outMoveID is nil when no gate move closed it.
+// CloseVisit marks an open visit out; a closed one is ErrNotFound. outMoveID is nil when no gate move closed it.
 func (s *Store) CloseVisit(ctx context.Context, id string, outMoveID *string, outAt time.Time, reason string) error {
 	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
 		return one(q.CloseVisit(ctx, sqlcdb.CloseVisitParams{
@@ -240,11 +261,13 @@ func (s *Store) ListHolds(ctx context.Context, visitID string, openOnly bool) (o
 	return out, err
 }
 
-// UpsertBlock adds or re-activates a block-list entry (company-wide) and returns its id.
+// UpsertBlock adds or re-activates a block-list entry (company-wide) and
+// returns its id. A container value is a number, a line value a line code;
+// both are stored normalised.
 func (s *Store) UpsertBlock(ctx context.Context, kind, value, reason, by string) (id string, err error) {
 	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
 		id, err = q.UpsertBlock(ctx, sqlcdb.UpsertBlockParams{
-			CompanyID: sc.CompanyID, ID: newID(), Kind: kind, Value: value, Reason: reason, CreatedBy: by, CreatedAt: s.now(),
+			CompanyID: sc.CompanyID, ID: newID(), Kind: kind, Value: blockValue(kind, value), Reason: reason, CreatedBy: by, CreatedAt: s.now(),
 		})
 		return err
 	})
@@ -381,13 +404,18 @@ func (s *Store) LookupEIR(ctx context.Context, tokenHash string) (companyID, mov
 // Settings returns the company's yard settings, or the defaults when none are saved.
 func (s *Store) Settings(ctx context.Context) (st Settings, err error) {
 	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
-		st, err = q.GetSettings(ctx, sc.CompanyID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			// The column defaults of company_settings in 002_yard.sql.
-			st, err = Settings{CompanyID: sc.CompanyID, RefusalMode: "clerk_override", WalkinsAllowed: true, EirTtlDays: 30}, nil
-		}
+		st, err = settingsOf(ctx, q, sc.CompanyID)
 		return err
 	})
+	return st, err
+}
+
+func settingsOf(ctx context.Context, q *sqlcdb.Queries, companyID string) (Settings, error) {
+	st, err := q.GetSettings(ctx, companyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The column defaults of company_settings in 002_yard.sql.
+		return Settings{CompanyID: companyID, RefusalMode: "clerk_override", WalkinsAllowed: true, EirTtlDays: 30}, nil
+	}
 	return st, err
 }
 
