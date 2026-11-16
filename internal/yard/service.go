@@ -419,7 +419,10 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 		return Result{}, err
 	}
 	switch {
-	case visitID != newVisit.ID: // closed above
+	case visitID != newVisit.ID: // closed above; a placeholder the move no longer needs is let go
+		if own != nil {
+			err = q.DetachVisit(ctx, sqlcdb.DetachVisitParams{CompanyID: c, ID: own.ID})
+		}
 	case own != nil: // a correction keeps its visit
 		visitID = own.ID
 		err = q.RewriteVisit(ctx, sqlcdb.RewriteVisitParams{CompanyID: c, ID: own.ID, Number: number, TypeCode: typeCode,
@@ -575,7 +578,7 @@ func reverse(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.
 				return nil, ErrVisitMoved
 			}
 			err = closeVisitBy(ctx, q, c, v.ID, nil, now, "voided")
-		case v.InMoveID == nil && v.CloseReason == "no_open_visit": // recorded closed by this gate-out
+		case placeholder(v): // recorded closed by this gate-out
 			err = q.SetVisitCloseReason(ctx, sqlcdb.SetVisitCloseReasonParams{CompanyID: c, ID: v.ID, CloseReason: "voided"})
 		default:
 			continue
@@ -586,8 +589,8 @@ func reverse(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.
 		own = &visits[i]
 	}
 	for _, v := range visits {
-		if own != nil && v.ID == own.ID {
-			continue
+		if (own != nil && v.ID == own.ID) || placeholder(v) {
+			continue // only real stays reopen, never a placeholder
 		}
 		_, err := q.InYardVisit(ctx, sqlcdb.InYardVisitParams{CompanyID: c, Number: v.Number})
 		if err == nil {
@@ -602,6 +605,10 @@ func reverse(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, m sqlcdb.
 	}
 	return own, nil
 }
+
+// placeholder is a visit a gate-out recorded for a container the yard did
+// not know: no gate-in and not imported. It is never reopened.
+func placeholder(v Visit) bool { return v.InMoveID == nil && !v.Imported }
 
 func opt(s string) *string {
 	if s = strings.TrimSpace(s); s == "" {

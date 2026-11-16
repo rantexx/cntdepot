@@ -141,6 +141,23 @@ func (q *Queries) DepotTimezone(ctx context.Context, arg DepotTimezoneParams) (s
 	return timezone, err
 }
 
+const detachVisit = `-- name: DetachVisit :exec
+UPDATE visits SET out_move_id = NULL, close_reason = 'voided'
+WHERE company_id = $1 AND id = $2 AND status = 'out' AND in_move_id IS NULL AND NOT imported
+`
+
+type DetachVisitParams struct {
+	CompanyID string
+	ID        string
+}
+
+// A gate-out's placeholder visit that a correction no longer uses: unlinked
+// from the move, so no later reverse of the move can find it.
+func (q *Queries) DetachVisit(ctx context.Context, arg DetachVisitParams) error {
+	_, err := q.db.Exec(ctx, detachVisit, arg.CompanyID, arg.ID)
+	return err
+}
+
 const eIRLookup = `-- name: EIRLookup :one
 SELECT company_id::text, move_id::text FROM eir_lookup($1)
 `

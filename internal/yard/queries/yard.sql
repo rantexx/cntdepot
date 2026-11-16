@@ -271,6 +271,12 @@ UPDATE visits SET number = @number, type_code = @type_code, line_id = @line_id, 
     full_empty = @full_empty, status = @status, out_move_id = @out_move_id, out_at = @out_at, close_reason = @close_reason
 WHERE company_id = @company_id AND id = @id;
 
+-- A gate-out's placeholder visit that a correction no longer uses: unlinked
+-- from the move, so no later reverse of the move can find it.
+-- name: DetachVisit :exec
+UPDATE visits SET out_move_id = NULL, close_reason = 'voided'
+WHERE company_id = @company_id AND id = @id AND status = 'out' AND in_move_id IS NULL AND NOT imported;
+
 -- name: SetVisitCloseReason :exec
 UPDATE visits SET close_reason = @close_reason WHERE company_id = @company_id AND id = @id AND status = 'out';
 

@@ -825,3 +825,47 @@ func TestUnknownReferencesAreBadLinks(t *testing.T) {
 		}
 	}
 }
+
+// A gate-out of an unknown number records a closed placeholder visit. When
+// a correction moves the gate-out onto a real visit, the placeholder must
+// never come back into the yard, however often the move is corrected or voided.
+func TestPlaceholderVisitIsNeverReopened(t *testing.T) {
+	x := newFixture(t)
+	real := x.save(ctxA, gateIn(numA))
+	out := gateOut(numB) // mistyped: numB was never in
+	out.MoveID = x.move(ctxA)
+	out.Override = &Override{Reason: "no paper"}
+	placeholder := x.save(ctxA, out).VisitID
+	if v := x.visit(ctxA, placeholder); v.Status != "out" || v.CloseReason != "no_open_visit" {
+		t.Fatalf("placeholder = %+v", v)
+	}
+	inYard := func(want ...string) {
+		t.Helper()
+		vs, _ := x.st.ListVisits(ctxA, "in_yard")
+		var got []string
+		for _, v := range vs {
+			got = append(got, v.ID)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("in yard = %v, want %v", got, want)
+		}
+	}
+	out.Number = numA
+	for i := range 2 { // correct, then correct again
+		c, err := x.svc.CorrectGateMove(ctxA, out.MoveID, out, "typo", "office")
+		if err != nil || c.VisitID != real.VisitID {
+			t.Fatalf("correction %d = %+v %v", i, c, err)
+		}
+		inYard()
+		if v := x.visit(ctxA, real.VisitID); v.Status != "out" || *v.OutMoveID != out.MoveID {
+			t.Fatalf("correction %d: real visit = %+v", i, v)
+		}
+	}
+	if err := x.svc.VoidGateMove(ctxA, out.MoveID, "wrong truck", "office"); err != nil {
+		t.Fatal(err)
+	}
+	inYard(real.VisitID)
+	if v := x.visit(ctxA, placeholder); v.Status != "out" {
+		t.Fatalf("placeholder reopened: %+v", v)
+	}
+}
