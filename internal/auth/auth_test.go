@@ -248,6 +248,22 @@ func TestSessionCookieIsStoredHashed(t *testing.T) {
 	}
 }
 
+func TestSecureCookiesForcedWhenConfigured(t *testing.T) {
+	s := NewSessions(nil, 0)
+	cookie := func(value string) *http.Cookie {
+		w := httptest.NewRecorder()
+		s.SetCookie(w, httptest.NewRequest(http.MethodGet, "http://depot/", nil), value)
+		return w.Result().Cookies()[0]
+	}
+	if cookie("v").Secure || cookie("").Secure {
+		t.Error("default: Secure over plain http")
+	}
+	s.SetSecureCookies(true)
+	if !cookie("v").Secure || !cookie("").Secure {
+		t.Error("SetSecureCookies(true): set or clearing cookie not Secure over plain http")
+	}
+}
+
 func TestMiddlewareNeedsLiveSessionForApi(t *testing.T) {
 	s, pool := setup(t)
 	for _, p := range []string{"/api/moves", "/api"} {

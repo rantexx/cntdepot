@@ -48,9 +48,14 @@ type Current struct {
 
 // Sessions stores sessions by the SHA-256 of the cookie value, never the value.
 type Sessions struct {
-	pool *pgxpool.Pool
-	ttl  time.Duration
+	pool   *pgxpool.Pool
+	ttl    time.Duration
+	secure bool // always mark cookies Secure (behind a TLS-terminating proxy r.TLS is nil)
 }
+
+// SetSecureCookies makes every cookie Secure even on plain-http requests;
+// turn it on in production. Off by default so local dev over http works.
+func (s *Sessions) SetSecureCookies(on bool) { s.secure = on }
 
 // NewSessions keeps sessions for ttl (30 days when ttl <= 0).
 func NewSessions(pool *pgxpool.Pool, ttl time.Duration) *Sessions {
@@ -193,7 +198,7 @@ func (s *Sessions) SetCookie(w http.ResponseWriter, r *http.Request, value strin
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secure || r.TLS != nil,
 	})
 }
 
