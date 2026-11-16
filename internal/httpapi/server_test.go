@@ -266,6 +266,9 @@ func TestMoveLifecycleOverHTTP(t *testing.T) {
 	if status != http.StatusOK || resolved.Status != "accepted" || !resolved.Verified {
 		t.Fatalf("resolve = %d %s", status, body)
 	}
+	if m, err := u.e.store.GetMove(testkit.Ctx(), id); err != nil || m.ResolvedBy != "gate@a.test" {
+		t.Fatalf("resolved by %q, %v; want the session's user, not the body's", m.ResolvedBy, err)
+	}
 	if status, _ := u.call("POST", "/api/moves/"+id+"/resolve", `{"action":"accept","by":"ayse"}`); status != http.StatusConflict {
 		t.Fatalf("second resolve = %d; want 409", status)
 	}

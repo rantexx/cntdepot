@@ -78,6 +78,40 @@ func TestCameraBelongsToItsCompany(t *testing.T) {
 	}
 }
 
+func TestCameraBelongsToItsDepot(t *testing.T) {
+	m, _ := newCameraEnv(t)
+	e := m.e
+	call(m, "PUT", "/api/camera", setupBody, 200)
+	_, body := m.call("POST", "/api/camera/read", "")
+	var r struct{ Still string }
+	if err := json.Unmarshal(body, &r); err != nil || r.Still == "" {
+		t.Fatalf("read = %s", body)
+	}
+	e.exec(t, "A", `INSERT INTO depots (company_id, id, name) VALUES ('A', 'd2', 'Two')`)
+	e.exec(t, "A", `INSERT INTO invitations (company_id, id, email, role, depot_ids, created_by) VALUES ('A', 'i2', 'm2@a.test', 'manager', '{d2}', 't')`)
+	cookie := e.signIn(t, "m2@a.test")
+	if err := e.sessions.SetScope(bg, cookie, "A", "d2"); err != nil {
+		t.Fatal(err)
+	}
+	other := &user{t: t, e: e, cookie: cookie}
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/camera", ""}, {"PUT", "/api/camera", setupBody}, {"POST", "/api/camera/capture", ""},
+		{"POST", "/api/camera/read", ""}, {"GET", "/api/camera/stills/" + r.Still, ""}, {"GET", "/api/live/ws", ""},
+	} {
+		if status, body := other.call(c.method, c.path, c.body); status != 404 || errorCode(body) != "E4044" {
+			t.Errorf("d2 manager %s %s = %d %s; want 404 E4044", c.method, c.path, status, body)
+		}
+	}
+}
+
+// call sends a request as u and fails the test unless it answers want.
+func call(u *user, method, path, body string, want int) {
+	u.t.Helper()
+	if status, resp := u.call(method, path, body); status != want {
+		u.t.Fatalf("%s %s = %d %s; want %d", method, path, status, resp, want)
+	}
+}
+
 func TestCameraSettingsNeverReturnThePassword(t *testing.T) {
 	m, _ := newCameraEnv(t)
 	status, body := m.call("PUT", "/api/camera", setupBody)

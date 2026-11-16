@@ -73,7 +73,7 @@ func (s *Server) putCamera(w http.ResponseWriter, r *http.Request) {
 }
 
 // needCamera answers 503 when the hub runs without camera support, and 404
-// to members of a company the camera does not belong to.
+// to members of another company, or of another depot of this company.
 func (s *Server) needCamera(w http.ResponseWriter, r *http.Request) bool {
 	if s.opts.Camera == nil {
 		writeError(w, http.StatusServiceUnavailable, "E5031", "camera support is not enabled on this hub")
@@ -83,8 +83,10 @@ func (s *Server) needCamera(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) ownCamera(w http.ResponseWriter, r *http.Request) bool {
-	if scopeOf(r.Context()).CompanyID != s.opts.Camera.Scope().CompanyID {
-		writeError(w, http.StatusNotFound, "E4044", "no camera here for this company")
+	sc, cam := scopeOf(r.Context()), s.opts.Camera.Scope()
+	// An empty depot is an all-depots member, who may use every depot's camera.
+	if sc.CompanyID != cam.CompanyID || (sc.DepotID != "" && sc.DepotID != cam.DepotID) {
+		writeError(w, http.StatusNotFound, "E4044", "no camera here for this company and depot")
 		return false
 	}
 	return true

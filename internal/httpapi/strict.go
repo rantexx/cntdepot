@@ -265,7 +265,8 @@ func (s *Server) AddPhoto(ctx context.Context, req api.AddPhotoRequestObject) (a
 func (s *Server) ResolveMove(ctx context.Context, req api.ResolveMoveRequestObject) (api.ResolveMoveResponseObject, error) {
 	b := req.Body
 	m, err := s.opts.Service.Resolve(ctx, req.Id, gate.Resolution{
-		Action: string(b.Action), Number: val(b.Number), By: b.By, Note: val(b.Note),
+		// The body's "by" is ignored: who resolved comes from the session.
+		Action: string(b.Action), Number: val(b.Number), By: actor(ctx), Note: val(b.Note),
 	})
 	if err != nil {
 		return nil, err
@@ -422,9 +423,16 @@ func (s *Server) SetModules(ctx context.Context, req api.SetModulesRequestObject
 	slices.Sort(mods)
 	mods = slices.Compact(mods)
 	id := scopeOf(ctx).CompanyID
-	err := db.Global(ctx, s.opts.Pool, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, "UPDATE companies SET modules = $2 WHERE id = $1", id, mods)
-		return err
+	// The function changes only the transaction's own company; depot_app cannot update companies.
+	err := s.inCompany(ctx, func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, "SELECT set_company_modules($1)", mods).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fail(http.StatusNotFound, "E4043", "no such company")
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

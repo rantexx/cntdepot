@@ -209,8 +209,6 @@ END $$;
 GRANT USAGE ON SEQUENCE events_seq_seq TO depot_app;
 
 GRANT SELECT, INSERT ON companies TO depot_app;
--- The owner switches the company's modules (the app updates only the session's company).
-GRANT UPDATE (modules) ON companies TO depot_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, sessions TO depot_app;
 GRANT SELECT ON platform_admins, ref_smdg_liners, ref_locodes, ref_versions TO depot_app;
 
@@ -246,5 +244,17 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON FUNCTION memberships_for_user(TEXT), accept_invitations(TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION memberships_for_user(TEXT), accept_invitations(TEXT, TEXT) TO depot_app;
+-- Switches the modules of the transaction's own company (app.company_id, set by
+-- db.InCompany) and returns the rows changed: 1, or 0 without a company.
+CREATE FUNCTION set_company_modules(p_modules TEXT[]) RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE n INT;
+BEGIN
+    UPDATE companies SET modules = p_modules WHERE id = current_setting('app.company_id', true);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END
+$$;
+
+REVOKE ALL ON FUNCTION memberships_for_user(TEXT), accept_invitations(TEXT, TEXT), set_company_modules(TEXT[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION memberships_for_user(TEXT), accept_invitations(TEXT, TEXT), set_company_modules(TEXT[]) TO depot_app;

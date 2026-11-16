@@ -212,8 +212,38 @@ func TestSecurityInvariants(t *testing.T) {
 		t.Fatal(strings.Join(bad, "\n"))
 	}
 	var n int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 2 {
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 3 {
 		t.Fatalf("security definer functions %d, err %v", n, err)
+	}
+}
+
+func TestSetModulesOnlyOwnCompany(t *testing.T) {
+	_, pool := setup(t)
+	var n int
+	err := db.InCompany(scope("A"), pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT set_company_modules('{ocr}')").Scan(&n)
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("set_company_modules under A = %d, %v; want 1 row", n, err)
+	}
+	if got := count(t, ctx, pool, db.Global, "SELECT count(*) FROM companies WHERE modules = '{ocr}'"); got != 1 {
+		t.Fatalf("%d companies have ocr; want only A", got)
+	}
+	// Without a scope it changes nothing.
+	err = db.Global(ctx, pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT set_company_modules('{x}')").Scan(&n)
+	})
+	if err != nil || n != 0 {
+		t.Fatalf("set_company_modules without scope = %d, %v; want 0 rows", n, err)
+	}
+	// depot_app itself may not update companies.
+	err = db.InCompany(scope("A"), pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "UPDATE companies SET modules = '{}' WHERE id = 'B'")
+		return err
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("direct UPDATE companies = %v; want permission denied", err)
 	}
 }
 
