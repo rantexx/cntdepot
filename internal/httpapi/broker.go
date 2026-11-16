@@ -7,19 +7,19 @@ import (
 	"time"
 )
 
-// Broker fans move-change notices out to every open screen.
+// Broker fans move-change notices out to the open screens of the move's company.
 type Broker struct {
 	mu   sync.Mutex
-	subs map[chan string]struct{}
+	subs map[chan string]string // subscriber -> its company
 }
 
-func NewBroker() *Broker { return &Broker{subs: map[chan string]struct{}{}} }
+func NewBroker() *Broker { return &Broker{subs: map[chan string]string{}} }
 
-// Subscribe returns a channel of changed move IDs and a function to stop.
-func (b *Broker) Subscribe() (<-chan string, func()) {
+// Subscribe returns a channel of the company's changed move IDs and a function to stop.
+func (b *Broker) Subscribe(companyID string) (<-chan string, func()) {
 	ch := make(chan string, 16)
 	b.mu.Lock()
-	b.subs[ch] = struct{}{}
+	b.subs[ch] = companyID
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
@@ -28,12 +28,16 @@ func (b *Broker) Subscribe() (<-chan string, func()) {
 	}
 }
 
-// Publish announces that a move changed. It never blocks: a slow screen
-// misses the notice and catches up on the next one.
-func (b *Broker) Publish(moveID string) {
+// Publish announces that a move of a company changed, to that company's
+// screens only. It never blocks: a slow screen misses the notice and catches
+// up on the next one.
+func (b *Broker) Publish(companyID, moveID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch := range b.subs {
+	for ch, company := range b.subs {
+		if company != companyID {
+			continue
+		}
 		select {
 		case ch <- moveID:
 		default:
@@ -51,7 +55,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	ch, stop := s.broker.Subscribe()
+	ch, stop := s.broker.Subscribe(scopeOf(r.Context()).CompanyID)
 	defer stop()
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()

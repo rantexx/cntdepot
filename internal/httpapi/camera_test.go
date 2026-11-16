@@ -7,111 +7,84 @@ import (
 	"fmt"
 	"image/jpeg"
 	"io"
-	"net/http/httptest"
-	"path/filepath"
+	"net/http"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
-	"depot/internal/blob"
 	"depot/internal/camera"
 	"depot/internal/gate"
 	"depot/internal/gatecam"
 	"depot/internal/live"
-	"depot/internal/recognition"
-	"depot/internal/store"
-	"depot/internal/testdir"
+	"depot/internal/tenancy"
+	"depot/internal/testkit"
 )
 
-// newCameraServer is newTestServer with camera support: a fake camera behind
-// the manager, a running watcher, and live video that is never started.
-func newCameraServer(t *testing.T, withCamera bool) *httptest.Server {
+// newCameraEnv is newEnv on a hub with camera support for company A's depot
+// d1: a fake camera behind the manager, a running watcher, and live video that
+// is never started. It returns a manager of A and the fake camera.
+func newCameraEnv(t *testing.T) (*user, *camera.Fake) {
 	t.Helper()
-	srv, _ := newCameraServerWithFake(t, withCamera)
-	return srv
-}
-
-// newCameraServerWithFake is newCameraServer that also returns the fake
-// camera (nil without camera support).
-func newCameraServerWithFake(t *testing.T, withCamera bool) (*httptest.Server, *camera.Fake) {
-	t.Helper()
-	var cam *camera.Fake
-	dir := testdir.New(t)
-	st, err := store.Open(filepath.Join(dir, "depot.db"), "local", "own-depot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bl, err := blob.Open(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine := &recognition.Fake{Reading: recognition.Reading{
-		Candidates: []recognition.RawCandidate{{Number: "CSQU3054383", Confidence: 0.9}},
-		TypeCode:   "45G1", Color: "blue", Visible: "full",
-		Box: &recognition.Box{X0: 0.3, Y0: 0.2, X1: 0.62, Y1: 0.3},
-	}}
-	broker := NewBroker()
-	svc := gate.New(st, bl, engine, gate.Config{}, broker.Publish)
-	opts := Options{
-		Service: svc, Store: st, Blobs: bl, Version: "test",
-		Static: fstest.MapFS{"index.html": {Data: []byte("<html></html>")}},
-	}
+	cam := camera.NewFake(camera.DemoStill())
 	runCtx, cancel := context.WithCancel(context.Background())
 	watcherDone := make(chan struct{})
-	if withCamera {
-		cam = camera.NewFake(camera.DemoStill())
+	e := newEnv(t, func(o *Options, svc *gate.Service) {
 		w := gatecam.New(svc, gatecam.DefaultConfig())
 		svc.SetReadHook(w.OnRead)
 		sup := live.New(live.Config{}) // never run: live video stays off
-		mgr := gatecam.NewManager(st, w, sup, func(camera.Settings) camera.Camera { return cam })
+		mgr := gatecam.NewManager(o.Store, w, sup, func(camera.Settings) camera.Camera { return cam }, testkit.Scope)
 		if err := mgr.Load(runCtx); err != nil {
 			t.Fatal(err)
 		}
-		opts.Camera, opts.Live = mgr, sup
-		go func() { w.Run(runCtx); close(watcherDone) }()
-	} else {
-		close(watcherDone)
-	}
-	if err := svc.Start(runCtx); err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(New(opts, broker).Handler())
+		o.Camera, o.Live, o.Hub = mgr, sup, true
+		go func() { w.Run(tenancy.With(runCtx, testkit.Scope)); close(watcherDone) }()
+	})
 	t.Cleanup(func() {
-		srv.Close()
 		cancel()
 		<-watcherDone
-		svc.Wait()
-		st.Close()
 	})
-	return srv, cam
+	return e.as(t, "A", "manager"), cam
 }
 
 const setupBody = `{"host":"192.168.1.50","user":"admin","password":"pw-secret"}`
 
-func TestCameraEndpointsWithoutCameraSupport(t *testing.T) {
-	srv := newCameraServer(t, false)
-	c := srv.Client()
-	status, body := call(t, c, "GET", srv.URL+"/api/camera", "")
-	if status != 200 || !strings.Contains(string(body), `"available":false`) {
+func TestCameraUnavailableOutsideHub(t *testing.T) {
+	e := newEnv(t, nil)
+	m := e.as(t, "A", "manager")
+	status, body := m.call("GET", "/api/camera", "")
+	if status != 200 || strings.TrimSpace(string(body)) != `{"available":false,"reason":"needs_onsite_box"}` {
 		t.Fatalf("GET /api/camera = %d %s", status, body)
 	}
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 503 || errorCode(body) != "E5031" {
-		t.Fatalf("PUT = %d %s; want 503 E5031", status, body)
+	for _, r := range []struct{ method, path string }{{"PUT", "/api/camera"}, {"POST", "/api/camera/capture"}, {"GET", "/api/camera/still"}, {"GET", "/api/live/ws"}} {
+		if status, body := m.call(r.method, r.path, ""); status != 404 {
+			t.Errorf("%s %s outside a hub = %d %s; want 404", r.method, r.path, status, body)
+		}
 	}
-	if status, body := call(t, c, "GET", srv.URL+"/api/live/ws", ""); status != 503 || errorCode(body) != "E5030" {
-		t.Fatalf("live = %d %s; want 503 E5030", status, body)
+	if status, body := e.as(t, "A", "office").call("GET", "/api/camera", ""); status != 403 {
+		t.Fatalf("office GET /api/camera = %d %s; want 403", status, body)
+	}
+}
+
+func TestCameraBelongsToItsCompany(t *testing.T) {
+	m, _ := newCameraEnv(t)
+	other := m.e.as(t, "B", "owner")
+	for _, r := range []struct{ method, path, body string }{{"GET", "/api/camera", ""}, {"PUT", "/api/camera", setupBody}, {"POST", "/api/camera/capture", ""}} {
+		if status, body := other.call(r.method, r.path, r.body); status != 404 {
+			t.Errorf("B %s %s = %d %s; want 404", r.method, r.path, status, body)
+		}
+	}
+	if _, body := m.call("GET", "/api/camera", ""); !strings.Contains(string(body), `"password_set":false`) {
+		t.Fatalf("B changed A's camera: %s", body)
 	}
 }
 
 func TestCameraSettingsNeverReturnThePassword(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody)
+	m, _ := newCameraEnv(t)
+	status, body := m.call("PUT", "/api/camera", setupBody)
 	if status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	for _, b := range [][]byte{body, func() []byte { _, b := call(t, c, "GET", srv.URL+"/api/camera", ""); return b }()} {
+	for _, b := range [][]byte{body, func() []byte { _, b := m.call("GET", "/api/camera", ""); return b }()} {
 		if strings.Contains(string(b), "pw-secret") {
 			t.Fatalf("camera answer leaks the password: %s", b)
 		}
@@ -126,47 +99,44 @@ func TestCameraSettingsNeverReturnThePassword(t *testing.T) {
 			t.Fatalf("camera view = %s", b)
 		}
 	}
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", `{"host":"http://192.168.1.50/","user":"admin"}`); status != 400 || errorCode(body) != "E4007" {
+	if status, body := m.call("PUT", "/api/camera", `{"host":"http://192.168.1.50/","user":"admin"}`); status != 400 || errorCode(body) != "E4007" {
 		t.Fatalf("PUT with a URL = %d %s; want 400 E4007", status, body)
 	}
 }
 
 func TestANewCameraAddressNeedsThePasswordAgain(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+	m, _ := newCameraEnv(t)
+	if status, body := m.call("PUT", "/api/camera", setupBody); status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	status, body := call(t, c, "PUT", srv.URL+"/api/camera", `{"host":"203.0.113.9","user":"admin","password":""}`)
+	status, body := m.call("PUT", "/api/camera", `{"host":"203.0.113.9","user":"admin","password":""}`)
 	if status != 400 || errorCode(body) != "E4007" || !strings.Contains(string(body), "enter the camera password again") {
 		t.Fatalf("PUT with a new host and no password = %d %s; want 400 E4007", status, body)
 	}
-	if _, body := call(t, c, "GET", srv.URL+"/api/camera", ""); !strings.Contains(string(body), `"host":"192.168.1.50"`) {
+	if _, body := m.call("GET", "/api/camera", ""); !strings.Contains(string(body), `"host":"192.168.1.50"`) {
 		t.Fatalf("a refused PUT changed the camera settings: %s", body)
 	}
 	// The same address with an empty password is the re-save that reconnects.
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", `{"host":"192.168.1.50","user":"admin","password":""}`); status != 200 {
+	if status, body := m.call("PUT", "/api/camera", `{"host":"192.168.1.50","user":"admin","password":""}`); status != 200 {
 		t.Fatalf("PUT with the same host = %d %s", status, body)
 	}
 }
 
 func TestCameraMustBeSetUpBeforeUse(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
+	m, _ := newCameraEnv(t)
 	for _, path := range []string{"/api/camera/read", "/api/camera/capture", "/api/camera/test"} {
-		if status, body := call(t, c, "POST", srv.URL+path, ""); status != 409 || errorCode(body) != "E4091" {
+		if status, body := m.call("POST", path, ""); status != 409 || errorCode(body) != "E4091" {
 			t.Errorf("POST %s = %d %s; want 409 E4091", path, status, body)
 		}
 	}
 }
 
 func TestReadThisFrameMeasuresTheLetters(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+	m, _ := newCameraEnv(t)
+	if status, body := m.call("PUT", "/api/camera", setupBody); status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	status, body := call(t, c, "POST", srv.URL+"/api/camera/read", "")
+	status, body := m.call("POST", "/api/camera/read", "")
 	if status != 200 {
 		t.Fatalf("read = %d %s", status, body)
 	}
@@ -189,7 +159,11 @@ func TestReadThisFrameMeasuresTheLetters(t *testing.T) {
 	if r.Width != 1280 || r.LetterPX != 72 || r.Verdict != gatecam.VerdictGood || len(r.Result.Frame.Candidates) == 0 {
 		t.Fatalf("read = %s", body)
 	}
-	res, err := c.Get(srv.URL + "/api/blobs/" + r.Still + "?w=320")
+	// The still is no gate photo: the blob route does not serve it, the camera's does.
+	if status, _ := m.call("GET", "/api/blobs/"+r.Still, ""); status != 404 {
+		t.Fatalf("still through /api/blobs = %d; want 404", status)
+	}
+	res, err := http.DefaultClient.Do(m.request("GET", "/api/camera/stills/"+r.Still+"?w=320", nil, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,15 +176,14 @@ func TestReadThisFrameMeasuresTheLetters(t *testing.T) {
 }
 
 func TestCameraTestAndStill(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	call(t, c, "PUT", srv.URL+"/api/camera", setupBody)
-	status, body := call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	m, _ := newCameraEnv(t)
+	m.call("PUT", "/api/camera", setupBody)
+	status, body := m.call("POST", "/api/camera/test", "")
 	var rep camera.Report
 	if status != 200 || json.Unmarshal(body, &rep) != nil || !rep.OK() {
 		t.Fatalf("test = %d %s", status, body)
 	}
-	res, err := c.Get(srv.URL + "/api/camera/still?w=320")
+	res, err := http.DefaultClient.Do(m.request("GET", "/api/camera/still?w=320", nil, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,65 +198,62 @@ func TestCameraTestAndStill(t *testing.T) {
 }
 
 func TestTakePhotosNowCreatesACameraMove(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	call(t, c, "PUT", srv.URL+"/api/camera", setupBody)
-	waitCameraState(t, srv, gatecam.StateOnline)
-	status, body := call(t, c, "POST", srv.URL+"/api/camera/capture", "")
+	m, _ := newCameraEnv(t)
+	m.call("PUT", "/api/camera", setupBody)
+	waitCameraState(t, m, gatecam.StateOnline)
+	status, body := m.call("POST", "/api/camera/capture", "")
 	var r struct {
 		MoveID string `json:"move_id"`
 	}
 	if status != 202 || json.Unmarshal(body, &r) != nil || r.MoveID == "" {
 		t.Fatalf("capture = %d %s", status, body)
 	}
-	_, body = call(t, c, "GET", srv.URL+"/api/moves?source=camera", "")
+	_, body = m.call("GET", "/api/moves?source=camera", "")
 	if !strings.Contains(string(body), r.MoveID) {
 		t.Fatalf("camera moves = %s; want %s", body, r.MoveID)
 	}
-	_, body = call(t, c, "GET", srv.URL+"/api/moves?source=phone", "")
+	_, body = m.call("GET", "/api/moves?source=phone", "")
 	if strings.Contains(string(body), r.MoveID) {
 		t.Fatalf("phone moves include the camera move: %s", body)
 	}
 }
 
 func TestTakePhotosNowNeedsAConnectedCamera(t *testing.T) {
-	srv, cam := newCameraServerWithFake(t, true)
-	c := srv.Client()
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+	m, cam := newCameraEnv(t)
+	if status, body := m.call("PUT", "/api/camera", setupBody); status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	waitCameraState(t, srv, gatecam.StateOnline)
+	waitCameraState(t, m, gatecam.StateOnline)
 	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
-	waitCameraState(t, srv, gatecam.StateAuth)
-	if status, body := call(t, c, "POST", srv.URL+"/api/camera/capture", ""); status != 409 || errorCode(body) != "E4093" {
+	waitCameraState(t, m, gatecam.StateAuth)
+	if status, body := m.call("POST", "/api/camera/capture", ""); status != 409 || errorCode(body) != "E4093" {
 		t.Fatalf("capture with a rejected password = %d %s; want 409 E4093", status, body)
 	}
-	if _, body := call(t, c, "GET", srv.URL+"/api/moves?source=camera", ""); strings.Contains(string(body), `"id"`) {
+	if _, body := m.call("GET", "/api/moves?source=camera", ""); strings.Contains(string(body), `"id"`) {
 		t.Fatalf("a refused capture made a move: %s", body)
 	}
 }
 
 func TestCameraWritesNeedTheClientHeaderAndStillWidthIsChecked(t *testing.T) {
-	srv := newCameraServer(t, true)
-	c := srv.Client()
-	if status, body := rawCall(t, "PUT", srv.URL+"/api/camera", "", "", setupBody); status != 403 || errorCode(body) != "E5004" {
+	m, _ := newCameraEnv(t)
+	if status, body := rawCall(t, "PUT", m.e.srv.URL+"/api/camera", "", "", setupBody); status != 403 || errorCode(body) != "E5004" {
 		t.Fatalf("PUT without the client header = %d %s; want 403 E5004", status, body)
 	}
-	if _, body := call(t, c, "GET", srv.URL+"/api/camera", ""); !strings.Contains(string(body), `"password_set":false`) {
+	if _, body := m.call("GET", "/api/camera", ""); !strings.Contains(string(body), `"password_set":false`) {
 		t.Fatalf("a refused PUT changed the camera settings: %s", body)
 	}
-	call(t, c, "PUT", srv.URL+"/api/camera", setupBody)
-	if status, body := call(t, c, "GET", srv.URL+"/api/camera/still?w=999", ""); status != 400 || errorCode(body) != "E4006" {
+	m.call("PUT", "/api/camera", setupBody)
+	if status, body := m.call("GET", "/api/camera/still?w=999", ""); status != 400 || errorCode(body) != "E4006" {
 		t.Fatalf("still with a bad width = %d %s; want 400 E4006", status, body)
 	}
 }
 
 // waitCameraState polls GET /api/camera until the watcher reports want.
-func waitCameraState(t *testing.T, srv *httptest.Server, want string) {
+func waitCameraState(t *testing.T, m *user, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		_, body := call(t, srv.Client(), "GET", srv.URL+"/api/camera", "")
+		_, body := m.call("GET", "/api/camera", "")
 		var v struct {
 			Status struct {
 				State string `json:"state"`
@@ -303,48 +273,46 @@ func waitCameraState(t *testing.T, srv *httptest.Server, want string) {
 }
 
 func TestAGreenTestAfterAWrongPasswordResumesPolling(t *testing.T) {
-	srv, cam := newCameraServerWithFake(t, true)
-	c := srv.Client()
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+	m, cam := newCameraEnv(t)
+	if status, body := m.call("PUT", "/api/camera", setupBody); status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	waitCameraState(t, srv, gatecam.StateOnline)
+	waitCameraState(t, m, gatecam.StateOnline)
 	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
-	waitCameraState(t, srv, gatecam.StateAuth)
+	waitCameraState(t, m, gatecam.StateAuth)
 
 	// A failed test changes nothing.
-	call(t, c, "POST", srv.URL+"/api/camera/test", "")
-	waitCameraState(t, srv, gatecam.StateAuth)
+	m.call("POST", "/api/camera/test", "")
+	waitCameraState(t, m, gatecam.StateAuth)
 
 	// The password works again (fixed on the camera): the test passes and
 	// polling resumes without re-saving.
 	cam.SetDetectErr(nil)
-	status, body := call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	status, body := m.call("POST", "/api/camera/test", "")
 	var rep camera.Report
 	if status != 200 || json.Unmarshal(body, &rep) != nil || !rep.OK() {
 		t.Fatalf("test = %d %s", status, body)
 	}
-	waitCameraState(t, srv, gatecam.StateOnline)
+	waitCameraState(t, m, gatecam.StateOnline)
 }
 
 func TestATestThatLogsInAfterAWrongPasswordResumesPolling(t *testing.T) {
-	srv, cam := newCameraServerWithFake(t, true)
-	c := srv.Client()
-	if status, body := call(t, c, "PUT", srv.URL+"/api/camera", setupBody); status != 200 {
+	m, cam := newCameraEnv(t)
+	if status, body := m.call("PUT", "/api/camera", setupBody); status != 200 {
 		t.Fatalf("PUT = %d %s", status, body)
 	}
-	waitCameraState(t, srv, gatecam.StateOnline)
+	waitCameraState(t, m, gatecam.StateOnline)
 	cam.SetDetectErr(fmt.Errorf("%w: login failed", camera.ErrAuth))
-	waitCameraState(t, srv, gatecam.StateAuth)
+	waitCameraState(t, m, gatecam.StateAuth)
 
 	// The password works again, but the still fails: the test is not all
 	// green, yet its login passed, so polling resumes.
 	cam.SetDetectErr(nil)
 	cam.SetSnapErr(fmt.Errorf("%w: timeout", camera.ErrUnreachable))
-	status, body := call(t, c, "POST", srv.URL+"/api/camera/test", "")
+	status, body := m.call("POST", "/api/camera/test", "")
 	var rep camera.Report
 	if status != 200 || json.Unmarshal(body, &rep) != nil || rep.OK() || !rep.LoginOK() {
 		t.Fatalf("test = %d %s; want a passed login and a failed still", status, body)
 	}
-	waitCameraState(t, srv, gatecam.StateOnline)
+	waitCameraState(t, m, gatecam.StateOnline)
 }

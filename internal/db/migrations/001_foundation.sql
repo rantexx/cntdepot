@@ -209,6 +209,8 @@ END $$;
 GRANT USAGE ON SEQUENCE events_seq_seq TO depot_app;
 
 GRANT SELECT, INSERT ON companies TO depot_app;
+-- The owner switches the company's modules (the app updates only the session's company).
+GRANT UPDATE (modules) ON companies TO depot_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, sessions TO depot_app;
 GRANT SELECT ON platform_admins, ref_smdg_liners, ref_locodes, ref_versions TO depot_app;
 

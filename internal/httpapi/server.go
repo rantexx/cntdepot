@@ -1,10 +1,7 @@
-// Package httpapi serves the hub's JSON API, live updates and the web app.
+// Package httpapi serves the JSON API, live updates, sign-in and the web app.
 package httpapi
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -14,41 +11,47 @@ import (
 	"os"
 	"path"
 	"strings"
-	"time"
+	"sync"
 
+	"depot/internal/api"
+	"depot/internal/auth"
 	"depot/internal/blob"
 	"depot/internal/gate"
 	"depot/internal/gatecam"
 	"depot/internal/live"
 	"depot/internal/store"
+	"depot/internal/tenancy"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Options wires the server to the rest of the hub.
+// Options wires the server to the rest of the program.
 type Options struct {
-	Service    *gate.Service
-	Store      *store.Store
-	Blobs      *blob.Store
-	Static     fs.FS  // built web app; nil serves a "not built" notice
-	AccessCode string // empty: no code required
-	Version    string
-	Camera     *gatecam.Manager // nil: no camera support (camera endpoints answer 503)
-	Live       *live.Supervisor // nil: no live video
+	Service  *gate.Service
+	Store    *store.Store
+	Blobs    *blob.Store
+	Static   fs.FS // built web app; nil serves a "not built" notice
+	Version  string
+	Camera   *gatecam.Manager // nil: no camera support (camera endpoints answer 503)
+	Live     *live.Supervisor // nil: no live video
+	Sessions *auth.Sessions
+	Provider auth.Provider
+	Pool     *pgxpool.Pool
+	Hub      bool // the on-site box: camera routes are mounted only here
 }
 
-// Server is the hub's HTTP front door.
+// Server is the HTTP front door.
 type Server struct {
 	opts    Options
 	broker  *Broker
 	mux     *http.ServeMux
-	token   string           // cookie value proving the access code was entered
-	machine string           // this computer's name; the API answers to it as a Host
-	lockout *lockout         // wrong access codes per client
-	now     func() time.Time // the clock; replaced in tests
+	machine string // this computer's name; the API answers to it as a Host
+
+	stillsMu sync.Mutex
+	stills   map[string]bool // digests of camera stills taken by "read this frame"
 }
 
 const (
-	cookieName = "depot_access"
-
 	// Every API request that is not a GET must carry this header. Browsers
 	// only let a page add it to same-origin requests, so another website
 	// cannot make a visitor's browser change gate records.
@@ -58,42 +61,63 @@ const (
 
 // New builds the server. broker must be the one the gate service notifies.
 func New(opts Options, broker *Broker) *Server {
-	s := &Server{opts: opts, broker: broker, mux: http.NewServeMux(), lockout: newLockout(), now: time.Now}
+	s := &Server{opts: opts, broker: broker, mux: http.NewServeMux(), stills: map[string]bool{}}
 	s.machine, _ = os.Hostname()
-	if opts.AccessCode != "" {
-		sum := sha256.Sum256([]byte("depot-kit-v1:" + opts.AccessCode))
-		s.token = hex.EncodeToString(sum[:])
-	}
 	s.routes()
 	return s
 }
 
 // Handler returns the full HTTP handler.
-func (s *Server) Handler() http.Handler { return s.guardAPI(s.requireAccess(s.mux)) }
+func (s *Server) Handler() http.Handler { return s.guardAPI(s.mux) }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /api/health", s.health)
-	s.mux.HandleFunc("POST /api/login", s.login)
-	s.mux.HandleFunc("POST /api/moves", s.createMove)
-	s.mux.HandleFunc("GET /api/moves", s.listMoves)
-	s.mux.HandleFunc("GET /api/moves/{id}", s.getMove)
-	s.mux.HandleFunc("POST /api/moves/{id}/photos", s.addPhoto)
-	s.mux.HandleFunc("POST /api/moves/{id}/resolve", s.resolve)
-	s.mux.HandleFunc("POST /api/moves/{id}/reread", s.reread)
-	s.mux.HandleFunc("GET /api/blobs/{digest}", s.getBlob)
-	s.mux.HandleFunc("GET /api/validate/{number}", s.validate)
-	s.mux.HandleFunc("POST /api/test-read", s.testRead)
-	s.mux.HandleFunc("GET /api/stream", s.stream)
-	s.mux.HandleFunc("GET /api/camera", s.getCamera)
-	s.mux.HandleFunc("PUT /api/camera", s.putCamera)
-	s.mux.HandleFunc("POST /api/camera/test", s.testCamera)
-	s.mux.HandleFunc("POST /api/camera/read", s.readCamera)
-	s.mux.HandleFunc("POST /api/camera/capture", s.captureCamera)
-	s.mux.HandleFunc("GET /api/camera/still", s.cameraStill)
-	s.mux.HandleFunc("GET /api/live/ws", s.liveWS)
-	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	apiMux := http.NewServeMux()
+	strict := api.NewStrictHandlerWithOptions(s, []api.StrictMiddlewareFunc{s.access}, api.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeError(w, http.StatusBadRequest, "E4001", "invalid request: "+err.Error())
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) { writeServiceError(w, err) },
+	})
+	api.HandlerWithOptions(strict, api.StdHTTPServerOptions{
+		BaseRouter:  apiMux,
+		Middlewares: []api.MiddlewareFunc{checkBody},
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeError(w, http.StatusBadRequest, "E4001", "invalid parameter: "+err.Error())
+		},
+	})
+	gateOnly := func(h http.HandlerFunc) http.Handler { return auth.Require(auth.PermGate, h) }
+	manage := func(h http.HandlerFunc) http.Handler { return auth.Require(auth.PermManage, h) }
+	apiMux.Handle("GET /api/stream", gateOnly(s.stream))
+	apiMux.Handle("GET /api/blobs/{digest}", gateOnly(s.getBlob))
+	if s.opts.Hub {
+		apiMux.Handle("GET /api/camera", manage(s.getCamera))
+		apiMux.Handle("PUT /api/camera", manage(s.putCamera))
+		apiMux.Handle("POST /api/camera/test", manage(s.testCamera))
+		apiMux.Handle("POST /api/camera/read", manage(s.readCamera))
+		apiMux.Handle("POST /api/camera/capture", manage(s.captureCamera))
+		apiMux.Handle("GET /api/camera/still", manage(s.cameraStill))
+		apiMux.Handle("GET /api/camera/stills/{digest}", manage(s.cameraStillByDigest))
+		apiMux.Handle("GET /api/live/ws", manage(s.liveWS))
+	} else {
+		apiMux.Handle("GET /api/camera", manage(func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"available": false, "reason": "needs_onsite_box"})
+		}))
+	}
+	apiMux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "E4040", "no such API endpoint")
 	})
+	apiMux.HandleFunc("GET /auth/login", s.authLogin)
+	apiMux.HandleFunc("GET /auth/callback", s.authCallback)
+	if _, dev := s.opts.Provider.(auth.DevProvider); dev {
+		apiMux.HandleFunc("GET /auth/dev", s.devPage)
+		apiMux.HandleFunc("POST /auth/dev", s.devLogin)
+	}
+
+	// Only the API and sign-in need sessions (and so the database): the app
+	// shell must load while the database is down.
+	withSession := s.opts.Sessions.Middleware(apiMux)
+	s.mux.Handle("/api/", withSession)
+	s.mux.Handle("/auth/", withSession)
 	s.mux.Handle("/", s.static())
 }
 
@@ -155,24 +179,6 @@ func allowedHost(hostHeader, machine string) bool {
 // localSuffixes are the names home and office routers give LAN computers.
 var localSuffixes = []string{".local", ".lan", ".home", ".localdomain", ".home.arpa"}
 
-// requireAccess enforces the optional access code on the API. The app shell,
-// health and login stay open so the login screen can load.
-func (s *Server) requireAccess(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if s.token == "" || !strings.HasPrefix(p, "/api/") || p == "/api/login" || p == "/api/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		c, err := r.Cookie(cookieName)
-		if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "E5001", "access code required")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 // static serves the built web app; unknown paths get index.html because the
 // app routes on the URL hash.
 func (s *Server) static() http.Handler {
@@ -200,11 +206,6 @@ func (s *Server) static() http.Handler {
 	})
 }
 
-type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -214,12 +215,31 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]apiError{"error": {Code: code, Message: message}})
+	writeJSON(w, status, map[string]map[string]string{"error": {"code": code, "message": message}})
 }
 
-// writeServiceError maps service errors onto HTTP answers.
+// apiError is an answer a handler chose; writeServiceError writes it as is.
+type apiError struct {
+	status        int
+	code, message string
+}
+
+func (e *apiError) Error() string { return e.message }
+
+func fail(status int, code, message string) error {
+	return &apiError{status: status, code: code, message: message}
+}
+
+// writeServiceError maps errors onto HTTP answers.
 func writeServiceError(w http.ResponseWriter, err error) {
+	var ae *apiError
 	switch {
+	case errors.As(err, &ae):
+		writeError(w, ae.status, ae.code, ae.message)
+	case errors.Is(err, tenancy.ErrNoScope):
+		writeError(w, http.StatusConflict, "E4090", "choose a depot first")
+	case errors.Is(err, gate.ErrOCROff):
+		writeError(w, http.StatusConflict, "E4094", "the OCR module is off for this company: type the container number instead")
 	case errors.Is(err, gate.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "E4041", "move not found")
 	case errors.Is(err, gate.ErrClosed):

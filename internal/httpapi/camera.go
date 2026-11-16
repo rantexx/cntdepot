@@ -47,11 +47,14 @@ func (s *Server) cameraView() cameraView {
 }
 
 func (s *Server) getCamera(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Camera != nil && !s.ownCamera(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.cameraView())
 }
 
 func (s *Server) putCamera(w http.ResponseWriter, r *http.Request) {
-	if !s.needCamera(w) {
+	if !s.needCamera(w, r) {
 		return
 	}
 	var u gatecam.Update
@@ -69,10 +72,19 @@ func (s *Server) putCamera(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.cameraView())
 }
 
-// needCamera answers 503 when the hub runs without camera support.
-func (s *Server) needCamera(w http.ResponseWriter) bool {
+// needCamera answers 503 when the hub runs without camera support, and 404
+// to members of a company the camera does not belong to.
+func (s *Server) needCamera(w http.ResponseWriter, r *http.Request) bool {
 	if s.opts.Camera == nil {
 		writeError(w, http.StatusServiceUnavailable, "E5031", "camera support is not enabled on this hub")
+		return false
+	}
+	return s.ownCamera(w, r)
+}
+
+func (s *Server) ownCamera(w http.ResponseWriter, r *http.Request) bool {
+	if scopeOf(r.Context()).CompanyID != s.opts.Camera.Scope().CompanyID {
+		writeError(w, http.StatusNotFound, "E4044", "no camera here for this company")
 		return false
 	}
 	return true
@@ -80,8 +92,8 @@ func (s *Server) needCamera(w http.ResponseWriter) bool {
 
 // currentCamera returns the connected camera, or answers 409 when none is
 // set up yet.
-func (s *Server) currentCamera(w http.ResponseWriter) (camera.Camera, bool) {
-	if !s.needCamera(w) {
+func (s *Server) currentCamera(w http.ResponseWriter, r *http.Request) (camera.Camera, bool) {
+	if !s.needCamera(w, r) {
 		return nil, false
 	}
 	cam := s.opts.Camera.Camera()
@@ -93,7 +105,7 @@ func (s *Server) currentCamera(w http.ResponseWriter) (camera.Camera, bool) {
 }
 
 func (s *Server) testCamera(w http.ResponseWriter, r *http.Request) {
-	cam, ok := s.currentCamera(w)
+	cam, ok := s.currentCamera(w, r)
 	if !ok {
 		return
 	}
@@ -121,7 +133,7 @@ type cameraRead struct {
 }
 
 func (s *Server) readCamera(w http.ResponseWriter, r *http.Request) {
-	cam, ok := s.currentCamera(w)
+	cam, ok := s.currentCamera(w, r)
 	if !ok {
 		return
 	}
@@ -142,6 +154,12 @@ func (s *Server) readCamera(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	s.stillsMu.Lock()
+	if len(s.stills) >= 64 {
+		clear(s.stills) // shortcut: older stills stop being viewable; fine for a setup screen
+	}
+	s.stills[digest] = true
+	s.stillsMu.Unlock()
 	res, err := s.opts.Service.ReadStill(r.Context(), data)
 	if err != nil {
 		writeServiceError(w, err)
@@ -154,7 +172,7 @@ func (s *Server) readCamera(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) captureCamera(w http.ResponseWriter, r *http.Request) {
-	if !s.needCamera(w) {
+	if !s.needCamera(w, r) {
 		return
 	}
 	id, err := s.opts.Camera.Capture(r.Context())
@@ -179,7 +197,7 @@ func (s *Server) cameraStill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cam, ok := s.currentCamera(w)
+	cam, ok := s.currentCamera(w, r)
 	if !ok {
 		return
 	}
@@ -201,9 +219,30 @@ func (s *Server) cameraStill(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// cameraStillByDigest serves a still taken by "read this frame". Stills are
+// not gate photos, so /api/blobs does not serve them.
+func (s *Server) cameraStillByDigest(w http.ResponseWriter, r *http.Request) {
+	width, ok := previewWidth(w, r)
+	if !ok || !s.needCamera(w, r) {
+		return
+	}
+	digest := r.PathValue("digest")
+	s.stillsMu.Lock()
+	taken := s.stills[digest]
+	s.stillsMu.Unlock()
+	if !taken {
+		writeError(w, http.StatusNotFound, "E4042", "no such still")
+		return
+	}
+	s.serveBlob(w, digest, width)
+}
+
 func (s *Server) liveWS(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Live == nil {
 		writeError(w, http.StatusServiceUnavailable, "E5030", "live video is not running")
+		return
+	}
+	if !s.needCamera(w, r) {
 		return
 	}
 	s.opts.Live.Handler().ServeHTTP(w, r)

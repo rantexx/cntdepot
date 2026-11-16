@@ -88,6 +88,9 @@ func (m *Manager) Load(ctx context.Context) error {
 	return nil
 }
 
+// Scope is the company and depot this camera belongs to.
+func (m *Manager) Scope() tenancy.Scope { return m.scope }
+
 // Settings returns the current settings, password included. Callers must
 // never send the password to a browser.
 func (m *Manager) Settings() camera.Settings {

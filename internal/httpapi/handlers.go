@@ -1,160 +1,21 @@
 package httpapi
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
-	"io"
-	"math"
+	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"depot/internal/auth"
 	"depot/internal/blob"
-	"depot/internal/gate"
-	"depot/internal/iso6346"
 	"depot/internal/store"
 	"depot/internal/thumb"
 )
-
-const maxUpload = 60 << 20 // one original phone photo plus its AI copy
-
-func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	name, model := s.opts.Service.Engine()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "version": s.opts.Version, "engine": name, "model": model, "auth_required": s.token != "",
-	})
-}
-
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Code string `json:"code"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	if s.token == "" {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		return
-	}
-	client := clientAddr(r)
-	if wait := s.lockout.begin(client, s.now()); wait > 0 {
-		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
-		writeError(w, http.StatusTooManyRequests, "E5003", "too many wrong codes; wait a minute")
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(body.Code), []byte(s.opts.AccessCode)) != 1 {
-		writeError(w, http.StatusUnauthorized, "E5002", "wrong access code")
-		return
-	}
-	s.lockout.clear(client)
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600,
-	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) createMove(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Lane   string `json:"lane"`
-		IsTest bool   `json:"is_test"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	lane := strings.TrimSpace(body.Lane)
-	if lane == "" {
-		lane = "1"
-	}
-	if len([]rune(lane)) > 32 {
-		writeError(w, http.StatusBadRequest, "E4002", "lane name too long")
-		return
-	}
-	m, err := s.opts.Service.NewMove(r.Context(), lane, body.IsTest, "clerk")
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	s.broker.Publish(m.ID)
-	writeJSON(w, http.StatusCreated, m)
-}
-
-func (s *Server) listMoves(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	moves, err := s.opts.Store.ListMoves(r.Context(), store.ListFilter{
-		Status: q.Get("status"), Source: q.Get("source"), Limit: limit, Before: q.Get("before"),
-	})
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"moves": moves})
-}
-
-type moveDetail struct {
-	store.Move
-	Attempts []store.Attempt `json:"attempts"`
-}
-
-func (s *Server) getMove(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	m, err := s.opts.Store.GetMove(r.Context(), id)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	attempts, err := s.opts.Store.ListAttempts(r.Context(), id)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, moveDetail{Move: m, Attempts: attempts})
-}
-
-func (s *Server) addPhoto(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
-	if err := r.ParseMultipartForm(16 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "E4003", "invalid upload: "+err.Error())
-		return
-	}
-	original, originalType, err := formFile(r, "original")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "E4004", "missing original photo")
-		return
-	}
-	ai, aiType, err := formFile(r, "ai")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "E4004", "missing AI copy of the photo")
-		return
-	}
-	width, _ := strconv.Atoi(r.FormValue("width"))
-	height, _ := strconv.Atoi(r.FormValue("height"))
-	p, err := s.opts.Service.AddPhoto(r.Context(), gate.PhotoInput{
-		MoveID: r.PathValue("id"), Role: r.FormValue("role"), Actor: "clerk",
-		Original: original, OriginalType: originalType, AI: ai, AIType: aiType, Width: width, Height: height,
-	})
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, p)
-}
-
-// formFile reads one uploaded file and sniffs its type from the bytes,
-// never trusting the browser's label.
-func formFile(r *http.Request, field string) ([]byte, string, error) {
-	f, _, err := r.FormFile(field)
-	if err != nil {
-		return nil, "", err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, "", err
-	}
-	return data, http.DetectContentType(data), nil
-}
 
 // previewWidth reads the optional ?w= preview width (0 when absent). ok is
 // false when the value is not allowed; the error answer has been written.
@@ -171,41 +32,30 @@ func previewWidth(w http.ResponseWriter, r *http.Request) (width int, ok bool) {
 	return n, true
 }
 
-func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
-	var body gate.Resolution
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	m, err := s.opts.Service.Resolve(r.Context(), r.PathValue("id"), body)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, m)
-}
-
-func (s *Server) reread(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.opts.Service.Reread(r.Context(), id); err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	m, err := s.opts.Store.GetMove(r.Context(), id)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, m)
-}
-
+// getBlob serves a stored photo, only when it belongs to a photo of the
+// session's company (and depot, when one is chosen).
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
-	// Check ?w= first: a bad width costs no disk read and is refused the same
+	// Check ?w= first: a bad width costs no lookup and is refused the same
 	// way whether or not the blob exists.
 	width, ok := previewWidth(w, r)
 	if !ok {
 		return
 	}
-	data, err := s.opts.Blobs.Get(r.PathValue("digest"))
+	digest := r.PathValue("digest")
+	if _, err := s.opts.Store.PhotoByDigest(r.Context(), digest); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "E4042", "no such photo")
+			return
+		}
+		writeServiceError(w, err)
+		return
+	}
+	s.serveBlob(w, digest, width)
+}
+
+// serveBlob writes a blob the caller is allowed to see, scaled to width when > 0.
+func (s *Server) serveBlob(w http.ResponseWriter, digest string, width int) {
+	data, err := s.opts.Blobs.Get(digest)
 	switch {
 	case errors.Is(err, blob.ErrBadDigest):
 		writeError(w, http.StatusBadRequest, "E4005", err.Error())
@@ -219,7 +69,7 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	if width > 0 {
 		// Any Scale error, such as an image too large to decode, serves the
-		// original: the browser decodes it, not the hub.
+		// original: the browser decodes it, not the server.
 		if small, err := thumb.Scale(data, width); err == nil {
 			data = small
 		}
@@ -237,25 +87,87 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func (s *Server) validate(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, iso6346.Validate(r.PathValue("number")))
+// ---- sign-in ----
+
+// stateCookie holds the random state of a sign-in in progress, so a callback
+// is accepted only in the browser that started it.
+const stateCookie = "depot_login_state"
+
+func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		http.Error(w, "sign-in is unavailable", http.StatusInternalServerError)
+		return
+	}
+	state := base64.RawURLEncoding.EncodeToString(raw)
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/auth/", MaxAge: 600,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil})
+	http.Redirect(w, r, s.opts.Provider.LoginURL(state), http.StatusFound)
 }
 
-func (s *Server) testRead(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
-	if err := r.ParseMultipartForm(16 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "E4003", "invalid upload: "+err.Error())
+func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	s.finishLogin(w, r, q.Get("code"), q.Get("state"))
+}
+
+// finishLogin checks state, exchanges code for an identity and starts a new
+// session in place of the browser's current one.
+func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, code, state string) {
+	c, err := r.Cookie(stateCookie)
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(c.Value), []byte(state)) != 1 {
+		http.Error(w, "This sign-in was not started in this browser or has expired. Sign in again.", http.StatusBadRequest)
 		return
 	}
-	ai, aiType, err := formFile(r, "ai")
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Path: "/auth/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	id, err := s.opts.Provider.Exchange(r.Context(), code)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "E4004", "missing photo")
+		log.Printf("httpapi: sign-in exchange: %v", err)
+		http.Error(w, "The sign-in was not confirmed. Sign in again.", http.StatusUnauthorized)
 		return
 	}
-	res, err := s.opts.Service.TestRead(r.Context(), ai, aiType)
-	if err != nil {
-		writeServiceError(w, err)
+	// One browser, one session: the old one ends here, whoever signs in next.
+	if old, err := r.Cookie(auth.CookieName); err == nil {
+		if err := s.opts.Sessions.Logout(r.Context(), old.Value); err != nil {
+			log.Printf("httpapi: sign-in: end old session: %v", err)
+			http.Error(w, "Sign-in failed; see the server log.", http.StatusInternalServerError)
+			return
+		}
+	}
+	cookie, err := s.opts.Sessions.Login(r.Context(), id)
+	switch {
+	case isUniqueViolation(err):
+		http.Error(w, "This email address is already linked to another sign-in. Ask your administrator to sort it out.", http.StatusConflict)
+		return
+	case err != nil:
+		log.Printf("httpapi: sign-in: %v", err)
+		http.Error(w, "Sign-in failed; see the server log.", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	s.opts.Sessions.SetCookie(w, r, cookie)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+var devPageHTML = template.Must(template.New("dev").Parse(`<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Development sign-in</title>
+<form method="post" action="/auth/dev" style="font: 16px system-ui; max-width: 22rem; margin: 4rem auto">
+<h1 style="font-size: 1.25rem">Development sign-in</h1>
+<p>Any email address signs in. This page exists only in development.</p>
+<label>Email<br><input name="email" type="email" required autofocus style="width: 100%; font: inherit"></label>
+<input type="hidden" name="state" value="{{.}}">
+<p><button style="font: inherit">Sign in</button></p>
+</form></html>
+`))
+
+// devPage is the dev provider's login page: one email field.
+func (s *Server) devPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = devPageHTML.Execute(w, r.URL.Query().Get("state"))
+}
+
+// devLogin takes the posted email as the dev provider's code.
+func (s *Server) devLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	s.finishLogin(w, r, r.PostFormValue("email"), r.PostFormValue("state"))
 }
