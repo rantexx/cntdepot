@@ -97,7 +97,22 @@ commands:
 run "depotd <command> -h" for a command's flags`)
 }
 
-func newFlags(name string) *flag.FlagSet { return flag.NewFlagSet(name, flag.ContinueOnError) }
+// flagOutput is where -h and flag errors are printed (a test swaps it).
+var flagOutput io.Writer = os.Stderr
+
+func newFlags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(flagOutput)
+	return fs
+}
+
+// envFallback fills *v from the environment after parsing. Secrets never
+// are flag defaults: -h and parse errors print defaults.
+func envFallback(v *string, key string) {
+	if *v == "" {
+		*v = os.Getenv(key)
+	}
+}
 
 // engineFlags choose and configure the reading engine.
 type engineFlags struct{ engine, model, thinking, fallbacks string }
@@ -135,12 +150,14 @@ func (e *engineFlags) build() (recognition.Recognizer, error) {
 
 func runMigrate(args []string) error {
 	fs := newFlags("migrate")
-	owner := fs.String("db-owner", os.Getenv("DATABASE_OWNER_URL"), "owner database URL (env DATABASE_OWNER_URL)")
-	pw := fs.String("app-password", os.Getenv("DATABASE_APP_PASSWORD"), "password for the depot_app role (env DATABASE_APP_PASSWORD)")
+	owner := fs.String("db-owner", "", "owner database URL (env DATABASE_OWNER_URL)")
+	pw := fs.String("app-password", "", "password for the depot_app role (env DATABASE_APP_PASSWORD)")
 	admin := fs.String("platform-admin", "", "email to add as platform admin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	envFallback(owner, "DATABASE_OWNER_URL")
+	envFallback(pw, "DATABASE_APP_PASSWORD")
 	if *owner == "" || *pw == "" {
 		return errors.New("migrate needs -db-owner (DATABASE_OWNER_URL) and -app-password (DATABASE_APP_PASSWORD)")
 	}
@@ -176,7 +193,7 @@ func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg ga
 
 func runAPI(args []string) error {
 	fs := newFlags("api")
-	dbURL := fs.String("db", os.Getenv("DATABASE_URL"), "depot_app database URL (env DATABASE_URL)")
+	dbURL := fs.String("db", "", "depot_app database URL (env DATABASE_URL)")
 	addr := fs.String("addr", ":8080", "listen address")
 	env := fs.String("env", "development", "development | production")
 	devLogin := fs.Bool("dev-login", true, "allow dev login (default: on in development; refused in production)")
@@ -188,6 +205,7 @@ func runAPI(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	envFallback(dbURL, "DATABASE_URL")
 	production := strings.EqualFold(strings.TrimSpace(*env), "production")
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -282,6 +300,8 @@ const (
 	hubCompany = "local"
 	hubDepot   = "own-depot"
 	hubPGPass  = "depot-hub"
+	// Loopback: dev login signs anyone in as owner, so the hub is not on the LAN unless asked.
+	hubDefaultAddr = "127.0.0.1:8080"
 )
 
 func runHub(args []string) error {
@@ -290,7 +310,7 @@ func runHub(args []string) error {
 	devEmail := fs.String("dev-email", "owner@local", "email of the owner that dev login signs in")
 	var eng engineFlags
 	eng.register(fs)
-	addr := fs.String("addr", ":8080", "listen address")
+	addr := fs.String("addr", hubDefaultAddr, "listen address (a LAN address lets anyone on the network sign in as owner)")
 	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
 	fakeCamera := fs.Bool("fake-camera", false, "use a simulated camera (try the Camera page without one)")
@@ -445,13 +465,14 @@ func seedHub(ctx context.Context, ownerURL, email string) error {
 type scopeFlags struct{ db, company, depot, blobs string }
 
 func (f *scopeFlags) register(fs *flag.FlagSet) {
-	fs.StringVar(&f.db, "db", os.Getenv("DATABASE_URL"), "depot_app database URL (env DATABASE_URL)")
+	fs.StringVar(&f.db, "db", "", "depot_app database URL (env DATABASE_URL)")
 	fs.StringVar(&f.company, "company", "", "company id (required)")
 	fs.StringVar(&f.depot, "depot", "", "depot id (empty: all the company's depots)")
 	fs.StringVar(&f.blobs, "blobs", filepath.Join("depot-data", "blobs"), "folder of photos")
 }
 
 func (f *scopeFlags) open(ctx context.Context) (context.Context, *store.Store, *blob.Store, func(), error) {
+	envFallback(&f.db, "DATABASE_URL")
 	if f.company == "" || f.db == "" {
 		return nil, nil, nil, nil, errors.New("needs -company and -db (DATABASE_URL)")
 	}

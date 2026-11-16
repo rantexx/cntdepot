@@ -27,7 +27,10 @@ work; this build is for testing the new platform and does not read the old `depo
 bin/depotd.exe hub -data depot-data
 ```
 
-- The log prints addresses such as `open: http://192.168.0.29:8080`. Open that on the phones.
+- **Phones need `-addr :8080`.** By default the hub listens on `127.0.0.1:8080` (this PC only). With
+  `-addr :8080` the log prints addresses such as `open: http://192.168.0.29:8080`; open that on the phones.
+  **Warning:** the hub uses the dev login, so with a LAN address anyone on that network can sign in as the
+  owner. Only do this on a trusted network, never on guest or public Wi-Fi.
 - The first time, Windows Firewall asks whether `depotd.exe` may use the network: choose
   **Private networks** and allow. (Do this yourself; nobody should change firewall settings for you.)
 - First start downloads PostgreSQL once (needs internet) and takes a minute. Sign in with the dev login
@@ -40,7 +43,7 @@ bin/depotd.exe hub -data depot-data
 Options: `-model` and `-thinking` choose the Gemini model and thinking level (defaults `gemini-3.8-flash`, `low`;
 try `-model gemini-3.5-flash-lite` with `bench` to see whether the cheaper model is accurate enough),
 `-auto-accept` lets confident, check-digit-valid reads skip the person (off: keep it off while
-collecting training data), `-addr :8080` changes the port.
+collecting training data), `-addr` changes the address and port (see the warning above).
 
 ## Using it
 

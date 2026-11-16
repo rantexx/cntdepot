@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strings"
 
@@ -75,5 +76,40 @@ func TestSeedHubIsRepeatableAndDevLoginFindsTheOwner(t *testing.T) {
 	}
 	if len(cur.Memberships) != 1 || cur.Memberships[0].CompanyID != hubCompany || cur.Memberships[0].Role != tenancy.Owner {
 		t.Fatalf("memberships = %+v, want one owner of %s", cur.Memberships, hubCompany)
+	}
+}
+
+func TestHelpAndFlagErrorsNeverPrintSecrets(t *testing.T) {
+	secrets := []string{"postgres://u:s3cretpw@h/d", "owner-url-s3cret", "app-pw-s3cret", "gemini-s3cret"}
+	t.Setenv("DATABASE_URL", secrets[0])
+	t.Setenv("DATABASE_OWNER_URL", secrets[1])
+	t.Setenv("DATABASE_APP_PASSWORD", secrets[2])
+	t.Setenv("GEMINI_API_KEY", secrets[3])
+	var buf bytes.Buffer
+	old := flagOutput
+	flagOutput = &buf
+	defer func() { flagOutput = old }()
+	for _, mode := range []string{"migrate", "api", "hub", "export-dataset", "bench"} {
+		_ = run([]string{mode, "-h"})
+		_ = run([]string{mode, "-no-such-flag"})
+	}
+	if buf.Len() == 0 {
+		t.Fatal("expected usage output")
+	}
+	for _, s := range secrets {
+		if strings.Contains(buf.String(), s) {
+			t.Fatalf("output contains secret %q", s)
+		}
+	}
+}
+
+func TestHubListensOnLoopbackByDefault(t *testing.T) {
+	var buf bytes.Buffer
+	old := flagOutput
+	flagOutput = &buf
+	defer func() { flagOutput = old }()
+	_ = run([]string{"hub", "-h"})
+	if !strings.Contains(buf.String(), `(default "127.0.0.1:8080")`) || !strings.HasPrefix(hubDefaultAddr, "127.0.0.1:") {
+		t.Fatalf("hub default address is not loopback: %s", buf.String())
 	}
 }
