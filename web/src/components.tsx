@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, blobUrl, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./api";
+import { validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
+import { blobUrl, ok } from "./hubApi";
 import { useT, type Key } from "./i18n";
 
 // Every state wears its ISO 3864 safety colour: green done, yellow needs a
@@ -122,8 +123,7 @@ export function CheckDigitMath({ number }: { number: string }) {
     }
     let live = true;
     const timer = window.setTimeout(() => {
-      api
-        .validate(number)
+      ok(validateNumber(number))
         .then((res) => {
           if (live) setV(res);
         })

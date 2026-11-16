@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, blobUrl, type MoveDetail } from "../api";
-import { CandidateList, StatusChip } from "../components";
+import { addPhoto, createMove, enterNumber, getMove, type MoveDetail } from "../gen/api";
+import { ApiError, blobUrl, ok, timeout, typedNumber, UPLOAD_TIMEOUT_MS } from "../hubApi";
+import { useSession } from "../session";
+import { CandidateList, CheckDigitMath, StatusChip } from "../components";
 import { useT, type Key } from "../i18n";
 import { preparePhoto, type Quality } from "../image";
 import { useMoveEvents } from "../live";
@@ -31,6 +33,10 @@ interface Shot {
 
 export function Capture() {
   const { t } = useT();
+  const { hasModule } = useSession();
+  const ocr = hasModule("ocr");
+  const [typed, setTyped] = useState("");
+  const [saving, setSaving] = useState(false);
   const [lane, setLane] = useState(() => readLocal("lane") ?? "1");
   const [practice, setPractice] = useState(false);
   const [move, setMove] = useState<MoveDetail | null>(null);
@@ -40,7 +46,7 @@ export function Capture() {
 
   const refresh = useCallback(async (id: string) => {
     try {
-      const m = await api.getMove(id);
+      const m = await ok(getMove(id));
       if (m.resolved_by !== "" && readSession(CURRENT_KEY) === m.id) removeSession(CURRENT_KEY);
       setMove(m);
     } catch (e) {
@@ -54,8 +60,7 @@ export function Capture() {
     const saved = readSession(CURRENT_KEY);
     if (!saved) return;
     let live = true;
-    api
-      .getMove(saved)
+    ok(getMove(saved))
       .then((m) => {
         if (!live) return;
         if (m.resolved_by === "") setMove(m);
@@ -97,13 +102,14 @@ export function Capture() {
     setError("");
     try {
       writeLocal("lane", lane);
-      const created = await api.createMove(lane, practice);
+      const created = await ok(createMove({ lane, is_test: practice }));
+      setTyped("");
       writeSession(CURRENT_KEY, created.id);
       shots.forEach((s) => URL.revokeObjectURL(s.preview));
       setShots([]);
       await refresh(created.id);
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof ApiError ? e.message : String(e));
     }
   }
 
@@ -116,7 +122,13 @@ export function Capture() {
     try {
       const prepared = await preparePhoto(shot.file);
       patch(shot.key, { quality: prepared.quality });
-      const photo = await api.uploadPhoto(moveId, shot.role, shot.file, prepared.ai, prepared.width, prepared.height);
+      const photo = await ok(
+        addPhoto(
+          moveId,
+          { role: shot.role, width: prepared.width, height: prepared.height, original: shot.file, ai: prepared.ai },
+          timeout(UPLOAD_TIMEOUT_MS),
+        ),
+      );
       patch(shot.key, { status: "done", photoId: photo.id });
     } catch (e) {
       patch(shot.key, { status: "failed", error: String(e) });
@@ -129,6 +141,21 @@ export function Capture() {
     const shot: Shot = { key: localId(), role, file, preview: URL.createObjectURL(file), status: "uploading" };
     setShots((list) => [...list, shot]);
     void upload(move.id, shot);
+  }
+
+  // Without OCR the clerk types the number once the photos are in; the check digit is shown as they type.
+  async function saveNumber() {
+    if (!move) return;
+    setSaving(true);
+    setError("");
+    try {
+      await ok(enterNumber(move.id, { number: typed.trim() }));
+      await refresh(move.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
   }
 
   const practiceCheck = (
@@ -159,7 +186,8 @@ export function Capture() {
 
   const open = move.resolved_by === "";
   const serverPhotos = (move.photos ?? []).filter((p) => !shots.some((s) => s.photoId === p.id));
-  const numberClass = move.check_digit_valid ? "ok" : move.number ? "bad" : "";
+  // A typed number the clerk saved and the hub accepted carries no reading to check, so it is not shown as failed.
+  const numberClass = move.check_digit_valid || move.status === "accepted" ? "ok" : move.number ? "bad" : "";
   return (
     <div className="page">
       <div className="page-head">
@@ -205,6 +233,34 @@ export function Capture() {
             </label>
           ))}
         </div>
+      )}
+      {open && !ocr && (
+        <form
+          className="card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveNumber();
+          }}
+        >
+          <label>
+            {t("typeNumber")}
+            <input
+              className="big-input"
+              value={typed}
+              onChange={(e) => setTyped(typedNumber(e.target.value))}
+              maxLength={11}
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+          </label>
+          <CheckDigitMath number={typed} />
+          <button type="submit" className="primary big" disabled={saving || unfinished || typed.trim() === ""}>
+            {t("saveNumber")}
+          </button>
+          {unfinished && <p className="small muted">{t("waitForPhotos")}</p>}
+        </form>
       )}
       {serverPhotos.length > 0 && (
         <div className="server-photos">

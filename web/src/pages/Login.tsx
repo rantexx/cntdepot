@@ -1,32 +1,32 @@
-import { useState, type FormEvent } from "react";
-import { api, ApiError } from "../api";
 import { useT } from "../i18n";
+import { useSessionActions } from "../session";
 
-export function Login({ onDone }: { onDone: () => void }) {
+// The server decides how sign-in works: in development /auth/login sends the
+// browser to its email form, in production to the identity provider.
+export function Login() {
   const { t } = useT();
-  const [code, setCode] = useState("");
-  const [error, setError] = useState("");
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    try {
-      await api.login(code);
-      onDone();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) setError(t("wrongCode"));
-      else if (err instanceof ApiError && err.status === 429) setError(t("tooManyTries"));
-      else setError(t("networkError"));
-    }
-  }
-
   return (
-    <form className="card narrow" onSubmit={submit}>
-      <h2>{t("accessCode")}</h2>
-      <input type="password" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
-      <button type="submit" className="primary">
-        {t("login")}
+    <section className="card narrow">
+      <h2>{t("appTitle")}</h2>
+      <p className="muted">{t("signInHint")}</p>
+      <a className="button primary" href="/auth/login">
+        {t("signIn")}
+      </a>
+    </section>
+  );
+}
+
+// NoMembership: signed in, but no company has added this person yet.
+export function NoMembership() {
+  const { t } = useT();
+  const { signOut } = useSessionActions();
+  return (
+    <section className="card narrow">
+      <h2>{t("noMembershipTitle")}</h2>
+      <p>{t("noMembership")}</p>
+      <button type="button" onClick={() => void signOut()}>
+        {t("signOut")}
       </button>
-      {error && <p className="error">{error}</p>}
-    </form>
+    </section>
   );
 }

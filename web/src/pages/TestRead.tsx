@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, type TestReadResult } from "../api";
+import { testRead, type TestReadResult } from "../gen/api";
+import { ok, timeout, UPLOAD_TIMEOUT_MS } from "../hubApi";
 import { CandidateList, CheckDigitMath, PhotoWithBox } from "../components";
 import { useT } from "../i18n";
 import { preparePhoto, type Quality } from "../image";
@@ -23,7 +24,7 @@ export function TestRead() {
       if (preview) URL.revokeObjectURL(preview);
       setPreview(URL.createObjectURL(prepared.ai));
       setQuality(prepared.quality);
-      setResult(await api.testRead(prepared.ai));
+      setResult(await ok(testRead({ ai: prepared.ai }, timeout(UPLOAD_TIMEOUT_MS))));
     } catch (e) {
       setError(String(e));
     } finally {

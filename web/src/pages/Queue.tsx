@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Move } from "../api";
+import { listMoves, type Move } from "../gen/api";
+import { ok } from "../hubApi";
 import { VisitHead, VisitRow } from "../components";
 import { useT, type Key } from "../i18n";
 import { useMoveEvents } from "../live";
@@ -20,7 +21,7 @@ export function Queue() {
 
   const load = useCallback(async () => {
     try {
-      setMoves((await api.listMoves(status)).moves);
+      setMoves((await ok(listMoves({ status, limit: 100 }))).moves);
       setError("");
     } catch (e) {
       setError(String(e));

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type CameraView, type Move, type MoveDetail } from "../api";
+import { getMove, listMoves, resolveMove, type Move, type MoveDetail } from "../gen/api";
+import { ApiError, camera, ok, type CameraOn } from "../hubApi";
 import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
 import { GATE_TARGET_S, GateTime, ReadCrop, SignPlate, VisitHead, VisitRow, clock, fmtSeconds, gateSeconds } from "../components";
 import { useT } from "../i18n";
 import { useMoveEvents } from "../live";
+import { useSession } from "../session";
 import { readLocal } from "../storage";
 
 const RELOAD_EVERY_MS = 1000; // a camera visit sends a burst of move events
@@ -13,7 +15,7 @@ const sameDay = (iso: string, day: Date) => new Date(iso).toDateString() === day
 
 // pickCurrent is the truck the operator should look at now: the visit the
 // camera is taking photos of, else the newest truck waiting for a person.
-function pickCurrent(moves: Move[], view: CameraView | null): string {
+function pickCurrent(moves: Move[], view: CameraOn | null): string {
   const visit = view?.status.visit_move;
   if (visit) return visit;
   const waiting = moves.find((m) => m.status === "needs_review");
@@ -23,8 +25,9 @@ function pickCurrent(moves: Move[], view: CameraView | null): string {
 
 export function Home() {
   const { t, lang } = useT();
+  const manage = useSession().can("manage");
   const [moves, setMoves] = useState<Move[]>([]);
-  const [view, setView] = useState<CameraView | null>(null);
+  const [view, setView] = useState<CameraOn | null>(null);
   const [current, setCurrent] = useState<MoveDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -32,18 +35,20 @@ export function Home() {
 
   const loadMoves = useCallback(async () => {
     try {
-      setMoves((await api.listMovesBy({ limit: 200 })).moves.filter((m) => !m.is_test));
+      setMoves((await ok(listMoves({ limit: 200 }))).moves.filter((m) => !m.is_test));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }, []);
   const loadCamera = useCallback(async () => {
+    if (!manage) return; // a clerk has no camera page; asking would only be refused
     try {
-      setView(await api.camera());
+      const v = await camera.get();
+      setView(v.available ? v : null);
     } catch {
       setView(null);
     }
-  }, []);
+  }, [manage]);
   const reloadSoon = useCallback(() => {
     if (reloadTimer.current) return;
     reloadTimer.current = window.setTimeout(() => {
@@ -71,7 +76,7 @@ export function Home() {
       return;
     }
     let live = true;
-    api.getMove(currentId).then(
+    ok(getMove(currentId)).then(
       (m) => live && setCurrent(m),
       () => live && setCurrent(null),
     );
@@ -85,7 +90,7 @@ export function Home() {
     setBusy(true);
     setError("");
     try {
-      await api.resolve(current.id, { action: "accept", by: readLocal("by") || "office" });
+      await resolveMove(current.id, { action: "accept", by: readLocal("by") || "office" });
       await loadMoves();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -181,9 +186,10 @@ export function Home() {
   );
 }
 
-function CameraPanel({ view, current }: { view: CameraView | null; current: MoveDetail | null }) {
+function CameraPanel({ view, current }: { view: CameraOn | null; current: MoveDetail | null }) {
   const { t } = useT();
-  const state = view?.available ? view.status.state : null;
+  const { can } = useSession();
+  const state = view?.status.state ?? null;
   const online = state === "online";
   const visiting = !!view?.status.visit_move && current?.id === view.status.visit_move;
   const video = view?.live.state === "running";
@@ -201,9 +207,11 @@ function CameraPanel({ view, current }: { view: CameraView | null; current: Move
       ) : (
         <div className="cam-empty">
           {state && state !== "unconfigured" ? <CameraOffline state={state} /> : <p>{t("camState_unconfigured")}</p>}
-          <a className="button" href="#/camera">
-            {t("setupCamera")}
-          </a>
+          {can("manage") && (
+            <a className="button" href="#/camera">
+              {t("setupCamera")}
+            </a>
+          )}
         </div>
       )}
       {online && (view?.status.vehicle || visiting) && (

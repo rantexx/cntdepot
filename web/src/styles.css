@@ -78,7 +78,7 @@ p { margin: 8px 0; }
 
 /* Shell: graphite rail and the work area. */
 .shell { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 100vh; }
-.rail { background: var(--rail); color: var(--rail-ink); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.rail { overflow-y: auto; background: var(--rail); color: var(--rail-ink); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
 .brand { height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 20px; font-size: 22px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #fff; text-decoration: none; border-bottom: 1px solid var(--rail-rule); }
 .brand-mark { width: 16px; height: 16px; border-radius: 3px; background: #f4f4f1; box-shadow: inset 0 0 0 4px var(--rail), inset 0 0 0 8px #f4f4f1; flex: none; }
 .rail nav { display: flex; flex-direction: column; padding-top: 10px; }
@@ -134,7 +134,7 @@ p { margin: 8px 0; }
 /* Controls. */
 button, .button { font: inherit; font-weight: 700; font-size: 17px; min-height: 44px; padding: 0 18px; border-radius: 6px; border: 2px solid var(--ink); background: var(--panel); color: var(--ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 button:hover, .button:hover { background: var(--rule-soft); }
-button.primary { background: var(--act); border-color: var(--act); color: #fff; text-transform: uppercase; letter-spacing: 0.08em; }
+button.primary, .button.primary { background: var(--act); border-color: var(--act); color: #fff; text-transform: uppercase; letter-spacing: 0.08em; }
 button.primary:hover { background: var(--act); filter: brightness(1.08); }
 button.danger { color: var(--stop); border-color: var(--stop); }
 button.big { width: 100%; min-height: 60px; font-size: 21px; margin-top: 12px; }
@@ -293,3 +293,20 @@ figcaption { padding-top: 8px; display: grid; gap: 4px; }
 
 /* Turkish capitals put a dot on every İ; Turkish labels stay in normal case instead. */
 :lang(tr) { text-transform: none !important; }
+
+/* Admin lists, members and the company switcher. */
+.boot { padding: 40px; }
+.nav-group { padding: 18px 20px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--rail-muted); border-top: 1px solid var(--rail-rule); margin-top: 10px; }
+.switcher { display: grid; gap: 8px; }
+.switcher select, .switcher button { min-height: 38px; font-size: 16px; width: 100%; }
+.switcher .who { color: var(--rail-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 16px; }
+.admin-form label { margin: 0; min-width: 160px; }
+.admin-table { width: 100%; border-collapse: collapse; margin: 8px 0 20px; }
+.admin-table th { text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--ink); }
+.admin-table td { padding: 8px 10px 8px 0; border-top: 1px solid var(--rule); vertical-align: middle; }
+.admin-table tr.off td { color: var(--muted); }
+.admin-table .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.admin-table input, .admin-table select { width: 100%; min-height: 38px; }
+.depot-access { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
+.depot-access label.check { margin: 0; }

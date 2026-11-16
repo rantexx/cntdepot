@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, blobUrl, typedNumber, type Attempt, type CameraView, type MoveDetail as Detail, type Photo } from "../api";
+import { getMove, rereadMove, resolveMove, type Attempt, type MoveDetail as Detail, type Photo } from "../gen/api";
+import { blobUrl, camera, ok, typedNumber, type CameraView } from "../hubApi";
 import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
 import { CandidateList, CheckDigitMath, GateTime, PhotoWithBox, ReadCrop, SignPlate, StatusChip, gateSeconds } from "../components";
 import { useT } from "../i18n";
@@ -28,7 +29,7 @@ export function MoveDetail({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     try {
-      const m = await api.getMove(id);
+      const m = await ok(getMove(id));
       setMove(m);
       setError("");
     } catch (e) {
@@ -61,7 +62,7 @@ export function MoveDetail({ id }: { id: string }) {
     setError("");
     try {
       writeLocal("by", by);
-      await api.resolve(move.id, { action, number: action === "correct" ? number : undefined, by, note });
+      await resolveMove(move.id, { action, number: action === "correct" ? number : undefined, by, note });
       await load();
     } catch (e) {
       setError(String(e));
@@ -73,7 +74,7 @@ export function MoveDetail({ id }: { id: string }) {
   async function reread() {
     if (!move) return;
     try {
-      await api.reread(move.id);
+      await rereadMove(move.id);
       await load();
     } catch (e) {
       setError(String(e));
@@ -86,7 +87,7 @@ export function MoveDetail({ id }: { id: string }) {
       return;
     }
     try {
-      setLive(await api.camera());
+      setLive(await camera.get());
     } catch {
       setLive("failed");
     }

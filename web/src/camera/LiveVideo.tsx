@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { CameraState } from "../api";
+import type { CameraState } from "../hubApi";
 import { useT, type Key } from "../i18n";
 import { liveUrl, playLive, type LiveState } from "./mse";
 

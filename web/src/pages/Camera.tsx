@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { listMoves, type Move } from "../gen/api";
 import {
-  api,
   ApiError,
   blobUrl,
+  camera,
+  ok,
+  stillUrl,
   type CameraRead,
   type CameraReport,
   type CameraUpdate,
   type CameraView,
-  type Move,
-} from "../api";
+} from "../hubApi";
 import { CameraOffline, LiveVideo } from "../camera/LiveVideo";
 import { CandidateList, PhotoWithBox, StatusChip } from "../components";
 import { useT, type Key } from "../i18n";
@@ -41,10 +43,10 @@ export function Camera() {
     polling.current = true;
     const gen = writes.current;
     try {
-      const v = await api.camera();
+      const v = await camera.get();
       if (gen !== writes.current) return; // asked before a save; it could undo the save on screen
       setView(v);
-      setForm((f) => f ?? { host: v.settings.host, user: v.settings.user, password: "" });
+      if (v.available) setForm((f) => f ?? { host: v.settings.host, user: v.settings.user, password: "" });
       setPollError("");
     } catch (e) {
       setPollError(errorText(e));
@@ -54,7 +56,7 @@ export function Camera() {
   }, []);
   const loadVisits = useCallback(async () => {
     try {
-      setVisits((await api.listMovesBy({ source: "camera", limit: 20 })).moves);
+      setVisits((await ok(listMoves({ source: "camera", limit: 20 }))).moves);
     } catch {
       // the status poll reports connection problems
     }
@@ -106,7 +108,7 @@ export function Camera() {
     writing.current = true;
     writes.current += 1;
     try {
-      setView(await api.saveCamera(u));
+      setView(await camera.save(u));
     } finally {
       writing.current = false;
     }
@@ -118,7 +120,7 @@ export function Camera() {
     void run("save", async () => {
       await saveSettings({ host: form.host, user: form.user, password: form.password });
       setForm((f) => f && { ...f, password: "" });
-      setReport(await api.testCamera());
+      setReport(await camera.test());
     });
   };
 
@@ -126,7 +128,7 @@ export function Camera() {
     error && actions.includes(error.action) ? <p className="error">{error.message}</p> : null;
 
   if (!view) return <p>{pollError || t("loading")}</p>;
-  if (!view.available) return <p>{t("camNotAvailable")}</p>;
+  if (!view.available) return <p>{view.reason === "needs_onsite_box" ? t("camNeedsBox") : t("camNotAvailable")}</p>;
   const s = view.status;
   const configured = s.state !== "unconfigured";
   const online = s.state === "online";
@@ -197,7 +199,7 @@ export function Camera() {
                 <button
                   type="button"
                   disabled={busy !== ""}
-                  onClick={() => void run("test", async () => setReport(await api.testCamera()))}
+                  onClick={() => void run("test", async () => setReport(await camera.test()))}
                 >
                   {t("camTest")}
                 </button>
@@ -262,7 +264,7 @@ export function Camera() {
               type="button"
               className="primary"
               disabled={busy !== ""}
-              onClick={() => void run("read", async () => setRead(await api.readCamera()))}
+              onClick={() => void run("read", async () => setRead(await camera.read()))}
             >
               {t("camReadFrame")}
             </button>
@@ -273,7 +275,7 @@ export function Camera() {
               disabled={busy !== "" || !!s.visit_move || !online}
               onClick={() =>
                 void run("capture", async () => {
-                  const r = await api.captureCamera();
+                  const r = await camera.capture();
                   window.location.hash = `#/moves/${r.move_id}`;
                 })
               }
@@ -323,7 +325,7 @@ function ReadResult({ read }: { read: CameraRead }) {
   const r = read.result;
   return (
     <div>
-      <PhotoWithBox src={blobUrl(read.still, 1280)} box={r.attempt.reading.box} alt="" />
+      <PhotoWithBox src={stillUrl(read.still, 1280)} box={r.attempt.reading.box} alt="" />
       {r.error && (
         <p className="error">
           {t("error")}: {r.error}
