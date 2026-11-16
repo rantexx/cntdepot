@@ -47,6 +47,7 @@ type ReadOutcome struct {
 	Decision        string
 	Reason          string
 	ResultJSON      []byte
+	Actor           string // who concluded it; empty: "engine"
 }
 
 // ResolveUpdate is a person's decision about a move.
@@ -229,7 +230,11 @@ func (s *Store) SetResult(ctx context.Context, id string, o ReadOutcome) error {
 			_, err = exists(ctx, q, sc, id)
 			return err
 		}
-		return s.appendEvent(ctx, q, sc, id, "move.read", "engine", map[string]any{
+		actor := o.Actor
+		if actor == "" {
+			actor = "engine"
+		}
+		return s.appendEvent(ctx, q, sc, id, "move.read", actor, map[string]any{
 			"status": o.Status, "number": o.Number, "decision": o.Decision, "reason": o.Reason,
 			"confidence": o.Confidence, "type_code": o.TypeCode, "color": o.Color,
 		})

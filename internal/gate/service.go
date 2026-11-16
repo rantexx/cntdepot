@@ -3,6 +3,7 @@
 package gate
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ var (
 	ErrClosed         = errors.New("move already resolved")
 	ErrBadAction      = errors.New("unknown action: use accept, correct or refuse")
 	ErrNumberRequired = errors.New("a container number is required")
+	ErrOCROff         = errors.New("the ocr module is off")
 	ErrBadPhoto       = errors.New("photo missing or not a JPEG, PNG or WebP image")
 )
 
@@ -114,9 +116,13 @@ func (s *Service) Start(ctx context.Context) error {
 // recoverCompany re-queues the company's unread photos and settles its
 // moves left open by a previous run. ctx carries the company's scope.
 func (s *Service) recoverCompany(ctx context.Context, companyID string) error {
-	pending, err := s.store.PhotosWithoutAttempts(ctx)
-	if err != nil {
-		return err
+	off := !s.ocrOn(ctx)
+	var pending []store.Photo
+	if !off { // with the module off nothing is queued; the open moves go to review
+		var err error
+		if pending, err = s.store.PhotosWithoutAttempts(ctx); err != nil {
+			return err
+		}
 	}
 	unread := map[string]bool{}
 	details := map[string]string{} // move ID -> engine detail, one lookup per move
@@ -137,15 +143,19 @@ func (s *Service) recoverCompany(ctx context.Context, companyID string) error {
 	// every photo already read and no job left to finish it. Camera visits do
 	// not survive a restart either. Moves with unread photos were just
 	// re-queued above and settle as those jobs complete.
-	if err := s.settleOpen(ctx, store.ListFilter{Status: store.StatusReading}, unread); err != nil {
+	settle := s.recompute
+	if off {
+		settle = s.settleOff
+	}
+	if err := s.settleOpen(ctx, store.ListFilter{Status: store.StatusReading}, unread, settle); err != nil {
 		return err
 	}
-	return s.settleOpen(ctx, store.ListFilter{Status: store.StatusCapturing, Source: store.SourceCamera}, unread)
+	return s.settleOpen(ctx, store.ListFilter{Status: store.StatusCapturing, Source: store.SourceCamera}, unread, s.recompute)
 }
 
 // settleOpen recomputes every open move matching f from its existing
-// attempts, except those in skip.
-func (s *Service) settleOpen(ctx context.Context, f store.ListFilter, skip map[string]bool) error {
+// attempts (or by settle), except those in skip.
+func (s *Service) settleOpen(ctx context.Context, f store.ListFilter, skip map[string]bool, settle func(context.Context, string) error) error {
 	const page = 200
 	f.Limit = page
 	for {
@@ -157,8 +167,8 @@ func (s *Service) settleOpen(ctx context.Context, f store.ListFilter, skip map[s
 			if skip[m.ID] {
 				continue
 			}
-			if err := s.recompute(ctx, m.ID); err != nil {
-				log.Printf("gate: recompute move %s: %v", m.ID, err)
+			if err := settle(ctx, m.ID); err != nil {
+				log.Printf("gate: settle move %s: %v", m.ID, err)
 				continue
 			}
 			s.notifyMove(ctx, m.ID)
@@ -261,6 +271,9 @@ func (s *Service) Reread(ctx context.Context, moveID string) error {
 	if err != nil {
 		return err
 	}
+	if !s.ocrOn(ctx) {
+		return ErrOCROff
+	}
 	var photos []store.Photo
 	for _, p := range m.Photos {
 		if !p.Deferred && p.ReadEnabled {
@@ -310,7 +323,7 @@ func (s *Service) ManualEntry(ctx context.Context, moveID, number, by string) (s
 	}
 	err := s.store.SetResult(ctx, moveID, store.ReadOutcome{
 		Status: store.StatusNeedsReview, Number: n, Decision: string(recognition.DecisionReview),
-		Reason: "typed number fails its check digit",
+		Reason: "typed number fails its check digit", Actor: cmp.Or(strings.TrimSpace(by), "operator"),
 	})
 	if err != nil {
 		return store.Move{}, err
@@ -445,7 +458,14 @@ func (s *Service) process(j job) {
 	if !s.ocrOn(ctx) {
 		// Switched off while queued: leave the move open for the clerk. The
 		// hook still hears of it, so a camera visit does not wait for ever.
-		if s.hook != nil && ctx.Err() == nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := s.settleOff(ctx, j.moveID); err != nil {
+			log.Printf("gate: settle move %s: %v", j.moveID, err)
+		}
+		s.notifyMove(ctx, j.moveID)
+		if s.hook != nil {
 			s.hook(j.moveID, j.photoID, recognition.ErrorFrame(j.role, "ocr module is off"))
 		}
 		return
@@ -493,6 +513,23 @@ func (s *Service) process(j job) {
 		log.Printf("gate: recompute move %s: %v", j.moveID, err)
 	}
 	s.notifyMove(ctx, j.moveID)
+}
+
+// settleOff moves a move still marked "reading" to review because the ocr
+// module is off, keeping any result it already has.
+func (s *Service) settleOff(ctx context.Context, moveID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.store.GetMove(ctx, moveID)
+	if err != nil || m.ResolvedBy != "" || m.Status != store.StatusReading {
+		return err
+	}
+	if m.Number != "" {
+		return s.store.SetStatus(ctx, moveID, store.StatusNeedsReview)
+	}
+	return s.store.SetResult(ctx, moveID, store.ReadOutcome{
+		Status: store.StatusNeedsReview, Decision: string(recognition.DecisionReview), Reason: "ocr module is off",
+	})
 }
 
 // recompute rebuilds a move's result from the latest attempt of each photo.

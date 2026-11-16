@@ -72,6 +72,9 @@ func (s *Service) ReadFrame(ctx context.Context, photoID string) error {
 	if !p.ReadEnabled {
 		return nil // taken while ocr was off: never read
 	}
+	if !s.ocrOn(ctx) {
+		return ErrOCROff
+	}
 	if err := s.store.MarkForReading(ctx, p.ID, "camera"); err != nil {
 		return err
 	}

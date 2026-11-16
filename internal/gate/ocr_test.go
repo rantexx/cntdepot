@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -87,10 +88,11 @@ func TestQueuedReadsStopWhenModuleTurnsOff(t *testing.T) {
 	rec := &blockingRec{started: make(chan struct{}), release: make(chan struct{})}
 	h := newHarness(t, rec, Config{Workers: 1}, false)
 	reads := startWithHook(t, h)
-	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
-	for _, c := range []string{"a", "b", "c"} {
-		h.photo(t, m.ID, "rear", c)
-	}
+	m1, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	m2, _ := h.svc.NewMove(ctx, "2", false, "clerk")
+	h.photo(t, m1.ID, "rear", "a")
+	h.photo(t, m2.ID, "rear", "b")
+	h.photo(t, m2.ID, "left", "c")
 	<-rec.started
 	h.setModules(t, "A", "{}")
 	close(rec.release)
@@ -100,9 +102,53 @@ func TestQueuedReadsStopWhenModuleTurnsOff(t *testing.T) {
 	if rec.calls.Load() != 1 {
 		t.Fatalf("calls = %d; want 1", rec.calls.Load())
 	}
-	got, err := h.store.GetMove(ctx, m.ID)
-	if err != nil || got.ResolvedBy != "" || got.Status == store.StatusAccepted {
-		t.Fatalf("move = %+v, %v; want it still open", got, err)
+	got := waitStatus(t, h.store, m2.ID, store.StatusNeedsReview)
+	if got.Reason != "ocr module is off" || got.ResolvedBy != "" {
+		t.Fatalf("move 2 = %+v; want open, in review because ocr is off", got)
+	}
+	got = waitStatus(t, h.store, m1.ID, store.StatusNeedsReview) // its one read finished; it keeps its result
+	if got.Number != "CSQU3054383" || got.ResolvedBy != "" {
+		t.Fatalf("move 1 = %+v", got)
+	}
+}
+
+func TestRestartWithModuleOffSettlesToReview(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, false)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	sha, _ := h.blobs.Put([]byte("x"))
+	if _, err := h.store.AddPhoto(ctx, store.Photo{MoveID: m.ID, Role: "rear", SHA256: sha, AISHA256: sha, MediaType: "image/jpeg", AIMediaType: "image/jpeg", Bytes: 1, ReadEnabled: true}, "clerk"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetStatus(ctx, m.ID, store.StatusReading); err != nil {
+		t.Fatal(err)
+	}
+	h.setModules(t, "A", "{}")
+	runCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := h.svc.Start(runCtx); err != nil {
+		t.Fatal(err)
+	}
+	got := waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	if got.Reason != "ocr module is off" || fake.Calls() != 0 {
+		t.Fatalf("reason = %q, calls = %d", got.Reason, fake.Calls())
+	}
+}
+
+func TestRereadWithModuleOffDoesNothing(t *testing.T) {
+	fake := &recognition.Fake{Reading: reading("CSQU3054383", 0.9)}
+	h := newHarness(t, fake, Config{}, true)
+	m, _ := h.svc.NewMove(ctx, "1", false, "clerk")
+	h.photo(t, m.ID, "rear", "a")
+	waitStatus(t, h.store, m.ID, store.StatusNeedsReview)
+	h.setModules(t, "A", "{}")
+	if err := h.svc.Reread(ctx, m.ID); !errors.Is(err, ErrOCROff) {
+		t.Fatalf("Reread = %v; want ErrOCROff", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	got, _ := h.store.GetMove(ctx, m.ID)
+	if fake.Calls() != 1 || got.Status != store.StatusNeedsReview {
+		t.Fatalf("calls = %d, status = %s; want 1 and needs_review", fake.Calls(), got.Status)
 	}
 }
 
@@ -118,6 +164,10 @@ func TestManualEntryValidAcceptsInvalidGoesToReview(t *testing.T) {
 	if err != nil || got.Status != store.StatusNeedsReview || got.Verified || got.Number != "MSCU1234565" ||
 		got.Reason != "typed number fails its check digit" || got.ResolvedBy != "" {
 		t.Fatalf("invalid: %+v, %v", got, err)
+	}
+	evs, err := h.store.Events(ctx, m2.ID)
+	if err != nil || len(evs) == 0 || evs[len(evs)-1].Actor != "ayse" {
+		t.Fatalf("events = %+v, %v; want the last one by the typist", evs, err)
 	}
 	if _, err := h.svc.ManualEntry(ctx, m2.ID, " - ", "ayse"); err != ErrNumberRequired {
 		t.Fatalf("empty = %v; want ErrNumberRequired", err)
