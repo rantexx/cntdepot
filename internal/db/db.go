@@ -111,23 +111,34 @@ func Migrate(ctx context.Context, ownerURL string, o MigrateOptions) error {
 	return nil
 }
 
+// unusableURL is what AppURL returns for an unparseable owner URL. "" would
+// let pgx fall back to PG* env vars and the OS user, possibly a superuser.
+const unusableURL = "postgres://depot_app@%invalid-owner-url"
+
 // AppURL returns ownerURL (a postgres:// URL) with the user set to depot_app.
+// For an unparseable ownerURL it returns a URL that Open always refuses.
 func AppURL(ownerURL, password string) string {
 	u, err := url.Parse(ownerURL)
 	if err != nil {
-		return ""
+		return unusableURL
 	}
 	u.User = url.UserPassword(AppRole, password)
 	return u.String()
 }
 
-// Open connects a pool as the app role and checks the connection.
+// Open connects a pool as the app role and refuses any other role, since
+// an owner or superuser would bypass row-level security.
 func Open(ctx context.Context, appURL string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, appURL)
 	if err != nil {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	var ok bool
+	err = pool.QueryRow(ctx, "SELECT current_user = '"+AppRole+"' AND NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname = current_user").Scan(&ok)
+	if err == nil && !ok {
+		err = errors.New("connected role is not " + AppRole + ", or can bypass row-level security")
+	}
+	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: open: %w", err)
 	}

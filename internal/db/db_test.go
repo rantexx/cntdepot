@@ -216,3 +216,27 @@ func TestSecurityInvariants(t *testing.T) {
 		t.Fatalf("security definer functions %d, err %v", n, err)
 	}
 }
+
+func TestOpenRefusesNonAppRole(t *testing.T) {
+	owner := pgtest.NewDB(t)
+	pool, err := db.Open(ctx, owner)
+	if err == nil {
+		pool.Close()
+		t.Fatal("Open accepted the superuser URL")
+	}
+	if !strings.Contains(err.Error(), "depot_app") {
+		t.Fatalf("error %q does not mention depot_app", err)
+	}
+}
+
+func TestAppURLUnparseableNeverConnects(t *testing.T) {
+	app := db.AppURL("postgres://postgres:pa%ss@127.0.0.1:5432/x", appPassword)
+	if app == "" {
+		t.Fatal("AppURL returned an empty URL, which pgx reads as PG* env defaults")
+	}
+	pool, err := db.Open(ctx, app)
+	if err == nil {
+		pool.Close()
+		t.Fatalf("Open(%q) connected", app)
+	}
+}
