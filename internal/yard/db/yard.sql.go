@@ -1323,7 +1323,7 @@ func (q *Queries) ListDamages(ctx context.Context, arg ListDamagesParams) ([]Dam
 }
 
 const listFlags = `-- name: ListFlags :many
-SELECT f.company_id, f.id, f.move_id, f.code, f.detail, f.resolved_by, f.resolved_at FROM gate_flags f JOIN gate_moves m ON m.company_id = f.company_id AND m.id = f.move_id
+SELECT f.company_id, f.id, f.move_id, f.code, f.detail, f.resolved_by, f.resolved_at, f.resolve_note FROM gate_flags f JOIN gate_moves m ON m.company_id = f.company_id AND m.id = f.move_id
 WHERE f.company_id = $1 AND ($2::text = '' OR m.depot_id = $2)
   AND ($3::text = '' OR f.move_id = $3)
   AND (NOT $4::boolean OR f.resolved_at IS NULL)
@@ -1359,6 +1359,7 @@ func (q *Queries) ListFlags(ctx context.Context, arg ListFlagsParams) ([]GateFla
 			&i.Detail,
 			&i.ResolvedBy,
 			&i.ResolvedAt,
+			&i.ResolveNote,
 		); err != nil {
 			return nil, err
 		}
@@ -1973,24 +1974,26 @@ func (q *Queries) ReopenVisit(ctx context.Context, arg ReopenVisitParams) error 
 }
 
 const resolveFlag = `-- name: ResolveFlag :execrows
-UPDATE gate_flags f SET resolved_by = $1, resolved_at = $2
-WHERE f.company_id = $3 AND f.id = $4 AND f.resolved_at IS NULL
+UPDATE gate_flags f SET resolved_by = $1, resolved_at = $2, resolve_note = $3
+WHERE f.company_id = $4 AND f.id = $5 AND f.resolved_at IS NULL
   AND EXISTS (SELECT 1 FROM gate_moves m WHERE m.company_id = f.company_id AND m.id = f.move_id
-              AND ($5::text = '' OR m.depot_id = $5))
+              AND ($6::text = '' OR m.depot_id = $6))
 `
 
 type ResolveFlagParams struct {
-	ResolvedBy string
-	ResolvedAt *time.Time
-	CompanyID  string
-	ID         string
-	DepotID    string
+	ResolvedBy  string
+	ResolvedAt  *time.Time
+	ResolveNote string
+	CompanyID   string
+	ID          string
+	DepotID     string
 }
 
 func (q *Queries) ResolveFlag(ctx context.Context, arg ResolveFlagParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resolveFlag,
 		arg.ResolvedBy,
 		arg.ResolvedAt,
+		arg.ResolveNote,
 		arg.CompanyID,
 		arg.ID,
 		arg.DepotID,

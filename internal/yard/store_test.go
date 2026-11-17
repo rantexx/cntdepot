@@ -193,7 +193,7 @@ func TestYardTablesRespectCompany(t *testing.T) {
 		"CloseVisit":       s.CloseVisit(b, visitID, nil, time.Now(), "x"),
 		"ReleaseHold":      s.ReleaseHold(b, holdID, "u1"),
 		"SetBlockActive":   s.SetBlockActive(b, blockID, false),
-		"ResolveFlag":      s.ResolveFlag(b, flagID, "u1"),
+		"ResolveFlag":      s.ResolveFlag(b, flagID, "u1", ""),
 		"DecideApproval":   s.DecideApproval(b, apprID, true, "u1"),
 		"SetMoveForm":      s.SetMoveForm(b, moveID, MoveForm{TruckPlate: "X"}),
 		"VoidMove":         s.VoidMove(b, moveID, "x"),

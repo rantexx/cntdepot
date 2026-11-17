@@ -380,11 +380,11 @@ func (s *Store) ListFlags(ctx context.Context, moveID string, openOnly bool) (ou
 }
 
 // ResolveFlag resolves an open flag; an already resolved one is ErrNotFound.
-func (s *Store) ResolveFlag(ctx context.Context, id, by string) error {
+func (s *Store) ResolveFlag(ctx context.Context, id, by, note string) error {
 	now := s.now()
 	return s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
 		return one(q.ResolveFlag(ctx, sqlcdb.ResolveFlagParams{
-			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id, ResolvedBy: by, ResolvedAt: &now,
+			CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id, ResolvedBy: by, ResolvedAt: &now, ResolveNote: note,
 		}))
 	})
 }

@@ -653,8 +653,15 @@ paths:
   /api/gate-flags/{id}/resolve:
     post:
       operationId: resolveGateFlag
-      description: 404 when the flag is already resolved.
+      description: The office may leave a note on what it did. 404 when the flag is already resolved.
       parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {note: {type: string, maxLength: 500}}
       responses:
         "204": {description: resolved}
         default: {$ref: "#/components/responses/Error"}
@@ -1362,13 +1369,14 @@ components:
         decidedAt: {type: string, format: date-time, nullable: true}
     GateFlag:
       type: object
-      required: [id, moveId, code, detail, resolvedBy, resolvedAt]
+      required: [id, moveId, code, detail, resolvedBy, resolvedAt, resolveNote]
       properties:
         id: {type: string}
         moveId: {type: string}
         code: {type: string}
         detail: {type: string}
         resolvedBy: {type: string}
+        resolveNote: {type: string}
         resolvedAt: {type: string, format: date-time, nullable: true}
     YardSettings:
       type: object

@@ -452,12 +452,13 @@ type Frame struct {
 
 // GateFlag defines model for GateFlag.
 type GateFlag struct {
-	Code       string     `json:"code"`
-	Detail     string     `json:"detail"`
-	Id         string     `json:"id"`
-	MoveId     string     `json:"moveId"`
-	ResolvedAt *time.Time `json:"resolvedAt"`
-	ResolvedBy string     `json:"resolvedBy"`
+	Code        string     `json:"code"`
+	Detail      string     `json:"detail"`
+	Id          string     `json:"id"`
+	MoveId      string     `json:"moveId"`
+	ResolveNote string     `json:"resolveNote"`
+	ResolvedAt  *time.Time `json:"resolvedAt"`
+	ResolvedBy  string     `json:"resolvedBy"`
 }
 
 // GateForm defines model for GateForm.
@@ -1204,6 +1205,11 @@ type ListGateFlagsParams struct {
 	MoveId *string `form:"moveId,omitempty" json:"moveId,omitempty"`
 }
 
+// ResolveGateFlagJSONBody defines parameters for ResolveGateFlag.
+type ResolveGateFlagJSONBody struct {
+	Note *string `json:"note,omitempty"`
+}
+
 // ListHauliersParams defines parameters for ListHauliers.
 type ListHauliersParams struct {
 	Q       *Q       `form:"q,omitempty" json:"q,omitempty"`
@@ -1367,6 +1373,9 @@ type UpdateCustomerJSONRequestBody = CustomerPatch
 
 // CreateDepotJSONRequestBody defines body for CreateDepot for application/json ContentType.
 type CreateDepotJSONRequestBody CreateDepotJSONBody
+
+// ResolveGateFlagJSONRequestBody defines body for ResolveGateFlag for application/json ContentType.
+type ResolveGateFlagJSONRequestBody ResolveGateFlagJSONBody
 
 // CreateHaulierJSONRequestBody defines body for CreateHaulier for application/json ContentType.
 type CreateHaulierJSONRequestBody = HaulierCreate
@@ -4271,7 +4280,8 @@ func (response ListGateFlagsdefaultJSONResponse) VisitListGateFlagsResponse(w ht
 }
 
 type ResolveGateFlagRequestObject struct {
-	Id Id `json:"id"`
+	Id   Id `json:"id"`
+	Body *ResolveGateFlagJSONRequestBody
 }
 
 type ResolveGateFlagResponseObject interface {
@@ -7134,6 +7144,16 @@ func (sh *strictHandler) ResolveGateFlag(w http.ResponseWriter, r *http.Request,
 	var request ResolveGateFlagRequestObject
 
 	request.Id = id
+
+	var body ResolveGateFlagJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.ResolveGateFlag(ctx, request.(ResolveGateFlagRequestObject))

@@ -5,6 +5,16 @@ import { Company } from "./admin/Company";
 import { dataProvider } from "./admin/dataProvider";
 import { ListPage } from "./admin/ListPage";
 import { Members } from "./admin/Members";
+import { Approvals } from "./yard/Approvals";
+import { Blocks } from "./yard/Blocks";
+import { GateIssues } from "./yard/GateIssues";
+import { Import } from "./yard/Import";
+import { OrderDetail } from "./yard/OrderDetail";
+import { Orders } from "./yard/Orders";
+import { Reports } from "./yard/Reports";
+import { VisitDetail } from "./yard/VisitDetail";
+import { Yard } from "./yard/Yard";
+import { YardSettings } from "./yard/YardSettings";
 import { getHealth, listMoves } from "./gen/api";
 import { Gate as GateFlow } from "./gate/Gate";
 import { startOutbox } from "./gate/outbox";
@@ -87,6 +97,18 @@ const NAV: NavItem[] = [
   { route: "test", href: "#/test", label: "navTest", perm: "office", ocr: true },
 ];
 
+// The office's yard screens: office sees the yard, a manager the approvals, the owner the yard rules.
+const YARD: NavItem[] = [
+  { route: "yard", href: "#/yard", label: "navYard", perm: "office" },
+  { route: "orders", href: "#/orders", label: "navOrders", perm: "office" },
+  { route: "issues", href: "#/issues", label: "navIssues", perm: "office" },
+  { route: "approvals", href: "#/approvals", label: "navApprovals", perm: "manage" },
+  { route: "reports", href: "#/reports", label: "navReports", perm: "office" },
+  { route: "blocks", href: "#/blocks", label: "navBlocks", perm: "office" },
+  { route: "import", href: "#/import", label: "navImport", perm: "office" },
+  { route: "settings", href: "#/settings", label: "navYardSettings", perm: "owner" },
+];
+
 const ADMIN: NavItem[] = [
   { route: "admin/lines", href: "#/admin/lines", label: "navLines", perm: "office" },
   { route: "admin/customers", href: "#/admin/customers", label: "navCustomers", perm: "office" },
@@ -139,7 +161,7 @@ function Shell() {
   const [, first = "", second = ""] = hash.split("/");
   const route = first === "admin" || first === "platform" ? `${first}/${second}` : first;
   const id = second;
-  const open = (r: string) => NAV.concat(ADMIN).some((n) => n.route === r && visible(n));
+  const open = (r: string) => NAV.concat(YARD, ADMIN).some((n) => n.route === r && visible(n));
   let page: ReactNode;
   if (route === "platform/companies" && platformAdmin) page = <Companies />;
   else if (!current) page = <Picker />; // no company chosen yet
@@ -148,6 +170,15 @@ function Shell() {
   else if (route === "admin/hauliers" && open(route)) page = <ListPage resource="hauliers" canEdit={can("office")} />;
   else if (route === "admin/members" && open(route)) page = <Members />;
   else if (route === "admin/company" && open(route)) page = <Company />;
+  else if ((route === "yard" || (route === "" && !ocr && can("office"))) && open("yard")) page = <Yard />;
+  else if (route === "visits" && open("yard")) page = <VisitDetail key={id} id={id} />;
+  else if (route === "orders" && open(route)) page = id ? <OrderDetail key={id} id={id} /> : <Orders />;
+  else if (route === "issues" && open(route)) page = <GateIssues />;
+  else if (route === "approvals" && open(route)) page = <Approvals />;
+  else if (route === "reports" && open(route)) page = <Reports />;
+  else if (route === "blocks" && open(route)) page = <Blocks />;
+  else if (route === "import" && open(route)) page = <Import />;
+  else if (route === "settings" && open(route)) page = <YardSettings />;
   else if (route === "capture") page = <Capture />;
   else if (route === "gate" && open(route)) page = <GateFlow />;
   else if (route === "" && !can("office")) page = <GateFlow />; // the gate role's home
@@ -158,15 +189,23 @@ function Shell() {
   else if (route === "" && ocr) page = <Home />;
   else page = <Capture />; // without OCR the gate's home is phone capture
   // A truck record belongs to the review queue in the rail.
-  const active = route === "moves" ? "queue" : route === "" && !can("office") ? "gate" : route === "" && !ocr ? "capture" : route;
+  const active =
+    route === "moves" ? "queue"
+    : route === "visits" ? "yard"
+    : route === "" && !can("office") ? "gate"
+    : route === "" && !ocr ? (can("office") ? "yard" : "capture")
+    : route;
   const link = (n: NavItem) => (
     <a key={n.route} href={n.href} aria-current={active === n.route ? "page" : undefined}>
       {t(n.label)}
       {n.route === "queue" && waiting > 0 && <span className="count">{waiting}</span>}
     </a>
   );
+  const yard = current ? YARD.filter(visible) : [];
   const admin = current ? ADMIN.filter(visible) : [];
-  const adminRoute = route.startsWith("admin/") || route.startsWith("platform/");
+  // Refine serves the admin lists and the yard lists.
+  const adminRoute =
+    route.startsWith("admin/") || route.startsWith("platform/") || YARD.some((n) => n.route === route) || route === "visits" || (route === "" && !ocr && can("office"));
 
   return (
     <div className="shell">
@@ -177,6 +216,8 @@ function Shell() {
         </a>
         <nav>
           {current && NAV.filter(visible).map(link)}
+          {yard.length > 0 && <span className="nav-group">{t("navYardGroup")}</span>}
+          {yard.map(link)}
           {(admin.length > 0 || platformAdmin) && <span className="nav-group">{t("navAdmin")}</span>}
           {admin.map(link)}
           {platformAdmin && (

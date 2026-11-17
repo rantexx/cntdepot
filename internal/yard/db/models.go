@@ -98,13 +98,14 @@ type Event struct {
 }
 
 type GateFlag struct {
-	CompanyID  string
-	ID         string
-	MoveID     string
-	Code       string
-	Detail     string
-	ResolvedBy string
-	ResolvedAt *time.Time
+	CompanyID   string
+	ID          string
+	MoveID      string
+	Code        string
+	Detail      string
+	ResolvedBy  string
+	ResolvedAt  *time.Time
+	ResolveNote string
 }
 
 type GateMove struct {

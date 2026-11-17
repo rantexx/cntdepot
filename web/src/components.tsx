@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
+import { getMove, validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
 import { blobUrl, ok } from "./hubApi";
 import { useT, type Key } from "./i18n";
 
@@ -273,5 +273,67 @@ export function ReadCrop({ photos, attempts }: { photos: Photo[] | null; attempt
       />
       <figcaption>{t("readFrom")}</figcaption>
     </figure>
+  );
+}
+
+// ---- office screens ----
+
+export const dateTime = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—";
+
+/** The text of a failed call, or the fallback when the error has none. */
+export const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
+
+// shortcut: whole 24 h periods since the gate-in; the reports count depot-local calendar days. Exact enough for a colour.
+export const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 86_400_000));
+
+// Ageing bands match the ageing report: 0-7 calm, 8-30 watch, 31-90 act, 90+ stop.
+export function Age({ days }: { days: number }) {
+  const { t } = useT();
+  const band = days <= 7 ? 1 : days <= 30 ? 2 : days <= 90 ? 3 : 4;
+  return <span className={`age age-${band}`}>{days} {t("daysShort")}</span>;
+}
+
+// A gate-move flag or refusal code in words: blocked, override:blocked, turned_away, ...
+export function ReasonText({ code }: { code: string }) {
+  const { t } = useT();
+  const [head, rest] = code.split(":");
+  const label = (c: string) => t(`reason_${c}` as Key) ?? c;
+  return <>{head === "override" && rest ? `${t("reason_override")}: ${label(rest)}` : label(head)}</>;
+}
+
+/** A link that downloads a CSV export of the office. */
+export function CsvButton({ name, params }: { name: string; params?: Record<string, string> }) {
+  const { t } = useT();
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== ""));
+  return (
+    <a className="button" href={`/api/export/${name}.csv${q.size ? `?${q}` : ""}`} download>
+      {t("csv")}
+    </a>
+  );
+}
+
+/** The photos of a gate move as thumbnails that open full size. */
+export function MovePhotos({ moveId }: { moveId: string }) {
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  useEffect(() => {
+    let live = true;
+    ok(getMove(moveId)).then(
+      (m) => live && setPhotos(m.photos ?? []),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [moveId]);
+  if (photos.length === 0) return null;
+  return (
+    <div className="thumbs">
+      {photos.map((p) => (
+        <a key={p.id} className="thumb" href={blobUrl(p.sha256)} target="_blank" rel="noreferrer">
+          <img src={blobUrl(p.sha256, 320)} alt={p.role} loading="lazy" />
+        </a>
+      ))}
+    </div>
   );
 }

@@ -154,7 +154,7 @@ WHERE f.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depo
 ORDER BY f.id;
 
 -- name: ResolveFlag :execrows
-UPDATE gate_flags f SET resolved_by = @resolved_by, resolved_at = @resolved_at
+UPDATE gate_flags f SET resolved_by = @resolved_by, resolved_at = @resolved_at, resolve_note = @resolve_note
 WHERE f.company_id = @company_id AND f.id = @id AND f.resolved_at IS NULL
   AND EXISTS (SELECT 1 FROM gate_moves m WHERE m.company_id = f.company_id AND m.id = f.move_id
               AND (@depot_id::text = '' OR m.depot_id = @depot_id));

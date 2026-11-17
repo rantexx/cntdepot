@@ -741,8 +741,8 @@ func (s *Service) ListFlags(ctx context.Context, moveID string, openOnly bool) (
 	return s.st.ListFlags(ctx, moveID, openOnly)
 }
 
-func (s *Service) ResolveFlag(ctx context.Context, id, actor string) error {
-	return s.st.ResolveFlag(ctx, id, actor)
+func (s *Service) ResolveFlag(ctx context.Context, id, actor, note string) error {
+	return s.st.ResolveFlag(ctx, id, actor, note)
 }
 
 func (s *Service) ListApprovals(ctx context.Context, status string) ([]Approval, error) {

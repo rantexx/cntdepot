@@ -4,7 +4,8 @@ import { useSession } from "./session";
 // useMoveEvents calls onMove with a move ID whenever the hub reports a change.
 // EventSource reconnects by itself after network drops; onOpen fires on every
 // (re)connect, so a page can reload what it missed while the link was down.
-export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void) {
+// kind "approval" (managers only) is the live approval queue.
+export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void, kind: "move" | "approval" = "move") {
   // The stream belongs to the session's company and depot: open it only with a scope, and again when it changes.
   const { current } = useSession();
   const companyId = current?.companyId;
@@ -27,12 +28,12 @@ export function useMoveEvents(onMove: (id: string) => void, onOpen?: () => void)
       }
     };
     const opened = () => openHandler.current?.();
-    source.addEventListener("move", listener);
+    source.addEventListener(kind, listener);
     source.addEventListener("open", opened);
     return () => {
-      source.removeEventListener("move", listener);
+      source.removeEventListener(kind, listener);
       source.removeEventListener("open", opened);
       source.close();
     };
-  }, [companyId, depotId]);
+  }, [companyId, depotId, kind]);
 }

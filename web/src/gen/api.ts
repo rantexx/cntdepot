@@ -772,6 +772,7 @@ export interface GateFlag {
   code: string;
   detail: string;
   resolvedBy: string;
+  resolveNote: string;
   /** @nullable */
   resolvedAt: string | null;
 }
@@ -1076,6 +1077,11 @@ export type ListGateFlagsParams = {
   /** true lists only unresolved flags */
   open?: boolean;
   moveId?: string;
+};
+
+export type ResolveGateFlagBody = {
+  /** @maxLength 500 */
+  note?: string;
 };
 
 export type GateLogParams = {
@@ -3805,16 +3811,17 @@ export const getResolveGateFlagUrl = (id: string,) => {
 }
 
 /**
- * 404 when the flag is already resolved.
+ * The office may leave a note on what it did. 404 when the flag is already resolved.
  */
-export const resolveGateFlag = async (id: string, options?: Parameters<typeof http>[1]): Promise<resolveGateFlagResponse> => {
+export const resolveGateFlag = async (id: string,
+    resolveGateFlagBody?: ResolveGateFlagBody, options?: Parameters<typeof http>[1]): Promise<resolveGateFlagResponse> => {
 
   return http<resolveGateFlagResponse>(getResolveGateFlagUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(resolveGateFlagBody)
   }
 );}
 

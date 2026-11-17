@@ -534,7 +534,11 @@ func (s *Server) ListGateFlags(ctx context.Context, req api.ListGateFlagsRequest
 }
 
 func (s *Server) ResolveGateFlag(ctx context.Context, req api.ResolveGateFlagRequestObject) (api.ResolveGateFlagResponseObject, error) {
-	return api.ResolveGateFlag204Response{}, s.opts.Yard.ResolveFlag(ctx, req.Id, actor(ctx))
+	note := ""
+	if req.Body != nil {
+		note = val(req.Body.Note)
+	}
+	return api.ResolveGateFlag204Response{}, s.opts.Yard.ResolveFlag(ctx, req.Id, actor(ctx), note)
 }
 
 func (s *Server) GetYardSettings(ctx context.Context, _ api.GetYardSettingsRequestObject) (api.GetYardSettingsResponseObject, error) {
