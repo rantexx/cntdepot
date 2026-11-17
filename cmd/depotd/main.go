@@ -34,6 +34,7 @@ import (
 	"depot/internal/store"
 	"depot/internal/tenancy"
 	"depot/internal/webui"
+	"depot/internal/yard"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5"
@@ -177,6 +178,7 @@ type app struct {
 	svc    *gate.Service
 	broker *httpapi.Broker
 	sess   *auth.Sessions
+	yard   *yard.Service
 }
 
 func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg gate.Config, secure bool) (*app, error) {
@@ -189,7 +191,8 @@ func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg ga
 	sess := auth.NewSessions(pool, 0)
 	sess.SetSecureCookies(secure)
 	return &app{pool: pool, st: st, bl: bl, broker: broker, sess: sess,
-		svc: gate.New(st, bl, rec, cfg, broker.Publish)}, nil
+		svc:  gate.New(st, bl, rec, cfg, broker.Publish),
+		yard: yard.NewService(yard.NewStore(pool), st, broker.Notify)}, nil
 }
 
 func runAPI(args []string) error {
@@ -286,6 +289,7 @@ func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, backgro
 		log.Print("web app not built yet: run `npm --prefix web run build`, then rebuild depotd")
 	}
 	o.Service, o.Store, o.Blobs, o.Static, o.Version, o.Sessions, o.Pool = a.svc, a.st, a.bl, static, Version, a.sess, a.pool
+	o.Yard = a.yard
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           httpapi.New(o, a.broker).Handler(),

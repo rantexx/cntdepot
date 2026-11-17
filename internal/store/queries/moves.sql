@@ -1,6 +1,7 @@
--- name: InsertMove :exec
+-- name: InsertMove :execrows
 INSERT INTO gate_moves (company_id, id, depot_id, lane, direction, source, status, is_test, created_at, updated_at)
-VALUES (@company_id, @id, @depot_id, @lane, @direction, @source, @status, @is_test, @created_at, @created_at);
+VALUES (@company_id, @id, @depot_id, @lane, @direction, @source, @status, @is_test, @created_at, @created_at)
+ON CONFLICT (company_id, id) DO NOTHING;
 
 -- name: GetMove :one
 SELECT * FROM gate_moves WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;

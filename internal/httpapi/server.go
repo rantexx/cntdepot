@@ -4,6 +4,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"depot/internal/live"
 	"depot/internal/store"
 	"depot/internal/tenancy"
+	"depot/internal/yard"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,7 +39,8 @@ type Options struct {
 	Sessions *auth.Sessions
 	Provider auth.Provider
 	Pool     *pgxpool.Pool
-	Hub      bool // the on-site box: camera routes are mounted only here
+	Yard     *yard.Service // nil: no public EIR page, and the gate and yard operations must not be called
+	Hub      bool          // the on-site box: camera routes are mounted only here
 	// PublicHosts are the domain names the cloud server is reached by (for
 	// example app.example.com); the API also answers to them.
 	PublicHosts []string
@@ -80,6 +83,10 @@ func (s *Server) routes() {
 	apiMux := http.NewServeMux()
 	strict := api.NewStrictHandlerWithOptions(s, []api.StrictMiddlewareFunc{s.access}, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			if tooBig := new(http.MaxBytesError); errors.As(err, &tooBig) {
+				writeError(w, http.StatusRequestEntityTooLarge, "E4130", fmt.Sprintf("the request body is over %d bytes", tooBig.Limit))
+				return
+			}
 			writeError(w, http.StatusBadRequest, "E4001", "invalid request: "+err.Error())
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) { writeServiceError(w, err) },
@@ -95,6 +102,7 @@ func (s *Server) routes() {
 	manage := func(h http.HandlerFunc) http.Handler { return auth.Require(auth.PermManage, h) }
 	apiMux.Handle("GET /api/stream", gateOnly(s.stream))
 	apiMux.Handle("GET /api/blobs/{digest}", gateOnly(s.getBlob))
+	apiMux.Handle("GET /api/export/{file}", auth.Require(auth.PermOffice, http.HandlerFunc(s.export)))
 	if s.opts.Hub {
 		apiMux.Handle("GET /api/camera", manage(s.getCamera))
 		apiMux.Handle("PUT /api/camera", manage(s.putCamera))
@@ -124,6 +132,10 @@ func (s *Server) routes() {
 	withSession := s.opts.Sessions.Middleware(checkScope(apiMux))
 	s.mux.Handle("/api/", withSession)
 	s.mux.Handle("/auth/", withSession)
+	if s.opts.Yard != nil { // public: the link token is the only credential, so no session and no API guard
+		s.mux.HandleFunc("GET /eir/{token}", s.eirPage)
+		s.mux.HandleFunc("GET /eir/{token}/photo/{photoId}", s.eirPhoto)
+	}
 	s.mux.Handle("/", s.static())
 }
 
@@ -284,8 +296,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "E4041", "move not found")
 	case errors.Is(err, gate.ErrClosed):
 		writeError(w, http.StatusConflict, "E4090", err.Error())
-	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto):
+	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto), errors.Is(err, gate.ErrBadID):
 		writeError(w, http.StatusBadRequest, "E4000", err.Error())
+	case yardError(err) != nil:
+		ae = yardError(err)
+		writeError(w, ae.status, ae.code, ae.message)
 	default:
 		log.Printf("httpapi: %v", err)
 		writeError(w, http.StatusInternalServerError, "E9000", "internal error; see the hub log")

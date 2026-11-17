@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.L.title}} {{.E.Number}}</title>
+<style nonce="{{.Nonce}}">
+:root { --ground:#f4f4f1; --panel:#fff; --ink:#1e2226; --muted:#5b6267; --rule:#cbcbc3; --caution:#f2c200; --stop:#c8202a; --act:#1f5fa8; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--ground); color:var(--ink); font:17px/1.35 system-ui, "Segoe UI", sans-serif; }
+main { max-width:760px; margin:0 auto; padding:16px; }
+header { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; border-bottom:3px solid var(--ink); padding-bottom:8px; }
+h1 { margin:0; font-size:22px; text-transform:uppercase; letter-spacing:.04em; }
+.sub { color:var(--muted); font-size:15px; }
+.langs a { color:var(--act); margin-left:8px; font-size:14px; }
+.banner { margin:14px 0 0; padding:10px 14px; font-weight:700; letter-spacing:.05em; border:3px solid var(--stop); color:var(--stop); background:var(--panel); }
+.banner.corrected { border-color:var(--ink); color:var(--ink); background:var(--caution); }
+.banner span { display:block; font-weight:400; text-transform:none; letter-spacing:0; margin-top:2px; }
+.plate { display:inline-flex; align-items:stretch; margin:18px 0 6px; border:3px solid var(--ink); border-radius:14px; background:var(--panel); font-weight:700; font-size:34px; letter-spacing:.03em; font-variant-numeric:tabular-nums; }
+.plate .n { padding:6px 14px; }
+.plate .cd { padding:6px 12px; border-left:3px solid var(--ink); border-radius:0 11px 11px 0; background:var(--ink); color:#fff; }
+.voided .plate .n { text-decoration:line-through; }
+dl { display:grid; grid-template-columns:max-content 1fr; gap:0; margin:12px 0; border-top:1px solid var(--rule); }
+dt, dd { margin:0; padding:7px 0; border-bottom:1px solid var(--rule); }
+dt { color:var(--muted); font-size:14px; text-transform:uppercase; letter-spacing:.06em; padding-right:20px; }
+h2 { margin:22px 0 6px; font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+.dmg { background:var(--panel); border:1px solid var(--rule); padding:10px; margin:8px 0; }
+.dmg b { display:block; }
+.imgs { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.imgs img { max-width:100%; width:220px; height:auto; border:1px solid var(--rule); }
+.sig img { background:var(--panel); border:1px solid var(--rule); max-width:100%; width:320px; height:auto; }
+@page { size:A4; margin:12mm }
+.banner, .plate, .plate .cd { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+@media print { body { background:#fff; } main { padding:0; } .langs { display:none; } }
+</style>
+</head>
+<body>
+<main{{if .E.Voided}} class="voided"{{end}}>
+<header>
+  <div>
+    <h1>{{.L.title}}</h1>
+    <div class="sub">{{.E.Company}} · {{.E.Depot}}</div>
+  </div>
+  <div class="langs"><a href="?lang=en">EN</a><a href="?lang=tr">TR</a></div>
+</header>
+{{if .E.Voided}}<div class="banner">{{.L.voided}}<span>{{.E.VoidReason}}</span></div>{{end}}
+{{if .E.Corrected}}<div class="banner corrected">{{.L.corrected}}<span>{{.E.CorrectionReason}}</span></div>{{end}}
+<div class="plate"><span class="n">{{.Owner}}</span>{{if .Check}}<span class="cd">{{.Check}}</span>{{end}}</div>
+<dl>
+  <dt>{{.L.direction}}</dt><dd>{{.Direction}}</dd>
+  <dt>{{.L.time}}</dt><dd>{{.When}}</dd>
+  <dt>{{.L.iso}}</dt><dd>{{or .E.TypeCode "—"}}</dd>
+  <dt>{{.L.fullempty}}</dt><dd>{{or .FullEmpty "—"}}</dd>
+  <dt>{{.L.seal}}</dt><dd>{{or .E.Seal "—"}}</dd>
+  <dt>{{.L.condition}}</dt><dd>{{or .Condition "—"}}</dd>
+  <dt>{{.L.truck}}</dt><dd>{{or .E.TruckPlate "—"}}</dd>
+  <dt>{{.L.trailer}}</dt><dd>{{or .E.TrailerPlate "—"}}</dd>
+  <dt>{{.L.driver}}</dt><dd>{{or .E.Driver "—"}}</dd>
+  <dt>{{.L.haulier}}</dt><dd>{{or .E.Haulier "—"}}</dd>
+</dl>
+<h2>{{.L.damages}}</h2>
+{{range .E.Damages}}<div class="dmg"><b>{{.Location}}</b>{{.Description}}
+  <div class="imgs">{{range .PhotoIDs}}<a href="/eir/{{$.Token}}/photo/{{.}}"><img src="/eir/{{$.Token}}/photo/{{.}}" alt="{{$.L.damagephoto}}" loading="lazy"></a>{{end}}</div></div>
+{{else}}<p class="sub">{{.L.nodamage}}</p>{{end}}
+{{if .E.Photos}}<h2>{{.L.containerphotos}}</h2><div class="imgs">{{range .E.Photos}}<a href="/eir/{{$.Token}}/photo/{{.}}"><img src="/eir/{{$.Token}}/photo/{{.}}" alt="{{$.L.containerphoto}}" loading="lazy"></a>{{end}}</div>{{end}}
+{{if .E.SignatureID}}<h2>{{.L.signature}}</h2><div class="sig"><img src="/eir/{{.Token}}/photo/{{.E.SignatureID}}" alt="{{.L.signature}}"></div>{{end}}
+</main>
+</body>
+</html>

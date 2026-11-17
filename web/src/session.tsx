@@ -1,16 +1,36 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getSession, logout, setScope, type Session, type SessionCurrent } from "./gen/api";
-import { onScopeChanged, onUnauthorized, setShownScope } from "./http";
+import { forgetForSignOut, unsentCount } from "./gate/outbox";
+import { ApiError, onScopeChanged, onUnauthorized, setShownScope } from "./http";
 import { ok } from "./hubApi";
 import { useT } from "./i18n";
-import { writeLocal } from "./storage";
+import { readLocal, writeLocal } from "./storage";
 
 // Written after a scope choice; the other tabs of the browser share the session, so they reload it.
 const SCOPE_KEY = "scope-changed";
+// The last session the server sent: a gate phone reloaded without network keeps working from it.
+// The server still checks every call; signing out or a 401 clears it.
+const SESSION_KEY = "last-session";
+// A sign-out the server has not heard of yet (no network): finished before the session is read again,
+// so a reload or a new sign-in never brings back the person who signed out. Cleared when it reaches the server.
+export const PENDING_LOGOUT = "pending-logout";
+
+// Tells the server about a pending sign-out; false while it cannot be reached.
+export async function finishLogout(): Promise<boolean> {
+  if (!readLocal(PENDING_LOGOUT)) return true;
+  try {
+    await logout();
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status >= 500) return false; // a 401 means it is already gone
+  }
+  writeLocal(PENDING_LOGOUT, "");
+  return true;
+}
 
 // The scope this tab shows, sent with every call so a stale tab is refused instead of writing elsewhere.
 function shown(session: Session): Session {
   setShownScope(`${session.current?.companyId ?? ""}:${session.current?.depotId ?? ""}`);
+  writeLocal(SESSION_KEY, JSON.stringify(session));
   return session;
 }
 
@@ -27,29 +47,49 @@ interface Ctx {
 const SessionContext = createContext<Ctx | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
+  const { t } = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
   const [state, setState] = useState<State>({ status: "loading" });
 
   const reload = useCallback(async () => {
+    if (!(await finishLogout())) {
+      setState({ status: "anon" }); // signed out here; the server hears of it on reconnect
+      return;
+    }
     try {
       setState({ status: "ready", session: shown(await ok(getSession())) });
-    } catch {
+    } catch (e) {
+      const last = e instanceof ApiError ? "" : readLocal(SESSION_KEY); // no answer at all: offline
+      if (last) {
+        setState({ status: "ready", session: shown(JSON.parse(last) as Session) });
+        return;
+      }
       // A 401 already flipped the state to "anon" through onUnauthorized.
       setState((s) => (s.status === "anon" ? s : { status: "down" }));
     }
   }, []);
 
   useEffect(() => {
-    onUnauthorized(() => setState({ status: "anon" }));
+    onUnauthorized(() => {
+      writeLocal(SESSION_KEY, "");
+      setState({ status: "anon" });
+    });
     onScopeChanged(() => void reload());
     const onStorage = (e: StorageEvent) => {
       if (e.key === SCOPE_KEY) void reload();
     };
+    const onOnline = () => {
+      if (readLocal(PENDING_LOGOUT)) void finishLogout();
+    };
     window.addEventListener("storage", onStorage);
+    window.addEventListener("online", onOnline);
     void reload();
     return () => {
       onUnauthorized(undefined);
       onScopeChanged(undefined);
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("online", onOnline);
     };
   }, [reload]);
 
@@ -58,10 +98,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     writeLocal(SCOPE_KEY, `${companyId}:${depotId}:${Date.now()}`); // a new value, so the event fires every time
   }, []);
 
+  // A shared gate phone: the cached lists go with the person; unsent gate records stay (they are real trucks),
+  // so the person is warned first.
   const signOut = useCallback(async () => {
+    const unsent = await unsentCount().catch(() => 0);
+    if (unsent > 0 && !window.confirm(tRef.current("gateUnsentSignOut"))) return;
     try {
       await logout();
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status >= 500) writeLocal(PENDING_LOGOUT, "1"); // finished on reconnect
     } finally {
+      writeLocal(SESSION_KEY, "");
+      await forgetForSignOut().catch(() => undefined);
       setState({ status: "anon" });
     }
   }, []);

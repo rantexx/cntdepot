@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,7 +83,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := conn.QueryRow(ctx, "SELECT (SELECT count(*) FROM schema_version), (SELECT string_agg(email, ',') FROM platform_admins)").Scan(&versions, &admin); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 1 || admin != "admin@example.com" {
+	files, err := filepath.Glob("migrations/*.sql") // the embedded set
+	if err != nil || len(files) == 0 {
+		t.Fatalf("migration files: %v %v", files, err)
+	}
+	if versions != len(files) || admin != "admin@example.com" {
 		t.Fatalf("schema_version rows %d, platform_admins %q", versions, admin)
 	}
 }
@@ -212,7 +217,7 @@ func TestSecurityInvariants(t *testing.T) {
 		t.Fatal(strings.Join(bad, "\n"))
 	}
 	var n int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 3 {
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 4 {
 		t.Fatalf("security definer functions %d, err %v", n, err)
 	}
 }

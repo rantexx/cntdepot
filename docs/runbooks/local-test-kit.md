@@ -203,3 +203,39 @@ Leave out `-engine fake` to read them with Gemini (it needs `GEMINI_API_KEY`, as
 | Every visit is "Konteyner yok" | The camera does not see the number: check aim with Read this frame |
 | Visits from cars or people | Shrink the detection zone in the Reolink app; switch people alarms off |
 | Letter height "çok küçük / too small" | Move the camera closer to where the doors stop (see the table) |
+
+## Gate flow (phone) and yard
+
+Phones open the hub address, sign in, and pick **Gate**.
+
+- **Truck in:** pick **In**, type or scan the container number (the app checks the check digit),
+  take the photos, fill in the form (condition, damage, seal, plate, driver) and save.
+- **Truck out:** pick **Out**, enter the number. The app checks stock, holds, blocks and the release
+  order. If an order lists a quantity, the container is counted against it.
+- **No signal:** keep going. Saves wait in the phone's outbox and are sent when the network
+  returns; the status line shows how many are waiting. The same save is never recorded twice.
+  Offline, the phone can reload the app only if the page is served over HTTPS (the hub is not).
+  Do not sign out with entries waiting: the next person who signs in on that phone sends them
+  under their own name.
+- **Refused trucks.** Set under **Yard rules**, **Refused trucks**:
+  - *Clerk overrides*: the clerk passes the truck by writing a reason.
+  - *Manager approval*: the phone waits; a manager approves or denies on **Approvals**.
+  - *No exceptions*: the truck cannot pass.
+  - On any mode, **Refuse** turns the truck away and the office sees it under **Gate issues**.
+- **EIR (equipment interchange receipt):** open the visit on **Yard**, use the EIR link, and print
+  it to PDF from the browser. Anyone with the link can open it, so share it only with the driver or
+  the line.
+
+## Importing stock and orders
+
+Open **Import**. Each card has **Download template**: `stock.csv` and `orders.csv`.
+Fill it in Excel and save as **CSV** or **CSV UTF-8**. Separator `,` or `;` both work.
+
+- `stock.csv` columns: `number, type_code, line_code, customer_code, full_empty, in_date, block, row, tier, grade`.
+- `orders.csv` columns: `kind, reference, line_code, customer_code, valid_until, number, type_code, full_empty, quantity`.
+  One row per item; rows with the same `reference` make one order. `kind` is `release` or `redelivery`.
+  Give a `number` for a named container, or `type_code` and `quantity` for a quantity.
+- Dates: `dd.MM.yyyy` (31.01.2026) or `yyyy-MM-dd`.
+- `full_empty` is `F` or `E`.
+- It is all or nothing: if any row is wrong, the page lists each bad row and column and nothing
+  is imported. Fix the file and upload it again.

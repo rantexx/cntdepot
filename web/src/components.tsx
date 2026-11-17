@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
+import { getMove, validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
 import { blobUrl, ok } from "./hubApi";
-import { useT, type Key } from "./i18n";
+import { currentLang, useT, type Key } from "./i18n";
 
 // Every state wears its ISO 3864 safety colour: green done, yellow needs a
 // person, red refused, grey nothing to do; reading is an outlined sign.
@@ -112,7 +112,26 @@ export function PhotoWithBox({ src, box, alt }: { src: string; box: Box | null |
   );
 }
 
-// CheckDigitMath validates a number on the hub and shows the arithmetic.
+// ISO 6346 letter values skip the multiples of 11.
+const LETTER_VALUES = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37, 38];
+
+// validateHere is the hub's number check done on the phone, for when the hub cannot be reached
+// (same normalisation and arithmetic as internal/iso6346).
+export function validateHere(input: string): Validation {
+  const n = input.replace(/[İı]/g, "I").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const v: Validation = { input, normalized: n, well_formed: false, check_digit_valid: false, expected_check_digit: null, valid: false, sum: 0, remainder: 0 };
+  if (!/^[A-Z]{3}[UJZ][0-9]{7}$/.test(n)) return v;
+  const steps = [...n.slice(0, 10)].map((char, i) => {
+    const value = /[0-9]/.test(char) ? Number(char) : LETTER_VALUES[char.charCodeAt(0) - 65];
+    return { char, value, weight: 2 ** i, product: value * 2 ** i };
+  });
+  const sum = steps.reduce((s, x) => s + x.product, 0);
+  const expected = (sum % 11) % 10;
+  const valid = Number(n[10]) === expected;
+  return { ...v, well_formed: true, steps, sum, remainder: sum % 11, expected_check_digit: expected, check_digit_valid: valid, valid };
+}
+
+// CheckDigitMath validates a number on the hub and shows the arithmetic; without the hub, on the phone.
 export function CheckDigitMath({ number }: { number: string }) {
   const { t } = useT();
   const [v, setV] = useState<Validation | null>(null);
@@ -128,7 +147,7 @@ export function CheckDigitMath({ number }: { number: string }) {
           if (live) setV(res);
         })
         .catch(() => {
-          if (live) setV(null);
+          if (live) setV(validateHere(number));
         });
     }, 250);
     return () => {
@@ -254,5 +273,75 @@ export function ReadCrop({ photos, attempts }: { photos: Photo[] | null; attempt
       />
       <figcaption>{t("readFrom")}</figcaption>
     </figure>
+  );
+}
+
+// ---- office screens ----
+
+// Dates follow the language of the screen, not the computer.
+export const dateTime = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString(currentLang() === "tr" ? "tr-TR" : "en-GB", { dateStyle: "short", timeStyle: "short" }) : "—";
+
+/** The text of a failed call, or the fallback when the error has none. */
+export const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
+
+// Ageing bands match the ageing report: 0-7 calm, 8-30 watch, 31-90 act, 90+ stop.
+export function Age({ days }: { days: number }) {
+  const { t } = useT();
+  const band = days <= 7 ? 1 : days <= 30 ? 2 : days <= 90 ? 3 : 4;
+  return <span className={`age age-${band}`}>{days} {t("daysShort")}</span>;
+}
+
+// A gate-move flag or refusal code in words: blocked, override:blocked, offline:hold_open, turned_away, ...
+export function ReasonText({ code }: { code: string }) {
+  const { t } = useT();
+  const [head, rest] = code.split(":");
+  const label = (c: string) => t(`reason_${c}` as Key) ?? c;
+  return <>{(head === "override" || head === "offline") && rest ? `${t(`reason_${head}` as Key)}: ${label(rest)}` : label(head)}</>;
+}
+
+/** A flag's detail: refusal codes ("hold_open,no_order") in words; any other text stays as written. */
+export function useReasonDetail() {
+  const { t } = useT();
+  return (detail: string) =>
+    detail
+      .split(",")
+      .map((tok) => t(`reason_${tok.trim()}` as Key) ?? tok)
+      .join(", ");
+}
+
+/** A link that downloads a CSV export of the office. */
+export function CsvButton({ name, params }: { name: string; params?: Record<string, string> }) {
+  const { t } = useT();
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== ""));
+  return (
+    <a className="button" href={`/api/export/${name}.csv${q.size ? `?${q}` : ""}`} download>
+      {t("csv")}
+    </a>
+  );
+}
+
+/** The photos of a gate move as thumbnails that open full size. */
+export function MovePhotos({ moveId }: { moveId: string }) {
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  useEffect(() => {
+    let live = true;
+    ok(getMove(moveId)).then(
+      (m) => live && setPhotos(m.photos ?? []),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [moveId]);
+  if (photos.length === 0) return null;
+  return (
+    <div className="thumbs">
+      {photos.map((p) => (
+        <a key={p.id} className="thumb" href={blobUrl(p.sha256)} target="_blank" rel="noreferrer">
+          <img src={blobUrl(p.sha256, 320)} alt={p.role} loading="lazy" />
+        </a>
+      ))}
+    </div>
   );
 }

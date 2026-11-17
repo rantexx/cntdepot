@@ -6,7 +6,7 @@ command -v go >/dev/null 2>&1 || export PATH="$PATH:/c/Program Files/Go/bin"
 
 # Generated code must equal what the generators produce. Compare file hashes
 # (not git diff: that ignores untracked files and needs the fix staged).
-gen_dirs() { for d in internal/store/db internal/api web/src/gen; do [ -d "$d" ] && echo "$d"; done; true; }
+gen_dirs() { for d in internal/store/db internal/yard/db internal/api web/src/gen; do [ -d "$d" ] && echo "$d"; done; true; }
 gen_hashes() { local d; d=$(gen_dirs); [ -z "$d" ] || find $d -type f | sort | xargs sha256sum; }
 before=$(gen_hashes)
 bash scripts/gen.sh

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Move is one container passing the gate.
@@ -34,6 +36,7 @@ type Move struct {
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 	Photos          []Photo         `json:"photos"`
+	FormSavedAt     *time.Time      `json:"form_saved_at,omitempty"` // when the clerk's gate form was saved
 }
 
 // ReadOutcome is what the engines concluded about a move.
@@ -78,8 +81,15 @@ func moveFrom(r sqlcdb.GateMove) Move {
 		TypeCode: r.TypeCode, Color: r.Color, Confidence: r.Confidence, CheckDigitValid: r.CheckDigitValid,
 		Decision: r.Decision, Reason: r.Reason, Result: res, Verified: r.Verified, CorrectedFrom: r.CorrectedFrom,
 		ResolvedBy: r.ResolvedBy, Note: r.Note, IsTest: r.IsTest, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		Photos: []Photo{},
+		Photos: []Photo{}, FormSavedAt: timePtr(r.FormSavedAt),
 	}
+}
+
+func timePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
 }
 
 // withPhotos builds moves from rows and fills in their photos with one query.
@@ -111,20 +121,32 @@ func (s *Store) CreateMove(ctx context.Context, lane string, isTest bool, actor 
 
 // CreateMoveWithSource starts a gate-in whose photos come from source.
 func (s *Store) CreateMoveWithSource(ctx context.Context, lane, source string, isTest bool, actor string) (Move, error) {
+	return s.CreateMoveWithID(ctx, "", lane, source, isTest, actor)
+}
+
+// CreateMoveWithID is CreateMoveWithSource with the move's id chosen by the
+// caller (a phone's outbox); "" makes a new one. When the company already has
+// a move with that id, it returns that move unchanged: ErrNotFound if it is
+// outside the scope's depot.
+func (s *Store) CreateMoveWithID(ctx context.Context, id, lane, source string, isTest bool, actor string) (Move, error) {
 	now := s.now()
 	m := Move{
-		ID: newID(), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
+		ID: cmp.Or(id, newID()), Lane: lane, Direction: "in", Source: source, Status: StatusCapturing, Result: json.RawMessage("{}"),
 		IsTest: isTest, CreatedAt: now, UpdatedAt: now, Photos: []Photo{},
 	}
 	err := s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ pgx.Tx) error {
 		if sc.DepotID == "" {
 			return tenancy.ErrNoScope // a move belongs to one depot
 		}
-		err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
+		n, err := q.InsertMove(ctx, sqlcdb.InsertMoveParams{
 			CompanyID: sc.CompanyID, ID: m.ID, DepotID: sc.DepotID, Lane: lane, Direction: m.Direction,
 			Source: source, Status: m.Status, IsTest: isTest, CreatedAt: now,
 		})
 		if err != nil {
+			return err
+		}
+		if n == 0 { // a resend: the move exists
+			m, err = getMove(ctx, q, sc, m.ID)
 			return err
 		}
 		return s.appendEvent(ctx, q, sc, m.ID, "move.created", actor, map[string]any{"lane": lane, "source": source, "is_test": isTest})

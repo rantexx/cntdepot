@@ -264,6 +264,15 @@ figcaption { padding-top: 8px; display: grid; gap: 4px; }
 .thumb.failed { outline: 3px solid var(--stop); }
 .live-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; object-fit: contain; display: block; }
 
+/* Gate on the phone. */
+.gate-fresh { margin-top: 0; align-items: center; }
+.gate-body { padding-top: 16px; }
+.gate-body .card > h3:first-child { margin-top: 0; }
+.signature { display: grid; gap: 8px; justify-items: start; }
+.signature canvas { width: 100%; aspect-ratio: 3 / 1; background: #fff; border: 1px solid var(--rule); border-radius: 4px; touch-action: none; }
+.gate-damage { border: 1px solid var(--rule); border-radius: 4px; margin: 0 0 12px; padding: 4px 12px 12px; }
+.gate-damage legend { font-weight: 700; padding: 0 6px; }
+
 /* Narrow screens: the rail becomes a top bar. */
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
@@ -311,3 +320,32 @@ figcaption { padding-top: 8px; display: grid; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .depot-access { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
 .depot-access label.check { margin: 0; }
+
+/* Office screens: yard list, ageing bands, tiles, filters. */
+.filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+.filters label { margin: 0; min-width: 130px; }
+.filters .grow { flex: 1; }
+.age { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 14px; font-weight: 700; border: 2px solid var(--none); }
+.age-2 { border-color: var(--caution); }
+.age-3 { border-color: var(--caution); background: var(--caution); color: #1e2226; }
+.age-4 { border-color: var(--stop); background: var(--stop); color: #fff; }
+.hold-sign { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; background: var(--stop); color: #fff; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tiles > div { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 14px; }
+.tiles b { display: block; font-size: 38px; line-height: 1; }
+.tiles span { color: var(--muted); font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; }
+.tiles .bad b { color: var(--stop); }
+.page-head .spacer { flex: 1; }
+.page-head .row, .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+.facts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 20px; margin: 0; }
+.facts-grid dt { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.facts-grid dd { margin: 0 0 8px; font-weight: 600; }
+.progress { display: inline-block; width: 90px; height: 8px; background: var(--track); border-radius: 2px; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.progress > span { display: block; height: 100%; background: var(--safe); }
+.approval { display: grid; gap: 10px; }
+.approval h3 { margin: 0; }
+.ok-text { color: var(--safe); font-weight: 600; }
+.radios { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+.radios legend { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 6px; padding: 0; }
+@media (max-width: 760px) { .admin-table { display: block; overflow-x: auto; } }

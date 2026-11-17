@@ -1,5 +1,5 @@
 import { useT } from "../i18n";
-import { useSessionActions } from "../session";
+import { finishLogout, useSessionActions } from "../session";
 
 // The server decides how sign-in works: in development /auth/login sends the
 // browser to its email form, in production to the identity provider.
@@ -9,7 +9,15 @@ export function Login() {
     <section className="card narrow">
       <h2>{t("appTitle")}</h2>
       <p className="muted">{t("signInHint")}</p>
-      <a className="button primary" href="/auth/login">
+      {/* A sign-out still pending ends the old session first, so signing in never brings it back. */}
+      <a
+        className="button primary"
+        href="/auth/login"
+        onClick={(e) => {
+          e.preventDefault();
+          void finishLogout().then((done) => done && location.assign("/auth/login"));
+        }}
+      >
         {t("signIn")}
       </a>
     </section>

@@ -17,16 +17,20 @@ const withId = (row: Record<string, unknown>) => ({ ...row, id: row.id ?? row.us
 export const dataProvider: DataProvider = {
   getApiUrl: () => "/api",
   getList: async ({ resource, pagination, filters }) => {
+    // Every filter goes to the server as a query parameter of the same name.
     const q = new URLSearchParams();
-    const search = filters?.find((f) => "field" in f && f.field === "q");
-    if (search && "value" in search && search.value) q.set("q", String(search.value));
-    q.set("page", String(pagination?.currentPage ?? 1));
-    q.set("perPage", String(pagination?.pageSize ?? 50));
-    if (resource === "members" || resource === "invitations") {
-      const rows = await call<Record<string, unknown>[]>(`/api/${resource}`);
-      return { data: rows.map(withId) as never, total: rows.length };
+    for (const f of filters ?? []) {
+      if ("field" in f && f.value !== undefined && f.value !== null && f.value !== "") q.set(f.field, String(f.value));
     }
-    const r = await call<{ items: Record<string, unknown>[]; total: number }>(`/api/${resource}?${q.toString()}`);
+    if (pagination?.mode !== "off") {
+      q.set("page", String(pagination?.currentPage ?? 1));
+      q.set("perPage", String(pagination?.pageSize ?? 50));
+    }
+    // A list answers a plain array (members, orders, blocks, ...) or { items, total } (paged lists).
+    const r = await call<Record<string, unknown>[] | { items: Record<string, unknown>[]; total: number }>(
+      `/api/${resource}?${q.toString()}`,
+    );
+    if (Array.isArray(r)) return { data: r.map(withId) as never, total: r.length };
     return { data: r.items as never, total: r.total };
   },
   getOne: async ({ resource, id }) => {

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"depot/internal/api"
 	"depot/internal/auth"
@@ -20,6 +21,7 @@ import (
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -55,6 +57,23 @@ var operationAccess = map[string]auth.Perm{
 	"SetModules": auth.PermOwner, "CreateDepot": auth.PermOwner,
 	"ListMembers": auth.PermOwner, "UpdateMember": auth.PermOwner, "RemoveMember": auth.PermOwner,
 	"ListInvitations": auth.PermOwner, "CreateInvitation": auth.PermOwner, "DeleteInvitation": auth.PermOwner,
+
+	// The gate and the yard.
+	"SaveGateForm": auth.PermGate, "TurnAwayMove": auth.PermGate, "CreateEirLink": auth.PermGate, "GateSnapshot": auth.PermGate,
+	"GetOrder": auth.PermGate, "GetVisit": auth.PermGate, "GetMoveForm": auth.PermGate,
+
+	"ListOrders": auth.PermOffice, "CreateOrder": auth.PermOffice, "CancelOrder": auth.PermOffice,
+	"ListVisits": auth.PermOffice, "SetVisitPosition": auth.PermOffice, "SetVisitGrade": auth.PermOffice,
+	"PlaceHold": auth.PermOffice, "ReleaseHold": auth.PermOffice,
+	"ListBlocks": auth.PermOffice, "CreateBlock": auth.PermOffice, "SetBlockActive": auth.PermOffice,
+	"ListGateFlags": auth.PermOffice, "ResolveGateFlag": auth.PermOffice,
+	"CorrectMove": auth.PermOffice, "VoidMove": auth.PermOffice,
+
+	"ListApprovals": auth.PermManage, "DecideApproval": auth.PermManage, "GetYardSettings": auth.PermManage,
+	"SetYardSettings": auth.PermOwner,
+
+	"ReportDashboard": auth.PermOffice, "ReportAgeing": auth.PermOffice, "GateLog": auth.PermOffice,
+	"ImportStock": auth.PermOffice, "ImportOrders": auth.PermOffice, "ImportTemplate": auth.PermOffice,
 }
 
 type requestKey struct{}
@@ -168,7 +187,7 @@ func (s *Server) CreateMove(ctx context.Context, req api.CreateMoveRequestObject
 	if len([]rune(lane)) > 32 {
 		return nil, fail(http.StatusBadRequest, "E4002", "lane name too long")
 	}
-	m, err := s.opts.Service.NewMove(ctx, lane, val(req.Body.IsTest), actor(ctx))
+	m, err := s.opts.Service.CreateMove(ctx, strings.TrimSpace(val(req.Body.Id)), lane, val(req.Body.IsTest), actor(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +534,18 @@ func (s *Server) CreateDepot(ctx context.Context, req api.CreateDepotRequestObje
 	if d.Timezone == "" {
 		d.Timezone = "UTC"
 	}
+	// Every depot-local report runs AT TIME ZONE: a zone Go or Postgres cannot read breaks them all.
+	badZone := fail(http.StatusBadRequest, "E4000", "timezone: an IANA zone such as Europe/Istanbul")
+	if _, err := time.LoadLocation(d.Timezone); err != nil || d.Timezone == "Local" {
+		return nil, badZone
+	}
 	err := s.inCompany(ctx, func(tx pgx.Tx) error {
+		var pgErr *pgconn.PgError
+		if _, err := tx.Exec(ctx, "SELECT now() AT TIME ZONE $1", d.Timezone); errors.As(err, &pgErr) {
+			return badZone
+		} else if err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, "INSERT INTO depots (company_id, id, name, country, timezone) VALUES ($1, $2, $3, $4, $5)",
 			scopeOf(ctx).CompanyID, d.Id, d.Name, d.Country, d.Timezone)
 		return err

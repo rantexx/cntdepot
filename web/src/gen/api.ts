@@ -4,10 +4,94 @@
  * depotd API
  * The hub API. Hand-written outside this spec: GET /api/stream, GET /api/blobs/{digest},
  * /api/camera*, /api/live/ws, /auth/*. Every error is {"error": {"code", "message"}}.
+ * The stream sends "move" events to the company's screens and "approval" events to its managers.
+ *
+ * JSON bodies are at most 64 KiB: a larger one is 413 E4130.
+ *
+ * Gate and yard errors: 400 E4000 a value is not allowed (the message names the field); 400 E4008
+ * a required field is empty; 404 E4043 no such record; 409 E4090 choose a depot first; 409 E4098
+ * refused; 409 E4099 blocked; 409 E4100 the container is in the yard again under a newer visit;
+ * 409 E4101 a correction cannot change the direction; 409 E4102 the move is void; 409 E4103 the
+ * move has no saved gate form; 409 E4104 the visit the move opened is closed since; 409 E4105 the
+ * order is not open; 409 E4106 the move's gate form is saved; 422 E4221 a linked record (photo, order item, approval, line, customer,
+ * haulier) does not exist or does not belong to this move or depot.
  *
  * OpenAPI spec version: 0.1.0
  */
 import { http } from '../http';
+export interface LineCount {
+  lineId: string;
+  lineCode: string;
+  count: number;
+}
+
+export interface Dashboard {
+  inToday: number;
+  outToday: number;
+  inYardByLine: LineCount[];
+  openHolds: number;
+  openFlags: number;
+}
+
+/**
+ * keys 0-7, 8-30, 31-90, 90+
+ */
+export type AgeingRowBuckets = {[key: string]: number};
+
+/**
+ * One line (lineId and lineCode are empty for containers without a line).
+ */
+export interface AgeingRow {
+  lineId: string;
+  lineCode: string;
+  total: number;
+  /** keys 0-7, 8-30, 31-90, 90+ */
+  buckets: AgeingRowBuckets;
+}
+
+export interface GateLogRow {
+  id: string;
+  depotId: string;
+  direction: string;
+  number: string;
+  typeCode: string;
+  at: string;
+  truckPlate: string;
+  trailerPlate: string;
+  driverName: string;
+  seal: string;
+  fullEmpty: string;
+  condition: string;
+  voided: boolean;
+  lineCode: string;
+  customerCode: string;
+  haulierCode: string;
+  flags: number;
+}
+
+export interface ImportResult {
+  /** visits (stock) or orders (orders) created */
+  imported: number;
+}
+
+export interface ImportRowError {
+  /** 1-based data row, header excluded; 0 for the header */
+  row: number;
+  field: string;
+  message: string;
+}
+
+export type ImportRejectedError = {
+  code: string;
+  message: string;
+};
+
+export interface ImportRejected {
+  error: ImportRejectedError;
+  /** at most 200 problems */
+  rows: ImportRowError[];
+}
+
 export type ErrorResponseError = {
   code: string;
   message: string;
@@ -51,6 +135,11 @@ export interface CreateMoveRequest {
   /** @maxLength 32 */
   lane?: string;
   is_test?: boolean;
+  /**
+     * the phone outbox's own id (16-64 of A-Z a-z 0-9 - _); a resend returns the stored move
+     * @maxLength 64
+     */
+  id?: string;
 }
 
 export type ResolveRequestAction = typeof ResolveRequestAction[keyof typeof ResolveRequestAction];
@@ -408,6 +497,424 @@ export interface HaulierList {
   total: number;
 }
 
+export interface Reason {
+  code: string;
+  detail?: string;
+}
+
+export type TurnAwayReasonsItem = {
+  /** @maxLength 64 */
+  code: string;
+  /** @maxLength 500 */
+  detail?: string;
+};
+
+export interface TurnAway {
+  /** @maxLength 64 */
+  number: string;
+  /** @maxItems 20 */
+  reasons: TurnAwayReasonsItem[];
+  /**
+     * the user id signed in on the phone when the truck was turned away; a claim recorded in the event, never trusted
+     * @maxLength 64
+     */
+  savedBy?: string;
+}
+
+export interface ReasonBody {
+  /** @maxLength 500 */
+  reason: string;
+}
+
+export type GateFormDirection = typeof GateFormDirection[keyof typeof GateFormDirection];
+
+
+export const GateFormDirection = {
+  in: 'in',
+  out: 'out',
+} as const;
+
+export type GateFormDamagesItem = {
+  /** @maxLength 500 */
+  location: string;
+  /** @maxLength 500 */
+  description?: string;
+  /**
+     * photos of this move
+     * @minItems 1
+     * @maxItems 3
+     * @items.maxLength 64
+     */
+  photoIds: string[];
+};
+
+/**
+ * The clerk passes the refusals with a reason (refusal mode clerk_override).
+ */
+export type GateFormOverride = {
+  /** @maxLength 500 */
+  reason: string;
+};
+
+export interface GateForm {
+  direction: GateFormDirection;
+  /** @maxLength 64 */
+  number: string;
+  /** @maxLength 64 */
+  typeCode?: string;
+  /**
+     * E or F; empty means E
+     * @maxLength 64
+     */
+  fullEmpty?: string;
+  /** @maxLength 64 */
+  seal?: string;
+  /**
+     * sound, damaged or empty
+     * @maxLength 64
+     */
+  condition?: string;
+  /** @maxLength 64 */
+  lineId?: string;
+  /** @maxLength 64 */
+  customerId?: string;
+  /** @maxLength 64 */
+  haulierId?: string;
+  /** @maxLength 64 */
+  truckPlate?: string;
+  /** @maxLength 64 */
+  trailerPlate?: string;
+  /** @maxLength 200 */
+  driverName?: string;
+  /** @maxLength 64 */
+  signaturePhotoId?: string;
+  damages?: GateFormDamagesItem[];
+  /**
+     * the clerk's pick among the candidates of a 409 E4098
+     * @maxLength 64
+     */
+  chosenOrderItemId?: string;
+  /** The clerk passes the refusals with a reason (refusal mode clerk_override). */
+  override?: GateFormOverride;
+  /**
+     * the manager approval of a 409 E4098 (refusal mode manager_approval)
+     * @maxLength 64
+     */
+  approvalId?: string;
+  /** The phone saved this form while offline: the truck has already gone through. Refusals then do not stop it (block list included); each becomes an offline:<code> flag for the office. */
+  savedOffline?: boolean;
+  /**
+     * the user id signed in on the phone when the form was saved; a claim recorded in the event, never trusted
+     * @maxLength 64
+     */
+  savedBy?: string;
+}
+
+export interface GateResult {
+  move: Move;
+  visitId: string;
+  flags: Reason[];
+}
+
+export interface OrderCandidate {
+  orderId: string;
+  itemId: string;
+  number: string;
+  typeCode: string;
+  fullEmpty: string;
+  remaining: number;
+}
+
+export type GateRefusal = ErrorResponse & {
+  refusals: Reason[];
+  approvalId?: string;
+  /** pending or denied */
+  approvalStatus?: string;
+  candidates?: OrderCandidate[];
+};
+
+export interface EirLink {
+  /** relative: /eir/{token} */
+  url: string;
+  expiresAt: string;
+}
+
+export type OrderKind = typeof OrderKind[keyof typeof OrderKind];
+
+
+export const OrderKind = {
+  release: 'release',
+  redelivery: 'redelivery',
+} as const;
+
+export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
+
+
+export const OrderStatus = {
+  open: 'open',
+  done: 'done',
+  cancelled: 'cancelled',
+} as const;
+
+export interface Order {
+  id: string;
+  depotId: string;
+  kind: OrderKind;
+  reference: string;
+  /** @nullable */
+  lineId: string | null;
+  /** @nullable */
+  customerId: string | null;
+  /** @nullable */
+  validUntil: string | null;
+  note: string;
+  status: OrderStatus;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface OrderItem {
+  id: string;
+  orderId: string;
+  /** @nullable */
+  number: string | null;
+  /** @nullable */
+  typeCode: string | null;
+  fullEmpty: string;
+  quantity: number;
+  used: number;
+}
+
+export type OrderDetail = Order & {
+  items: OrderItem[];
+};
+
+/**
+ * A container number (quantity 1) or an ISO type with a quantity, exactly one of the two.
+ */
+export type OrderCreateItemsItem = {
+  /** @maxLength 64 */
+  number?: string;
+  /** @maxLength 64 */
+  typeCode?: string;
+  /**
+     * E or F; empty means E
+     * @maxLength 64
+     */
+  fullEmpty?: string;
+  /**
+     * default 1
+     * @minimum 1
+     */
+  quantity?: number;
+};
+
+export interface OrderCreate {
+  kind: OrderKind;
+  /** @maxLength 64 */
+  reference: string;
+  /** @maxLength 64 */
+  lineId?: string;
+  /** @maxLength 64 */
+  customerId?: string;
+  validUntil?: string;
+  /** @maxLength 500 */
+  note?: string;
+  /** @minItems 1 */
+  items: OrderCreateItemsItem[];
+}
+
+export type VisitStatus = typeof VisitStatus[keyof typeof VisitStatus];
+
+
+export const VisitStatus = {
+  in_yard: 'in_yard',
+  out: 'out',
+} as const;
+
+export interface Visit {
+  id: string;
+  depotId: string;
+  number: string;
+  typeCode: string;
+  /** @nullable */
+  lineId: string | null;
+  /** @nullable */
+  customerId: string | null;
+  status: VisitStatus;
+  fullEmpty: string;
+  grade: string;
+  block: string;
+  rowNo: string;
+  tier: string;
+  /** @nullable */
+  inMoveId: string | null;
+  /** @nullable */
+  outMoveId: string | null;
+  inAt: string;
+  /** @nullable */
+  outAt: string | null;
+  imported: boolean;
+  closeReason: string;
+}
+
+export type VisitListItem = Visit & {
+  onHold: boolean;
+  /** whole calendar days in the depot's own time zone from the gate-in to now (or to the gate-out), as in the ageing report */
+  daysInYard: number;
+};
+
+export interface VisitList {
+  items: VisitListItem[];
+  total: number;
+}
+
+export interface Hold {
+  id: string;
+  visitId: string;
+  reason: string;
+  placedBy: string;
+  placedAt: string;
+  releasedBy: string;
+  /** @nullable */
+  releasedAt: string | null;
+}
+
+export interface GateFlag {
+  id: string;
+  moveId: string;
+  code: string;
+  detail: string;
+  resolvedBy: string;
+  resolveNote: string;
+  /** @nullable */
+  resolvedAt: string | null;
+}
+
+export type MoveFormDamagesItem = {
+  id: string;
+  location: string;
+  description: string;
+  photoIds: string[];
+};
+
+export interface MoveForm {
+  /** the move id */
+  id: string;
+  direction: string;
+  number: string;
+  typeCode: string;
+  fullEmpty: string;
+  seal: string;
+  condition: string;
+  /**
+     * the visit's line
+     * @nullable
+     */
+  lineId: string | null;
+  /**
+     * the visit's customer
+     * @nullable
+     */
+  customerId: string | null;
+  /** @nullable */
+  haulierId: string | null;
+  truckPlate: string;
+  trailerPlate: string;
+  driverName: string;
+  /** @nullable */
+  signaturePhotoId: string | null;
+  /** @nullable */
+  visitId: string | null;
+  /** @nullable */
+  orderId: string | null;
+  /** @nullable */
+  orderItemId: string | null;
+  /** @nullable */
+  formSavedAt: string | null;
+  voided: boolean;
+  voidReason: string;
+  /** how many times the office corrected the form */
+  corrections: number;
+  damages: MoveFormDamagesItem[];
+  flags: GateFlag[];
+}
+
+export type VisitDetail = Visit & ({
+  holds: Hold[];
+  /** the gate-in move's form; null when none or at another depot */
+  inForm: MoveForm | null;
+  /** the gate-out move's form; null when none or at another depot */
+  outForm: MoveForm | null;
+});
+
+export type BlockKind = typeof BlockKind[keyof typeof BlockKind];
+
+
+export const BlockKind = {
+  container: 'container',
+  line: 'line',
+} as const;
+
+export interface Block {
+  id: string;
+  kind: BlockKind;
+  value: string;
+  reason: string;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface Approval {
+  id: string;
+  moveId: string;
+  /** the move's container number */
+  number: string;
+  reasons: Reason[];
+  requestedBy: string;
+  requestedAt: string;
+  /** pending, approved or denied */
+  status: string;
+  decidedBy: string;
+  /** @nullable */
+  decidedAt: string | null;
+}
+
+export type YardSettingsRefusalMode = typeof YardSettingsRefusalMode[keyof typeof YardSettingsRefusalMode];
+
+
+export const YardSettingsRefusalMode = {
+  clerk_override: 'clerk_override',
+  manager_approval: 'manager_approval',
+  none: 'none',
+} as const;
+
+export interface YardSettings {
+  refusalMode: YardSettingsRefusalMode;
+  walkinsAllowed: boolean;
+  /** @minimum 1 */
+  eirTtlDays: number;
+}
+
+export interface LinePrefix {
+  prefix: string;
+  lineId: string;
+}
+
+export interface GateSnapshot {
+  at: string;
+  /** the depot's open orders */
+  orders: OrderDetail[];
+  /** the company's active block list */
+  blocks: Block[];
+  /** open holds on the depot's visits */
+  holds: Hold[];
+  inYard: Visit[];
+  linePrefixes: LinePrefix[];
+  settings: YardSettings;
+}
+
 export type QParameter = string;
 
 export type PageParameter = number;
@@ -501,6 +1008,107 @@ export type ListHauliersParams = {
   page?: PageParameter;
   /** @minimum 1 */
   perPage?: PerPageParameter;
+};
+
+export type CorrectMoveBody = {
+  /** @maxLength 500 */
+  reason: string;
+  form: GateForm;
+};
+
+export type ListOrdersParams = {
+  kind?: OrderKind;
+  status?: OrderStatus;
+  q?: QParameter;
+};
+
+export type ListVisitsParams = {
+  status?: VisitStatus;
+  /** container number contains (spaces and case ignored) */
+  q?: string;
+  lineId?: string;
+  customerId?: string;
+  /** ISO type code prefix */
+  type?: string;
+  grade?: string;
+  /** true lists only visits with an open hold */
+  hold?: boolean;
+  /**
+   * at least this many depot-local calendar days in the yard (daysInYard)
+   * @minimum 0
+   */
+  minDays?: number;
+  /** @minimum 1 */
+  page?: PageParameter;
+  /** @minimum 1 */
+  perPage?: PerPageParameter;
+};
+
+export type SetVisitPositionBody = {
+  /** @maxLength 64 */
+  block: string;
+  /** @maxLength 64 */
+  row: string;
+  /** @maxLength 64 */
+  tier: string;
+};
+
+export type SetVisitGradeBody = {
+  /** one of '', A, B, C, FOOD */
+  grade: string;
+};
+
+export type CreateBlockBody = {
+  kind: BlockKind;
+  /** @maxLength 64 */
+  value: string;
+  /** @maxLength 500 */
+  reason: string;
+};
+
+export type SetBlockActiveBody = {
+  active: boolean;
+};
+
+export type ListApprovalsParams = {
+  status?: ListApprovalsStatus;
+};
+
+export type ListApprovalsStatus = typeof ListApprovalsStatus[keyof typeof ListApprovalsStatus];
+
+
+export const ListApprovalsStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  denied: 'denied',
+} as const;
+
+export type DecideApprovalBody = {
+  approve: boolean;
+};
+
+export type ListGateFlagsParams = {
+  /** true lists only unresolved flags */
+  open?: boolean;
+  moveId?: string;
+};
+
+export type ResolveGateFlagBody = {
+  /** @maxLength 500 */
+  note?: string;
+};
+
+export type GateLogParams = {
+  from?: string;
+  to?: string;
+};
+
+export type ImportStockBody = {
+  file: Blob | File;
+};
+
+export type ImportOrdersBody = {
+  file: Blob | File;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -2168,6 +2776,1430 @@ export const deactivateHaulier = async (id: string, options?: Parameters<typeof 
   {
     ...options,
     method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type saveGateFormResponse200 = {
+  data: GateResult
+  status: 200
+}
+
+export type saveGateFormResponse409 = {
+  data: GateRefusal
+  status: 409
+}
+
+export type saveGateFormResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 409>
+}
+
+export type saveGateFormResponseSuccess = (saveGateFormResponse200) & {
+  headers: Headers;
+};
+export type saveGateFormResponseError = (saveGateFormResponse409 | saveGateFormResponseDefault) & {
+  headers: Headers;
+};
+
+export type saveGateFormResponse = (saveGateFormResponseSuccess | saveGateFormResponseError)
+
+export const getSaveGateFormUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/gate`
+}
+
+/**
+ * Saves the clerk's gate form on the move (gate role). A resend of a saved form returns the stored result.
+ * 409 E4098: refused (refusals, and approvalId/approvalStatus under manager_approval, or candidates when
+ * several order items match and the clerk must choose one); 409 E4099: blocked, never passable at the gate.
+ */
+export const saveGateForm = async (id: string,
+    gateForm: GateForm, options?: Parameters<typeof http>[1]): Promise<saveGateFormResponse> => {
+
+  return http<saveGateFormResponse>(getSaveGateFormUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(gateForm)
+  }
+);}
+
+
+
+export type getMoveFormResponse200 = {
+  data: MoveForm
+  status: 200
+}
+
+export type getMoveFormResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getMoveFormResponseSuccess = (getMoveFormResponse200) & {
+  headers: Headers;
+};
+export type getMoveFormResponseError = (getMoveFormResponseDefault) & {
+  headers: Headers;
+};
+
+export type getMoveFormResponse = (getMoveFormResponseSuccess | getMoveFormResponseError)
+
+export const getGetMoveFormUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/form`
+}
+
+/**
+ * The move's gate form as saved (formSavedAt is null before the first save), its damages and flags.
+ */
+export const getMoveForm = async (id: string, options?: Parameters<typeof http>[1]): Promise<getMoveFormResponse> => {
+
+  return http<getMoveFormResponse>(getGetMoveFormUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type createEirLinkResponse200 = {
+  data: EirLink
+  status: 200
+}
+
+export type createEirLinkResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type createEirLinkResponseSuccess = (createEirLinkResponse200) & {
+  headers: Headers;
+};
+export type createEirLinkResponseError = (createEirLinkResponseDefault) & {
+  headers: Headers;
+};
+
+export type createEirLinkResponse = (createEirLinkResponseSuccess | createEirLinkResponseError)
+
+export const getCreateEirLinkUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/eir`
+}
+
+/**
+ * A shareable EIR link for the move. The token in the url is shown only once.
+ */
+export const createEirLink = async (id: string, options?: Parameters<typeof http>[1]): Promise<createEirLinkResponse> => {
+
+  return http<createEirLinkResponse>(getCreateEirLinkUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export type correctMoveResponse200 = {
+  data: GateResult
+  status: 200
+}
+
+export type correctMoveResponse409 = {
+  data: GateRefusal
+  status: 409
+}
+
+export type correctMoveResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 409>
+}
+
+export type correctMoveResponseSuccess = (correctMoveResponse200) & {
+  headers: Headers;
+};
+export type correctMoveResponseError = (correctMoveResponse409 | correctMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type correctMoveResponse = (correctMoveResponseSuccess | correctMoveResponseError)
+
+export const getCorrectMoveUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/correct`
+}
+
+/**
+ * Office: rewrites a saved gate form. Refusals do not stop a correction (they become flags with the reason).
+ * 409 E4098 with candidates when several order items match; 409 E4100 the container has a newer visit;
+ * 409 E4101 the direction cannot change; 409 E4102 the move is void; 409 E4103 the move has no saved form;
+ * 409 E4104 the visit this move opened is closed.
+ */
+export const correctMove = async (id: string,
+    correctMoveBody: CorrectMoveBody, options?: Parameters<typeof http>[1]): Promise<correctMoveResponse> => {
+
+  return http<correctMoveResponse>(getCorrectMoveUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(correctMoveBody)
+  }
+);}
+
+
+
+export type voidMoveResponse204 = {
+  data: void
+  status: 204
+}
+
+export type voidMoveResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type voidMoveResponseSuccess = (voidMoveResponse204) & {
+  headers: Headers;
+};
+export type voidMoveResponseError = (voidMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type voidMoveResponse = (voidMoveResponseSuccess | voidMoveResponseError)
+
+export const getVoidMoveUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/void`
+}
+
+/**
+ * Office. 409 E4100, E4102 or E4104 as for correctMove.
+ */
+export const voidMove = async (id: string,
+    reasonBody: ReasonBody, options?: Parameters<typeof http>[1]): Promise<voidMoveResponse> => {
+
+  return http<voidMoveResponse>(getVoidMoveUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(reasonBody)
+  }
+);}
+
+
+
+export type turnAwayMoveResponse204 = {
+  data: void
+  status: 204
+}
+
+export type turnAwayMoveResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type turnAwayMoveResponseSuccess = (turnAwayMoveResponse204) & {
+  headers: Headers;
+};
+export type turnAwayMoveResponseError = (turnAwayMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type turnAwayMoveResponse = (turnAwayMoveResponseSuccess | turnAwayMoveResponseError)
+
+export const getTurnAwayMoveUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/turn-away`
+}
+
+/**
+ * Gate. The truck was turned away: the move keeps the typed number, is void ("turned away") and gets a turned_away flag with the refusal codes for the office. A repeat is a no-op. 409 E4106 when the move's gate form is saved; 409 E4102 when the office voided it.
+ */
+export const turnAwayMove = async (id: string,
+    turnAway: TurnAway, options?: Parameters<typeof http>[1]): Promise<turnAwayMoveResponse> => {
+
+  return http<turnAwayMoveResponse>(getTurnAwayMoveUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(turnAway)
+  }
+);}
+
+
+
+export type gateSnapshotResponse200 = {
+  data: GateSnapshot
+  status: 200
+}
+
+export type gateSnapshotResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type gateSnapshotResponseSuccess = (gateSnapshotResponse200) & {
+  headers: Headers;
+};
+export type gateSnapshotResponseError = (gateSnapshotResponseDefault) & {
+  headers: Headers;
+};
+
+export type gateSnapshotResponse = (gateSnapshotResponseSuccess | gateSnapshotResponseError)
+
+export const getGateSnapshotUrl = () => {
+
+
+
+
+  return `/api/gate/snapshot`
+}
+
+/**
+ * What a gate phone keeps for working offline. Needs a depot in the scope (409 E4090).
+ */
+export const gateSnapshot = async ( options?: Parameters<typeof http>[1]): Promise<gateSnapshotResponse> => {
+
+  return http<gateSnapshotResponse>(getGateSnapshotUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type listOrdersResponse200 = {
+  data: Order[]
+  status: 200
+}
+
+export type listOrdersResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listOrdersResponseSuccess = (listOrdersResponse200) & {
+  headers: Headers;
+};
+export type listOrdersResponseError = (listOrdersResponseDefault) & {
+  headers: Headers;
+};
+
+export type listOrdersResponse = (listOrdersResponseSuccess | listOrdersResponseError)
+
+export const getListOrdersUrl = (params?: ListOrdersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/orders?${stringifiedParams}` : `/api/orders`
+}
+
+export const listOrders = async (params?: ListOrdersParams, options?: Parameters<typeof http>[1]): Promise<listOrdersResponse> => {
+
+  return http<listOrdersResponse>(getListOrdersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type createOrderResponse201 = {
+  data: OrderDetail
+  status: 201
+}
+
+export type createOrderResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createOrderResponseSuccess = (createOrderResponse201) & {
+  headers: Headers;
+};
+export type createOrderResponseError = (createOrderResponseDefault) & {
+  headers: Headers;
+};
+
+export type createOrderResponse = (createOrderResponseSuccess | createOrderResponseError)
+
+export const getCreateOrderUrl = () => {
+
+
+
+
+  return `/api/orders`
+}
+
+/**
+ * Needs a depot in the scope. An item names a container or a quantity of an ISO type, not both.
+ */
+export const createOrder = async (orderCreate: OrderCreate, options?: Parameters<typeof http>[1]): Promise<createOrderResponse> => {
+
+  return http<createOrderResponse>(getCreateOrderUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(orderCreate)
+  }
+);}
+
+
+
+export type getOrderResponse200 = {
+  data: OrderDetail
+  status: 200
+}
+
+export type getOrderResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getOrderResponseSuccess = (getOrderResponse200) & {
+  headers: Headers;
+};
+export type getOrderResponseError = (getOrderResponseDefault) & {
+  headers: Headers;
+};
+
+export type getOrderResponse = (getOrderResponseSuccess | getOrderResponseError)
+
+export const getGetOrderUrl = (id: string,) => {
+
+
+
+
+  return `/api/orders/${id}`
+}
+
+export const getOrder = async (id: string, options?: Parameters<typeof http>[1]): Promise<getOrderResponse> => {
+
+  return http<getOrderResponse>(getGetOrderUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type cancelOrderResponse204 = {
+  data: void
+  status: 204
+}
+
+export type cancelOrderResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type cancelOrderResponseSuccess = (cancelOrderResponse204) & {
+  headers: Headers;
+};
+export type cancelOrderResponseError = (cancelOrderResponseDefault) & {
+  headers: Headers;
+};
+
+export type cancelOrderResponse = (cancelOrderResponseSuccess | cancelOrderResponseError)
+
+export const getCancelOrderUrl = (id: string,) => {
+
+
+
+
+  return `/api/orders/${id}/cancel`
+}
+
+/**
+ * 409 E4105 when the order is not open.
+ */
+export const cancelOrder = async (id: string, options?: Parameters<typeof http>[1]): Promise<cancelOrderResponse> => {
+
+  return http<cancelOrderResponse>(getCancelOrderUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export type listVisitsResponse200 = {
+  data: VisitList
+  status: 200
+}
+
+export type listVisitsResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listVisitsResponseSuccess = (listVisitsResponse200) & {
+  headers: Headers;
+};
+export type listVisitsResponseError = (listVisitsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listVisitsResponse = (listVisitsResponseSuccess | listVisitsResponseError)
+
+export const getListVisitsUrl = (params?: ListVisitsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/visits?${stringifiedParams}` : `/api/visits`
+}
+
+export const listVisits = async (params?: ListVisitsParams, options?: Parameters<typeof http>[1]): Promise<listVisitsResponse> => {
+
+  return http<listVisitsResponse>(getListVisitsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type getVisitResponse200 = {
+  data: VisitDetail
+  status: 200
+}
+
+export type getVisitResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getVisitResponseSuccess = (getVisitResponse200) & {
+  headers: Headers;
+};
+export type getVisitResponseError = (getVisitResponseDefault) & {
+  headers: Headers;
+};
+
+export type getVisitResponse = (getVisitResponseSuccess | getVisitResponseError)
+
+export const getGetVisitUrl = (id: string,) => {
+
+
+
+
+  return `/api/visits/${id}`
+}
+
+export const getVisit = async (id: string, options?: Parameters<typeof http>[1]): Promise<getVisitResponse> => {
+
+  return http<getVisitResponse>(getGetVisitUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type setVisitPositionResponse200 = {
+  data: Visit
+  status: 200
+}
+
+export type setVisitPositionResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setVisitPositionResponseSuccess = (setVisitPositionResponse200) & {
+  headers: Headers;
+};
+export type setVisitPositionResponseError = (setVisitPositionResponseDefault) & {
+  headers: Headers;
+};
+
+export type setVisitPositionResponse = (setVisitPositionResponseSuccess | setVisitPositionResponseError)
+
+export const getSetVisitPositionUrl = (id: string,) => {
+
+
+
+
+  return `/api/visits/${id}/position`
+}
+
+export const setVisitPosition = async (id: string,
+    setVisitPositionBody: SetVisitPositionBody, options?: Parameters<typeof http>[1]): Promise<setVisitPositionResponse> => {
+
+  return http<setVisitPositionResponse>(getSetVisitPositionUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(setVisitPositionBody)
+  }
+);}
+
+
+
+export type setVisitGradeResponse200 = {
+  data: Visit
+  status: 200
+}
+
+export type setVisitGradeResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setVisitGradeResponseSuccess = (setVisitGradeResponse200) & {
+  headers: Headers;
+};
+export type setVisitGradeResponseError = (setVisitGradeResponseDefault) & {
+  headers: Headers;
+};
+
+export type setVisitGradeResponse = (setVisitGradeResponseSuccess | setVisitGradeResponseError)
+
+export const getSetVisitGradeUrl = (id: string,) => {
+
+
+
+
+  return `/api/visits/${id}/grade`
+}
+
+export const setVisitGrade = async (id: string,
+    setVisitGradeBody: SetVisitGradeBody, options?: Parameters<typeof http>[1]): Promise<setVisitGradeResponse> => {
+
+  return http<setVisitGradeResponse>(getSetVisitGradeUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(setVisitGradeBody)
+  }
+);}
+
+
+
+export type placeHoldResponse201 = {
+  data: Hold
+  status: 201
+}
+
+export type placeHoldResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type placeHoldResponseSuccess = (placeHoldResponse201) & {
+  headers: Headers;
+};
+export type placeHoldResponseError = (placeHoldResponseDefault) & {
+  headers: Headers;
+};
+
+export type placeHoldResponse = (placeHoldResponseSuccess | placeHoldResponseError)
+
+export const getPlaceHoldUrl = (id: string,) => {
+
+
+
+
+  return `/api/visits/${id}/holds`
+}
+
+export const placeHold = async (id: string,
+    reasonBody: ReasonBody, options?: Parameters<typeof http>[1]): Promise<placeHoldResponse> => {
+
+  return http<placeHoldResponse>(getPlaceHoldUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(reasonBody)
+  }
+);}
+
+
+
+export type releaseHoldResponse204 = {
+  data: void
+  status: 204
+}
+
+export type releaseHoldResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type releaseHoldResponseSuccess = (releaseHoldResponse204) & {
+  headers: Headers;
+};
+export type releaseHoldResponseError = (releaseHoldResponseDefault) & {
+  headers: Headers;
+};
+
+export type releaseHoldResponse = (releaseHoldResponseSuccess | releaseHoldResponseError)
+
+export const getReleaseHoldUrl = (id: string,) => {
+
+
+
+
+  return `/api/holds/${id}/release`
+}
+
+/**
+ * 404 when the hold is already released.
+ */
+export const releaseHold = async (id: string, options?: Parameters<typeof http>[1]): Promise<releaseHoldResponse> => {
+
+  return http<releaseHoldResponse>(getReleaseHoldUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export type listBlocksResponse200 = {
+  data: Block[]
+  status: 200
+}
+
+export type listBlocksResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listBlocksResponseSuccess = (listBlocksResponse200) & {
+  headers: Headers;
+};
+export type listBlocksResponseError = (listBlocksResponseDefault) & {
+  headers: Headers;
+};
+
+export type listBlocksResponse = (listBlocksResponseSuccess | listBlocksResponseError)
+
+export const getListBlocksUrl = () => {
+
+
+
+
+  return `/api/blocks`
+}
+
+/**
+ * The company's block list, inactive entries included.
+ */
+export const listBlocks = async ( options?: Parameters<typeof http>[1]): Promise<listBlocksResponse> => {
+
+  return http<listBlocksResponse>(getListBlocksUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type createBlockResponse201 = {
+  data: Block
+  status: 201
+}
+
+export type createBlockResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createBlockResponseSuccess = (createBlockResponse201) & {
+  headers: Headers;
+};
+export type createBlockResponseError = (createBlockResponseDefault) & {
+  headers: Headers;
+};
+
+export type createBlockResponse = (createBlockResponseSuccess | createBlockResponseError)
+
+export const getCreateBlockUrl = () => {
+
+
+
+
+  return `/api/blocks`
+}
+
+/**
+ * Adds an entry, or re-activates the same kind and value with the new reason.
+ */
+export const createBlock = async (createBlockBody: CreateBlockBody, options?: Parameters<typeof http>[1]): Promise<createBlockResponse> => {
+
+  return http<createBlockResponse>(getCreateBlockUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(createBlockBody)
+  }
+);}
+
+
+
+export type setBlockActiveResponse200 = {
+  data: Block
+  status: 200
+}
+
+export type setBlockActiveResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setBlockActiveResponseSuccess = (setBlockActiveResponse200) & {
+  headers: Headers;
+};
+export type setBlockActiveResponseError = (setBlockActiveResponseDefault) & {
+  headers: Headers;
+};
+
+export type setBlockActiveResponse = (setBlockActiveResponseSuccess | setBlockActiveResponseError)
+
+export const getSetBlockActiveUrl = (id: string,) => {
+
+
+
+
+  return `/api/blocks/${id}`
+}
+
+export const setBlockActive = async (id: string,
+    setBlockActiveBody: SetBlockActiveBody, options?: Parameters<typeof http>[1]): Promise<setBlockActiveResponse> => {
+
+  return http<setBlockActiveResponse>(getSetBlockActiveUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(setBlockActiveBody)
+  }
+);}
+
+
+
+export type listApprovalsResponse200 = {
+  data: Approval[]
+  status: 200
+}
+
+export type listApprovalsResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listApprovalsResponseSuccess = (listApprovalsResponse200) & {
+  headers: Headers;
+};
+export type listApprovalsResponseError = (listApprovalsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listApprovalsResponse = (listApprovalsResponseSuccess | listApprovalsResponseError)
+
+export const getListApprovalsUrl = (params?: ListApprovalsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/approvals?${stringifiedParams}` : `/api/approvals`
+}
+
+/**
+ * Managers. Oldest first.
+ */
+export const listApprovals = async (params?: ListApprovalsParams, options?: Parameters<typeof http>[1]): Promise<listApprovalsResponse> => {
+
+  return http<listApprovalsResponse>(getListApprovalsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type decideApprovalResponse204 = {
+  data: void
+  status: 204
+}
+
+export type decideApprovalResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type decideApprovalResponseSuccess = (decideApprovalResponse204) & {
+  headers: Headers;
+};
+export type decideApprovalResponseError = (decideApprovalResponseDefault) & {
+  headers: Headers;
+};
+
+export type decideApprovalResponse = (decideApprovalResponseSuccess | decideApprovalResponseError)
+
+export const getDecideApprovalUrl = (id: string,) => {
+
+
+
+
+  return `/api/approvals/${id}`
+}
+
+/**
+ * Managers. 404 when the approval is already decided.
+ */
+export const decideApproval = async (id: string,
+    decideApprovalBody: DecideApprovalBody, options?: Parameters<typeof http>[1]): Promise<decideApprovalResponse> => {
+
+  return http<decideApprovalResponse>(getDecideApprovalUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(decideApprovalBody)
+  }
+);}
+
+
+
+export type listGateFlagsResponse200 = {
+  data: GateFlag[]
+  status: 200
+}
+
+export type listGateFlagsResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listGateFlagsResponseSuccess = (listGateFlagsResponse200) & {
+  headers: Headers;
+};
+export type listGateFlagsResponseError = (listGateFlagsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listGateFlagsResponse = (listGateFlagsResponseSuccess | listGateFlagsResponseError)
+
+export const getListGateFlagsUrl = (params?: ListGateFlagsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/gate-flags?${stringifiedParams}` : `/api/gate-flags`
+}
+
+export const listGateFlags = async (params?: ListGateFlagsParams, options?: Parameters<typeof http>[1]): Promise<listGateFlagsResponse> => {
+
+  return http<listGateFlagsResponse>(getListGateFlagsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type resolveGateFlagResponse204 = {
+  data: void
+  status: 204
+}
+
+export type resolveGateFlagResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type resolveGateFlagResponseSuccess = (resolveGateFlagResponse204) & {
+  headers: Headers;
+};
+export type resolveGateFlagResponseError = (resolveGateFlagResponseDefault) & {
+  headers: Headers;
+};
+
+export type resolveGateFlagResponse = (resolveGateFlagResponseSuccess | resolveGateFlagResponseError)
+
+export const getResolveGateFlagUrl = (id: string,) => {
+
+
+
+
+  return `/api/gate-flags/${id}/resolve`
+}
+
+/**
+ * The office may leave a note on what it did. 404 when the flag is already resolved.
+ */
+export const resolveGateFlag = async (id: string,
+    resolveGateFlagBody?: ResolveGateFlagBody, options?: Parameters<typeof http>[1]): Promise<resolveGateFlagResponse> => {
+
+  return http<resolveGateFlagResponse>(getResolveGateFlagUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(resolveGateFlagBody)
+  }
+);}
+
+
+
+export type getYardSettingsResponse200 = {
+  data: YardSettings
+  status: 200
+}
+
+export type getYardSettingsResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getYardSettingsResponseSuccess = (getYardSettingsResponse200) & {
+  headers: Headers;
+};
+export type getYardSettingsResponseError = (getYardSettingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type getYardSettingsResponse = (getYardSettingsResponseSuccess | getYardSettingsResponseError)
+
+export const getGetYardSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/yard`
+}
+
+/**
+ * Managers and owners.
+ */
+export const getYardSettings = async ( options?: Parameters<typeof http>[1]): Promise<getYardSettingsResponse> => {
+
+  return http<getYardSettingsResponse>(getGetYardSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type setYardSettingsResponse200 = {
+  data: YardSettings
+  status: 200
+}
+
+export type setYardSettingsResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setYardSettingsResponseSuccess = (setYardSettingsResponse200) & {
+  headers: Headers;
+};
+export type setYardSettingsResponseError = (setYardSettingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type setYardSettingsResponse = (setYardSettingsResponseSuccess | setYardSettingsResponseError)
+
+export const getSetYardSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/yard`
+}
+
+/**
+ * Owner only.
+ */
+export const setYardSettings = async (yardSettings: YardSettings, options?: Parameters<typeof http>[1]): Promise<setYardSettingsResponse> => {
+
+  return http<setYardSettingsResponse>(getSetYardSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(yardSettings)
+  }
+);}
+
+
+
+export type reportDashboardResponse200 = {
+  data: Dashboard
+  status: 200
+}
+
+export type reportDashboardResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type reportDashboardResponseSuccess = (reportDashboardResponse200) & {
+  headers: Headers;
+};
+export type reportDashboardResponseError = (reportDashboardResponseDefault) & {
+  headers: Headers;
+};
+
+export type reportDashboardResponse = (reportDashboardResponseSuccess | reportDashboardResponseError)
+
+export const getReportDashboardUrl = () => {
+
+
+
+
+  return `/api/reports/dashboard`
+}
+
+/**
+ * Today's gate moves (in the depot's own calendar day), the yard by line, open holds and open gate flags, for the session's depot (every depot of the company when none is chosen).
+ */
+export const reportDashboard = async ( options?: Parameters<typeof http>[1]): Promise<reportDashboardResponse> => {
+
+  return http<reportDashboardResponse>(getReportDashboardUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type reportAgeingResponse200 = {
+  data: AgeingRow[]
+  status: 200
+}
+
+export type reportAgeingResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type reportAgeingResponseSuccess = (reportAgeingResponse200) & {
+  headers: Headers;
+};
+export type reportAgeingResponseError = (reportAgeingResponseDefault) & {
+  headers: Headers;
+};
+
+export type reportAgeingResponse = (reportAgeingResponseSuccess | reportAgeingResponseError)
+
+export const getReportAgeingUrl = () => {
+
+
+
+
+  return `/api/reports/ageing`
+}
+
+/**
+ * In-yard containers by whole days in the yard, per line, in the buckets 0-7, 8-30, 31-90 and 90+.
+ */
+export const reportAgeing = async ( options?: Parameters<typeof http>[1]): Promise<reportAgeingResponse> => {
+
+  return http<reportAgeingResponse>(getReportAgeingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type gateLogResponse200 = {
+  data: GateLogRow[]
+  status: 200
+}
+
+export type gateLogResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type gateLogResponseSuccess = (gateLogResponse200) & {
+  headers: Headers;
+};
+export type gateLogResponseError = (gateLogResponseDefault) & {
+  headers: Headers;
+};
+
+export type gateLogResponse = (gateLogResponseSuccess | gateLogResponseError)
+
+export const getGateLogUrl = (params?: GateLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/reports/gate-log?${stringifiedParams}` : `/api/reports/gate-log`
+}
+
+/**
+ * Saved gate forms, newest first, at most 5000. from and to are depot-local dates, both inclusive.
+ */
+export const gateLog = async (params?: GateLogParams, options?: Parameters<typeof http>[1]): Promise<gateLogResponse> => {
+
+  return http<gateLogResponse>(getGateLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type importStockResponse200 = {
+  data: ImportResult
+  status: 200
+}
+
+export type importStockResponse422 = {
+  data: ImportRejected
+  status: 422
+}
+
+export type importStockResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 422>
+}
+
+export type importStockResponseSuccess = (importStockResponse200) & {
+  headers: Headers;
+};
+export type importStockResponseError = (importStockResponse422 | importStockResponseDefault) & {
+  headers: Headers;
+};
+
+export type importStockResponse = (importStockResponseSuccess | importStockResponseError)
+
+export const getImportStockUrl = () => {
+
+
+
+
+  return `/api/import/stock`
+}
+
+/**
+ * Opening stock from a CSV file (at most 5 MiB and 20000 rows; ',' or ';' separated; dates YYYY-MM-DD or DD.MM.YYYY).
+ * Needs a chosen depot. All or nothing: any bad row rejects the whole file with 422 E4220.
+ */
+export const importStock = async (importStockBody: ImportStockBody, options?: Parameters<typeof http>[1]): Promise<importStockResponse> => {
+    const formData = new FormData();
+formData.append(`file`, importStockBody.file);
+
+  return http<importStockResponse>(getImportStockUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+export type importOrdersResponse200 = {
+  data: ImportResult
+  status: 200
+}
+
+export type importOrdersResponse422 = {
+  data: ImportRejected
+  status: 422
+}
+
+export type importOrdersResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 422>
+}
+
+export type importOrdersResponseSuccess = (importOrdersResponse200) & {
+  headers: Headers;
+};
+export type importOrdersResponseError = (importOrdersResponse422 | importOrdersResponseDefault) & {
+  headers: Headers;
+};
+
+export type importOrdersResponse = (importOrdersResponseSuccess | importOrdersResponseError)
+
+export const getImportOrdersUrl = () => {
+
+
+
+
+  return `/api/import/orders`
+}
+
+/**
+ * Release and redelivery orders from a CSV file, one row per item; rows with the same kind and reference are one order. Same limits and all-or-nothing rule as the stock import.
+ */
+export const importOrders = async (importOrdersBody: ImportOrdersBody, options?: Parameters<typeof http>[1]): Promise<importOrdersResponse> => {
+    const formData = new FormData();
+formData.append(`file`, importOrdersBody.file);
+
+  return http<importOrdersResponse>(getImportOrdersUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+export type importTemplateResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type importTemplateResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type importTemplateResponseSuccess = (importTemplateResponse200) & {
+  headers: Headers;
+};
+export type importTemplateResponseError = (importTemplateResponseDefault) & {
+  headers: Headers;
+};
+
+export type importTemplateResponse = (importTemplateResponseSuccess | importTemplateResponseError)
+
+export const getImportTemplateUrl = (name: 'stock.csv' | 'orders.csv',) => {
+
+
+
+
+  return `/api/import/templates/${name}`
+}
+
+/**
+ * An import file's header row and one example row (UTF-8 with BOM). The name is stock.csv or orders.csv.
+ */
+export const importTemplate = async (name: 'stock.csv' | 'orders.csv', options?: Parameters<typeof http>[1]): Promise<importTemplateResponse> => {
+
+  return http<importTemplateResponse>(getImportTemplateUrl(name),
+  {
+    ...options,
+    method: 'GET'
 
 
   }
