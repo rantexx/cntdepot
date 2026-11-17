@@ -82,11 +82,11 @@ func TestDecide(t *testing.T) {
 		{name: "gate-in no walkin", f: Facts{Direction: "in", Number: "MSKU1234565", TypeCode: "45G1", Now: now}, refuse: []string{"no_order"}},
 		{name: "gate-in with open visit", f: Facts{Direction: "in", Number: "MSKU1234565", Now: now, WalkinsAllowed: true,
 			OpenVisit: &VisitFact{VisitID: "v"}}, flag: []string{"missed_gate_out", "walkin"}, noRefuse: true},
-		{name: "block list beats everything", f: func() Facts {
+		{name: "block list refuses, matching still runs", f: func() Facts {
 			f := out(named)
 			f.Blocked = &BlockFact{Kind: "container", Value: "MSKU1234565", Reason: "stolen"}
 			return f
-		}(), refuse: []string{"blocked"}, isBlocked: true},
+		}(), refuse: []string{"blocked"}, item: "named", isBlocked: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

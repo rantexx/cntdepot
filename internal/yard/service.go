@@ -43,6 +43,10 @@ type GateForm struct {
 	ChosenOrderItemID                                               string
 	Override                                                        *Override
 	ApprovalID                                                      string
+	// SavedOffline: the phone saved the form offline, so the truck has gone through.
+	SavedOffline bool
+	// SavedBy is the phone's signed-in user when the form was saved: a claim for the event, never trusted.
+	SavedBy string
 }
 
 type DamageInput struct {
@@ -208,7 +212,8 @@ func (s *Service) VoidGateMove(ctx context.Context, moveID, reason, actor string
 // typed number, is void with reason TurnedAway, and gets a turned_away flag
 // (the refusal codes) for the office. A repeat is a no-op; a move whose gate
 // form was saved is refused (ErrFormSaved), and one voided otherwise is ErrVoided.
-func (s *Service) TurnAwayMove(ctx context.Context, moveID, number string, reasons []Reason, actor string) error {
+// savedBy is the phone's claim of who turned it away, recorded in the event only.
+func (s *Service) TurnAwayMove(ctx context.Context, moveID, number string, reasons []Reason, savedBy, actor string) error {
 	return s.tx(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, notes *[]note) error {
 		m, err := lockMove(ctx, q, sc, moveID)
 		switch {
@@ -231,7 +236,7 @@ func (s *Service) TurnAwayMove(ctx context.Context, moveID, number string, reaso
 			return err
 		}
 		*notes = append(*notes, note{"move", m.ID})
-		return s.event(ctx, q, sc, m.ID, "move.turned_away", actor, map[string]any{"number": number, "reasons": reasons})
+		return s.event(ctx, q, sc, m.ID, "move.turned_away", actor, map[string]any{"number": number, "reasons": reasons, "saved_by": savedBy})
 	})
 }
 
@@ -419,9 +424,12 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 	}
 	if len(d.Refusals) > 0 {
 		refused := &Refusal{Blocked: d.Blocked, Reasons: d.Refusals}
-		pass := correction
+		overridden := settings.RefusalMode == "clerk_override" && f.Override != nil && strings.TrimSpace(f.Override.Reason) != ""
+		pass, prefix := correction, "override:"
 		switch {
 		case pass != "":
+		case f.SavedOffline && (d.Blocked || !overridden): // the truck has gone: record the truth, flag the conflict (spec 3.3, 3.8)
+			prefix = "offline:"
 		case d.Blocked:
 			return Result{Refused: refused}, nil
 		case settings.RefusalMode == "clerk_override":
@@ -443,7 +451,7 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 			return Result{Refused: refused}, nil
 		}
 		for _, r := range d.Refusals {
-			flags = append(flags, Reason{"override:" + r.Code, pass})
+			flags = append(flags, Reason{prefix + r.Code, cmp.Or(pass, r.Detail)})
 		}
 	}
 	if len(d.Candidates) > 0 {
@@ -525,7 +533,7 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 			return Result{}, err
 		}
 	}
-	kindOf, payload := "move.gate_saved", map[string]any{"form": f, "flags": flags, "visit_id": visitID}
+	kindOf, payload := "move.gate_saved", map[string]any{"form": f, "flags": flags, "visit_id": visitID, "saved_by": f.SavedBy}
 	if correction != "" {
 		kindOf, payload["reason"] = "move.corrected", correction
 	}
@@ -554,9 +562,12 @@ func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Sc
 	want := reasonCodes(refusals)
 	covers := func(a Approval) bool {
 		have := approvalCodes(a)
-		return a.Status == "approved" && !slices.ContainsFunc(want, func(c string) bool { return !slices.Contains(have, c) })
+		return a.Status == "approved" && (a.Number == "" || a.Number == number) &&
+			!slices.ContainsFunc(want, func(c string) bool { return !slices.Contains(have, c) })
 	}
-	same := func(a Approval) bool { return slices.Equal(approvalCodes(a), want) }
+	same := func(a Approval) bool {
+		return (a.Number == "" || a.Number == number) && slices.Equal(approvalCodes(a), want)
+	}
 	if id != "" {
 		i := slices.IndexFunc(all, func(a Approval) bool { return a.ID == id })
 		switch {

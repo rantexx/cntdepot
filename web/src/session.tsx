@@ -11,6 +11,21 @@ const SCOPE_KEY = "scope-changed";
 // The last session the server sent: a gate phone reloaded without network keeps working from it.
 // The server still checks every call; signing out or a 401 clears it.
 const SESSION_KEY = "last-session";
+// A sign-out the server has not heard of yet (no network): finished before the session is read again,
+// so a reload never brings back the person who signed out. Cleared when it reaches the server or on sign-in.
+export const PENDING_LOGOUT = "pending-logout";
+
+// Tells the server about a pending sign-out; false while it cannot be reached.
+async function finishLogout(): Promise<boolean> {
+  if (!readLocal(PENDING_LOGOUT)) return true;
+  try {
+    await logout();
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status >= 500) return false; // a 401 means it is already gone
+  }
+  writeLocal(PENDING_LOGOUT, "");
+  return true;
+}
 
 // The scope this tab shows, sent with every call so a stale tab is refused instead of writing elsewhere.
 function shown(session: Session): Session {
@@ -38,6 +53,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>({ status: "loading" });
 
   const reload = useCallback(async () => {
+    if (!(await finishLogout())) {
+      setState({ status: "anon" }); // signed out here; the server hears of it on reconnect
+      return;
+    }
     try {
       setState({ status: "ready", session: shown(await ok(getSession())) });
     } catch (e) {
@@ -60,12 +79,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const onStorage = (e: StorageEvent) => {
       if (e.key === SCOPE_KEY) void reload();
     };
+    const onOnline = () => {
+      if (readLocal(PENDING_LOGOUT)) void finishLogout();
+    };
     window.addEventListener("storage", onStorage);
+    window.addEventListener("online", onOnline);
     void reload();
     return () => {
       onUnauthorized(undefined);
       onScopeChanged(undefined);
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("online", onOnline);
     };
   }, [reload]);
 
@@ -81,6 +105,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (unsent > 0 && !window.confirm(tRef.current("gateUnsentSignOut"))) return;
     try {
       await logout();
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status >= 500) writeLocal(PENDING_LOGOUT, "1"); // finished on reconnect
     } finally {
       writeLocal(SESSION_KEY, "");
       await forgetForSignOut().catch(() => undefined);

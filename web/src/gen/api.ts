@@ -514,6 +514,11 @@ export interface TurnAway {
   number: string;
   /** @maxItems 20 */
   reasons: TurnAwayReasonsItem[];
+  /**
+     * the user id signed in on the phone when the truck was turned away; a claim recorded in the event, never trusted
+     * @maxLength 64
+     */
+  savedBy?: string;
 }
 
 export interface ReasonBody {
@@ -596,6 +601,13 @@ export interface GateForm {
      * @maxLength 64
      */
   approvalId?: string;
+  /** The phone saved this form while offline: the truck has already gone through. Refusals then do not stop it (block list included); each becomes an offline:<code> flag for the office. */
+  savedOffline?: boolean;
+  /**
+     * the user id signed in on the phone when the form was saved; a claim recorded in the event, never trusted
+     * @maxLength 64
+     */
+  savedBy?: string;
 }
 
 export interface GateResult {

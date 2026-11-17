@@ -292,12 +292,12 @@ export function Age({ days }: { days: number }) {
   return <span className={`age age-${band}`}>{days} {t("daysShort")}</span>;
 }
 
-// A gate-move flag or refusal code in words: blocked, override:blocked, turned_away, ...
+// A gate-move flag or refusal code in words: blocked, override:blocked, offline:hold_open, turned_away, ...
 export function ReasonText({ code }: { code: string }) {
   const { t } = useT();
   const [head, rest] = code.split(":");
   const label = (c: string) => t(`reason_${c}` as Key) ?? c;
-  return <>{head === "override" && rest ? `${t("reason_override")}: ${label(rest)}` : label(head)}</>;
+  return <>{(head === "override" || head === "offline") && rest ? `${t(`reason_${head}` as Key)}: ${label(rest)}` : label(head)}</>;
 }
 
 /** A flag's detail: refusal codes ("hold_open,no_order") in words; any other text stays as written. */

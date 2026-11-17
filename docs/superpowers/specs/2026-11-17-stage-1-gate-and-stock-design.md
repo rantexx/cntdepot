@@ -220,8 +220,8 @@ A filled EIR or gate slip, a release order and a booking, the stock Excel, and t
 ## 7. Built - deviations from this design
 - **Turn away.** A phone that is refused and gives up calls `POST /api/moves/{id}/turn-away`. It voids the move ("turned away"), records the number and reasons, and raises a `turned_away` flag for the office. It goes through the offline outbox and is safe to send twice.
 - **Order not open is a refusal.** An expired, done or cancelled order raises `order_not_open` and follows the refusal setting like any other reason. An expired redelivery with walk-ins allowed is treated as a walk-in and flagged.
-- **Approvals are tied to reasons.** An approval only lets a truck pass if it covers the reasons the truck is refused for now. The gate phone hears the decision live.
-- **Corrections.** They record the truth even if a rule would refuse it, and leave an `override:<reason>` flag for the office (a blocked number included). A correction cannot change direction: void it and record again. A number correction moves the visit. Voiding a gate-in closes the visit as "voided". A gate-out reversal is refused (409) if the number has a newer visit in the yard.
+- **Approvals are tied to reasons and the number.** An approval only lets a truck pass if it covers the reasons the truck is refused for now, for the container number it was asked for. The gate phone hears the decision live.
+- **Corrections.** They record the truth even if a rule would refuse it, and leave an `override:<reason>` flag for the office (a blocked number included). A blocked number still matches its order item, so a correction keeps the item used and its flags. A correction cannot change direction: void it and record again. A number correction moves the visit. Voiding a gate-in closes the visit as "voided". A gate-out reversal is refused (409) if the number has a newer visit in the yard.
 - **Gate-out from another depot** closes the old visit there (`other_depot_gate_out`) and raises an `other_depot` flag.
 - **EIR.** The time is the first form save and never changes on correction. Times use the depot time zone. It shows the phone's container photos, damage and signature, never camera-lane frames (a driver may be in them).
 - **Days in the yard** (`daysInYard`) are depot-local calendar days, the same rule as the ageing report. The server computes it, and the yard screen filter uses it.
@@ -229,8 +229,9 @@ A filled EIR or gate slip, a release order and a booking, the stock Excel, and t
 - **CSV files.** A file that is not UTF-8 is read as Windows-1254, which is what Turkish Excel saves. Imports apply all or nothing.
 - **Offline phone.**
   - The service worker needs HTTPS to reload the app offline on a phone. Over plain `http://` on the LAN (the hub) the outbox still works while the page stays open.
-  - Entries left in the outbox after sign-out are sent by the next user who signs in on that phone, and that user becomes the recorded actor. The phone warns on sign-out when entries are unsent.
+  - Entries left in the outbox after sign-out are sent by the next user who signs in on that phone, and that user becomes the recorded actor. Each entry also carries `savedBy` (who was signed in on the phone when it was saved), kept in the move event as a claim only. The phone warns on sign-out when entries are unsent.
   - An offline save that is predicted to be refused shows Hold/Refuse, not success, unless the mode is clerk override with a reason.
+  - A form saved offline is sent with `savedOffline`. The truck has gone, so the server stores it in every refusal mode, block list included, and turns each refusal it finds into an `offline:<reason>` flag in Gate issues. The phone never offers to turn such a truck away.
 
 ### Deferred
 - Indexes on gate move visit/order keys; paging on order, approval, flag and block lists; gate log and export caps (5k / 100k rows) are silent.
@@ -238,5 +239,4 @@ A filled EIR or gate slip, a release order and a booking, the stock Excel, and t
 - A "recently sent" list on the phone; phone recents are not cleared at sign-out.
 - Office times follow the browser time zone, not the depot's.
 - Import: row numbers skip blank lines; a duplicate number inside one order is not caught.
-- Approvals are tied to reasons, not to the form number.
 - A midnight/time zone edge test for `daysInYard`.

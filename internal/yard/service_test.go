@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -52,13 +54,14 @@ type fixture struct {
 	st    *Store
 	moves *store.Store
 	rec   *recorder
+	pool  *pgxpool.Pool
 }
 
 func newFixture(t *testing.T) *fixture {
 	st, pool := openTest(t)
 	moves := store.New(pool)
 	rec := &recorder{}
-	return &fixture{t: t, svc: NewService(st, moves, rec.notify), st: st, moves: moves, rec: rec}
+	return &fixture{t: t, svc: NewService(st, moves, rec.notify), st: st, moves: moves, rec: rec, pool: pool}
 }
 
 func (x *fixture) move(ctx context.Context) string {
@@ -126,6 +129,18 @@ func (x *fixture) visit(ctx context.Context, id string) Visit {
 		x.t.Fatal(err)
 	}
 	return v
+}
+
+// savedBy reads the saved_by claim of the move's event of this kind.
+func (x *fixture) savedBy(ctx context.Context, moveID, kind string) string {
+	x.t.Helper()
+	var by string
+	if err := db.InCompany(ctx, x.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT payload->>'saved_by' FROM events WHERE stream = $1 AND kind = $2`, moveID, kind).Scan(&by)
+	}); err != nil {
+		x.t.Fatal(err)
+	}
+	return by
 }
 
 func gateIn(number string) GateForm {
@@ -391,12 +406,12 @@ func TestOfflineGateOutAfterOrderCancelledIsFlaggedNotLost(t *testing.T) {
 	if v := x.visit(ctxA, in.VisitID); v.Status != "in_yard" {
 		t.Fatalf("a refused gate-out closed the visit: %+v", v)
 	}
-	f.Override = &Override{Reason: "saved offline"}
+	f.SavedOffline = true
 	r := x.save(ctxA, f)
-	if r.Refused != nil || !slices.Contains(codes(r.Flags), "override:order_not_open") {
+	if r.Refused != nil || !slices.Contains(codes(r.Flags), "offline:order_not_open") {
 		t.Fatalf("result = %+v", r)
 	}
-	if got := flagCodes(t, x.st, ctxA, f.MoveID); !slices.Contains(got, "override:order_not_open") {
+	if got := flagCodes(t, x.st, ctxA, f.MoveID); !slices.Contains(got, "offline:order_not_open") {
 		t.Fatalf("stored flags = %v", got)
 	}
 	if v := x.visit(ctxA, in.VisitID); v.Status != "out" || *v.OutMoveID != f.MoveID {
@@ -404,6 +419,86 @@ func TestOfflineGateOutAfterOrderCancelledIsFlaggedNotLost(t *testing.T) {
 	}
 	if form, _ := x.st.GetMoveForm(ctxA, f.MoveID); form.FormSavedAt == nil {
 		t.Fatal("the move was not stored")
+	}
+}
+
+// A form saved offline is refused by nothing: the truck has gone. In every
+// refusal mode, block list included, it is stored and each refusal is an offline: flag.
+func TestOfflineSaveIsStoredAndFlaggedInEveryMode(t *testing.T) {
+	x := newFixture(t)
+	for i, mode := range []string{"none", "clerk_override", "manager_approval"} {
+		if err := x.st.SetSettings(ctxA, Settings{RefusalMode: "clerk_override", WalkinsAllowed: true, EirTtlDays: 30}); err != nil {
+			t.Fatal(err)
+		}
+		held, blocked := fmt.Sprintf("HOLD%07d", i), fmt.Sprintf("BLOK%07d", i)
+		in := x.save(ctxA, gateIn(held))
+		if _, err := x.svc.PlaceHold(ctxA, in.VisitID, "customs", "office"); err != nil {
+			t.Fatal(err)
+		}
+		inB := x.save(ctxA, gateIn(blocked))
+		if _, err := x.svc.UpsertBlock(ctxA, "container", blocked, "stolen", "office"); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.st.SetSettings(ctxA, Settings{RefusalMode: mode, WalkinsAllowed: true, EirTtlDays: 30}); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct{ number, visitID, flag, detail string }{
+			{held, in.VisitID, "offline:hold_open", "customs"},
+			{blocked, inB.VisitID, "offline:blocked", "stolen"},
+		} {
+			f := gateOut(c.number)
+			f.MoveID = x.move(ctxA)
+			if r := x.save(ctxA, f); r.Refused == nil { // online, the gate refuses it
+				t.Fatalf("%s %s online: %+v", mode, c.flag, r)
+			}
+			f.SavedOffline, f.SavedBy = true, "u-phone"
+			r := x.save(ctxA, f)
+			if r.Refused != nil || r.VisitID != c.visitID {
+				t.Fatalf("%s %s: %+v", mode, c.flag, r)
+			}
+			i := slices.IndexFunc(r.Flags, func(fl Reason) bool { return fl.Code == c.flag })
+			if i < 0 || r.Flags[i].Detail != c.detail || slices.ContainsFunc(r.Flags, func(fl Reason) bool { return strings.HasPrefix(fl.Code, "override:") }) {
+				t.Fatalf("%s: flags = %+v, want %s", mode, r.Flags, c.flag)
+			}
+			if got := flagCodes(t, x.st, ctxA, f.MoveID); !slices.Contains(got, c.flag) {
+				t.Fatalf("%s: stored flags = %v", mode, got)
+			}
+			if v := x.visit(ctxA, c.visitID); v.Status != "out" || *v.OutMoveID != f.MoveID {
+				t.Fatalf("%s: visit = %+v", mode, v)
+			}
+			if by := x.savedBy(ctxA, f.MoveID, "move.gate_saved"); by != "u-phone" {
+				t.Fatalf("%s: saved_by = %q", mode, by)
+			}
+		}
+	}
+	if got, _ := x.st.ListApprovals(ctxA, ""); len(got) != 1 { // only the online try of the held number asked a manager
+		t.Fatalf("approvals = %+v", got)
+	}
+}
+
+// An approval is for the number it was asked for: changing the number needs a new one.
+func TestApprovalIsForItsNumber(t *testing.T) {
+	x := newFixture(t)
+	if err := x.st.SetSettings(ctxA, Settings{RefusalMode: "manager_approval", WalkinsAllowed: true, EirTtlDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	f := gateOut(numA)
+	f.MoveID = x.move(ctxA)
+	first := x.save(ctxA, f).Refused.ApprovalID
+	if err := x.svc.DecideApproval(ctxA, first, true, "manager"); err != nil {
+		t.Fatal(err)
+	}
+	f.Number = numB // same refusals, another container
+	for _, id := range []string{"", first} {
+		f.ApprovalID = id
+		r := x.save(ctxA, f)
+		if r.Refused == nil || r.Refused.ApprovalID == first || r.Refused.ApprovalStatus != "pending" {
+			t.Fatalf("approval id %q: %+v", id, r)
+		}
+	}
+	f.Number, f.ApprovalID = numA, ""
+	if r := x.save(ctxA, f); r.Refused != nil {
+		t.Fatalf("own number: %+v", r)
 	}
 }
 
@@ -875,7 +970,7 @@ func TestTurnAwayMove(t *testing.T) {
 	id := x.move(ctxA)
 	reasons := []Reason{{"no_order", ""}, {"hold_open", "customs"}}
 	for i := 0; i < 2; i++ { // a repeat is a no-op
-		if err := x.svc.TurnAwayMove(ctxA, id, " mscu 1234565", reasons, "clerk"); err != nil {
+		if err := x.svc.TurnAwayMove(ctxA, id, " mscu 1234565", reasons, "u-phone", "clerk"); err != nil {
 			t.Fatalf("turn away %d: %v", i, err)
 		}
 	}
@@ -890,6 +985,9 @@ func TestTurnAwayMove(t *testing.T) {
 	if len(fl) != 1 || fl[0].Code != "turned_away" || fl[0].Detail != "hold_open,no_order" {
 		t.Fatalf("flags = %+v", fl)
 	}
+	if by := x.savedBy(ctxA, id, "move.turned_away"); by != "u-phone" {
+		t.Fatalf("saved_by = %q", by)
+	}
 	if v, _, _ := x.svc.FindVisits(ctxA, VisitFilter{Number: numA}, 10, 0); len(v) != 0 {
 		t.Fatalf("visits = %+v", v)
 	}
@@ -898,16 +996,16 @@ func TestTurnAwayMove(t *testing.T) {
 	saved := gateIn(numA)
 	saved.MoveID = x.move(ctxA)
 	x.save(ctxA, saved)
-	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "clerk"); !errors.Is(err, ErrFormSaved) {
+	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "", "clerk"); !errors.Is(err, ErrFormSaved) {
 		t.Fatalf("turn away saved = %v", err)
 	}
 	if err := x.svc.VoidGateMove(ctxA, saved.MoveID, "test truck", "office"); err != nil {
 		t.Fatal(err)
 	}
-	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "clerk"); !errors.Is(err, ErrVoided) {
+	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "", "clerk"); !errors.Is(err, ErrVoided) {
 		t.Fatalf("turn away voided = %v", err)
 	}
-	if err := x.svc.TurnAwayMove(ctxD2, id, numA, nil, "clerk"); !errors.Is(err, ErrNotFound) {
+	if err := x.svc.TurnAwayMove(ctxD2, id, numA, nil, "", "clerk"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("turn away from another depot = %v", err)
 	}
 }
@@ -918,11 +1016,15 @@ func TestCorrectionToBlockedNumberIsStoredAndFlagged(t *testing.T) {
 	if _, err := x.svc.UpsertBlock(ctxA, "container", numB, "stolen", "office"); err != nil {
 		t.Fatal(err)
 	}
+	orderID, _ := x.order(ctxA, "redelivery", OrderItem{TypeCode: ptr("45G1"), Quantity: 1})
 	f := gateIn(numA)
 	f.MoveID = x.move(ctxA)
 	x.save(ctxA, f)
 	f.Number = numB
 	c, err := x.svc.CorrectGateMove(ctxA, f.MoveID, f, "OCR misread", "office")
+	if got := x.used(ctxA, orderID); got[0] != 1 {
+		t.Fatalf("used = %v; the corrected move must keep its order item", got)
+	}
 	if err != nil || c.Refused != nil {
 		t.Fatalf("correction = %+v %v; want it stored", c, err)
 	}

@@ -139,7 +139,7 @@ test("gate-out refused by hold", async ({ page }) => {
   expect(visits[0].status).toBe("out");
 });
 
-test("a replayed form refused on the server waits for the clerk", async ({ page, context }) => {
+test("a form saved offline is stored with the conflict flagged, never refused", async ({ page, context }) => {
   const number = containerNumber();
   const api = page.request;
   const hold = await heldInYard(api, number, "Damage survey");
@@ -149,26 +149,21 @@ test("a replayed form refused on the server waits for the clerk", async ({ page,
 
   await openGate(page);
   await context.setOffline(true);
-  // The phone's lists predate the hold: offline, nothing warns the clerk.
+  // The phone's lists predate the hold: offline, nothing warns the clerk, and the truck leaves.
   expect((await hold()).ok()).toBeTruthy();
   await page.getByRole("button", { name: "Gate out" }).click();
   await page.getByLabel("Container number").fill(number);
   await page.getByRole("button", { name: /^save$/i }).click();
   await expect(page.getByText("Saved on the phone")).toBeVisible();
   await context.setOffline(false);
-  await expect(page.getByRole("region", { name: "Refused" }).getByText("Damage survey")).toBeVisible();
 
-  // Kept on the phone, not dropped: after a reload it is still there for a decision.
-  await page.reload();
-  const refused = page.getByRole("region", { name: "Refused" });
-  await expect(refused.getByText("Damage survey")).toBeVisible();
-  await refused.getByRole("button", { name: "Refuse the truck" }).click();
-  await expect(refused).toHaveCount(0);
-  expect((await visitsOf(api, number))[0].status).toBe("in_yard");
-  // The office sees the turned-away truck and why.
-  await expect.poll(async () => (await formsOf(api, number)).filter((f) => f.voidReason === "turned away").length).toBe(1);
-  const turned = (await formsOf(api, number)).find((f) => f.voidReason === "turned away")!;
-  expect(turned.flags.map((f) => [f.code, f.detail])).toEqual([["turned_away", "hold_open"]]);
+  // The truth at the gate wins: the move is stored, the hold conflict goes to the office.
+  await expect(page.getByRole("button", { name: "Share EIR" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Saved offline, conflicted later: On hold: Damage survey")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Refused" })).toHaveCount(0);
+  expect((await visitsOf(api, number))[0].status).toBe("out");
+  const [form] = await formsOf(api, number).then((fs) => fs.filter((f) => !f.voided && f.flags.some((x) => x.code.startsWith("offline:"))));
+  expect(form.flags.map((f) => [f.code, f.detail])).toContainEqual(["offline:hold_open", "Damage survey"]);
   await expect.poll(() => outboxSize(page)).toBe(0);
 });
 

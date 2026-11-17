@@ -84,13 +84,14 @@ func pick(named, qty []MatchedItem) []MatchedItem {
 }
 
 // Decide applies the gate rules (spec 3.2, 3.8). It never drops a move: every
-// conflict is a refusal (the clerk may override) or a flag.
+// conflict is a refusal (the clerk may override) or a flag. A block is a
+// refusal the gate never passes, but matching still runs: a correction or an
+// offline save of a blocked container must keep its order item and flags.
 func Decide(f Facts) Decision {
 	var d Decision
 	if f.Blocked != nil {
 		d.Blocked = true
 		d.Refusals = append(d.Refusals, Reason{"blocked", f.Blocked.Reason})
-		return d
 	}
 	out := f.Direction == "out"
 	if out && len(f.OpenHolds) > 0 {

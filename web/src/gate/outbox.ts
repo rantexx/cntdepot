@@ -117,6 +117,9 @@ export async function drop(e: Entry) {
  * gets a turn-away entry, sent like any other, so the office sees the truck and why.
  */
 export async function turnAway(moveId: string, scope: string, payload: TurnAway, lane: string) {
+  if (entries.some((e) => e.moveId === moveId && e.kind === "form" && e.payload.form.savedOffline)) {
+    throw new Error("a truck saved offline has gone: its record is kept"); // never delete the evidence
+  }
   const savedAt = new Date().toISOString();
   await run("outbox", "readwrite", (t) => {
     const store = t.objectStore("outbox");

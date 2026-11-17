@@ -81,10 +81,11 @@ const REASONS: Record<string, Key> = {
 function useReason() {
   const { t } = useT();
   return (code: string) => {
-    const passed = code.startsWith("override:");
-    const c = passed ? code.slice(9) : code;
+    const [head, rest] = code.split(":");
+    const c = rest ?? head;
     const text = REASONS[c] ? t(REASONS[c]) : c;
-    return passed ? `${t("gatePassed")}: ${text}` : text;
+    if (rest === undefined) return text;
+    return `${head === "offline" ? t("reason_offline") : t("gatePassed")}: ${text}`;
   };
 }
 
@@ -122,6 +123,9 @@ export function Gate() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState<{ moveId: string; number: string } | null>(null);
   const mode: Mode = lists?.snapshot.settings.refusalMode ?? "clerk_override";
+  useEffect(() => {
+    void navigator.storage?.persist?.().catch(() => undefined); // keep the outbox from being evicted
+  }, []);
 
   // A manager's decision is announced as a move event: send the waiting form again with its approval.
   const askAgain = (id?: string) => {
@@ -255,7 +259,8 @@ function TruckForm({
 }) {
   const { t } = useT();
   const reason = useReason();
-  const { hasModule } = useSession();
+  const { hasModule, session } = useSession();
+  const savedBy = session?.user.id;
   const [error, setError] = useState("");
   const [holdAsk, setHoldAsk] = useState(false);
   const [held, setHeld] = useState(false);
@@ -374,6 +379,9 @@ function TruckForm({
         signaturePhotoId,
         damages,
         override: d.override.trim() ? { reason: d.override.trim() } : undefined,
+        // Offline, the truck goes now: the server stores it whatever it finds and flags the conflicts.
+        savedOffline: online ? undefined : true,
+        savedBy,
       };
       list.push({ ...base, id: ulid(), kind: "form", payload: { form } });
       await enqueue(list);
@@ -397,7 +405,12 @@ function TruckForm({
 
   async function refuseNow() {
     try {
-      await turnAway(d.moveId, scope, { number, reasons: refusals.map((code) => ({ code, detail: details[code] })) }, readLocal("lane") ?? "1");
+      await turnAway(
+        d.moveId,
+        scope,
+        { number, reasons: refusals.map((code) => ({ code, detail: details[code] })), savedBy },
+        readLocal("lane") ?? "1",
+      );
       onSaved({ moveId: d.moveId, number });
     } catch (e) {
       setError(`${t("gateNotSaved")}: ${String(e)}`);
@@ -701,13 +714,18 @@ function Decision({
 }) {
   const { t } = useT();
   const reasonText = useReason();
+  const { session } = useSession();
   const [reason, setReason] = useState("");
   const refusals = entry.refusal?.refusals ?? [];
-  const refuse = (
+  // A truck saved offline has already gone: turning it away would delete the record of it.
+  const gone = entry.kind === "form" && !!entry.payload.form.savedOffline;
+  const refuse = !gone && (
     <button
       type="button"
       className="danger"
-      onClick={() => void turnAway(entry.moveId, entry.scope, { number, reasons: refusals }, readLocal("lane") ?? "1")}
+      onClick={() =>
+        void turnAway(entry.moveId, entry.scope, { number, reasons: refusals, savedBy: session?.user.id }, readLocal("lane") ?? "1")
+      }
     >
       {t("gateRefuseTruck")}
     </button>
@@ -787,6 +805,11 @@ function Decision({
       )}
       {!blocked && mode === "none" && <p className="warn">{t("gateNoExceptions")}</p>}
       <div className="row">
+        {gone && (
+          <button type="button" onClick={() => void retry(entry)}>
+            {t("retry")}
+          </button>
+        )}
         {onHold && mode === "manager_approval" && !blocked && (
           <button type="button" onClick={onHold}>
             {t("gateHold")}

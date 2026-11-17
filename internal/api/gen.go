@@ -492,6 +492,12 @@ type GateForm struct {
 	Override *struct {
 		Reason string `json:"reason"`
 	} `json:"override,omitempty"`
+
+	// SavedBy the user id signed in on the phone when the form was saved; a claim recorded in the event, never trusted
+	SavedBy *string `json:"savedBy,omitempty"`
+
+	// SavedOffline The phone saved this form while offline: the truck has already gone through. Refusals then do not stop it (block list included); each becomes an offline:<code> flag for the office.
+	SavedOffline     *bool   `json:"savedOffline,omitempty"`
 	Seal             *string `json:"seal,omitempty"`
 	SignaturePhotoId *string `json:"signaturePhotoId,omitempty"`
 	TrailerPlate     *string `json:"trailerPlate,omitempty"`
@@ -1031,6 +1037,9 @@ type TurnAway struct {
 		Code   string  `json:"code"`
 		Detail *string `json:"detail,omitempty"`
 	} `json:"reasons"`
+
+	// SavedBy the user id signed in on the phone when the truck was turned away; a claim recorded in the event, never trusted
+	SavedBy *string `json:"savedBy,omitempty"`
 }
 
 // Validation defines model for Validation.

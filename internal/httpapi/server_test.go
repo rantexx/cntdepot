@@ -936,6 +936,15 @@ func TestPlatformCreateCompanyInvitesOwner(t *testing.T) {
 	if status != 201 || !strings.Contains(string(body), `"name":"Mersin"`) {
 		t.Fatalf("create depot = %d %s", status, body)
 	}
+	// A zone the depot-local queries cannot use is refused; none is UTC.
+	for _, tz := range []string{"Istanbul", "+03:00", "Local", "Europe/Nowhere"} {
+		if status, body := boss.call("POST", "/api/depots", `{"name":"Bad","timezone":"`+tz+`"}`); status != 400 || !strings.Contains(string(body), "E4000") {
+			t.Fatalf("create depot in %q = %d %s; want 400 E4000", tz, status, body)
+		}
+	}
+	if status, body := boss.call("POST", "/api/depots", `{"name":"Plain"}`); status != 201 || !strings.Contains(string(body), `"timezone":"UTC"`) {
+		t.Fatalf("create depot without a zone = %d %s", status, body)
+	}
 }
 
 func TestDevLoginNeedsTheDevProvider(t *testing.T) {

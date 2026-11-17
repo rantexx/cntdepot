@@ -1162,6 +1162,7 @@ components:
             type: object
             required: [code]
             properties: {code: {type: string, maxLength: 64}, detail: {type: string, maxLength: 500}}
+        savedBy: {type: string, maxLength: 64, description: "the user id signed in on the phone when the truck was turned away; a claim recorded in the event, never trusted"}
     ReasonBody:
       type: object
       required: [reason]
@@ -1199,6 +1200,12 @@ components:
           description: The clerk passes the refusals with a reason (refusal mode clerk_override).
           properties: {reason: {type: string, maxLength: 500}}
         approvalId: {type: string, maxLength: 64, description: the manager approval of a 409 E4098 (refusal mode manager_approval)}
+        savedOffline:
+          type: boolean
+          description: >-
+            The phone saved this form while offline: the truck has already gone through. Refusals then
+            do not stop it (block list included); each becomes an offline:<code> flag for the office.
+        savedBy: {type: string, maxLength: 64, description: "the user id signed in on the phone when the form was saved; a claim recorded in the event, never trusted"}
     GateResult:
       type: object
       required: [move, visitId, flags]

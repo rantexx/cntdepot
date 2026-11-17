@@ -109,6 +109,7 @@ func checkGateForm(f api.GateForm) error {
 		code("truckPlate", f.TruckPlate), code("trailerPlate", f.TrailerPlate),
 		{name: "driverName", v: val(f.DriverName), max: maxName},
 		code("signaturePhotoId", f.SignaturePhotoId), code("chosenOrderItemId", f.ChosenOrderItemId), code("approvalId", f.ApprovalId),
+		code("savedBy", f.SavedBy),
 	}
 	if f.Override != nil {
 		fs = append(fs, field{name: "override.reason", v: f.Override.Reason, max: maxText})
@@ -196,7 +197,7 @@ func (s *Server) CorrectMove(ctx context.Context, req api.CorrectMoveRequestObje
 }
 
 func (s *Server) TurnAwayMove(ctx context.Context, req api.TurnAwayMoveRequestObject) (api.TurnAwayMoveResponseObject, error) {
-	fs := []field{{name: "number", v: req.Body.Number, max: maxCode}}
+	fs := []field{{name: "number", v: req.Body.Number, max: maxCode}, code("savedBy", req.Body.SavedBy)}
 	reasons := make([]yard.Reason, 0, len(req.Body.Reasons))
 	for _, r := range req.Body.Reasons {
 		fs = append(fs, field{name: "reasons.code", v: r.Code, max: maxCode}, field{name: "reasons.detail", v: val(r.Detail), max: maxText})
@@ -205,7 +206,7 @@ func (s *Server) TurnAwayMove(ctx context.Context, req api.TurnAwayMoveRequestOb
 	if err := checkFields(fs...); err != nil {
 		return nil, err
 	}
-	return api.TurnAwayMove204Response{}, s.opts.Yard.TurnAwayMove(ctx, req.Id, req.Body.Number, reasons, actor(ctx))
+	return api.TurnAwayMove204Response{}, s.opts.Yard.TurnAwayMove(ctx, req.Id, req.Body.Number, reasons, val(req.Body.SavedBy), actor(ctx))
 }
 
 func (s *Server) VoidMove(ctx context.Context, req api.VoidMoveRequestObject) (api.VoidMoveResponseObject, error) {
