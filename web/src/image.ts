@@ -9,6 +9,9 @@ export interface PreparedPhoto {
   ai: Blob;
   width: number;
   height: number;
+  /** the size of ai */
+  aiWidth: number;
+  aiHeight: number;
   quality: Quality;
 }
 
@@ -40,7 +43,7 @@ export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
   const ai = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not encode photo"))), "image/jpeg", 0.85),
   );
-  return { ai, width, height, quality };
+  return { ai, width, height, aiWidth: w, aiHeight: h, quality };
 }
 
 // measure estimates brightness (mean luma, 0-255) and sharpness (variance of

@@ -112,7 +112,26 @@ export function PhotoWithBox({ src, box, alt }: { src: string; box: Box | null |
   );
 }
 
-// CheckDigitMath validates a number on the hub and shows the arithmetic.
+// ISO 6346 letter values skip the multiples of 11.
+const LETTER_VALUES = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37, 38];
+
+// validateHere is the hub's number check done on the phone, for when the hub cannot be reached
+// (same normalisation and arithmetic as internal/iso6346).
+export function validateHere(input: string): Validation {
+  const n = input.replace(/[İı]/g, "I").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const v: Validation = { input, normalized: n, well_formed: false, check_digit_valid: false, expected_check_digit: null, valid: false, sum: 0, remainder: 0 };
+  if (!/^[A-Z]{3}[UJZ][0-9]{7}$/.test(n)) return v;
+  const steps = [...n.slice(0, 10)].map((char, i) => {
+    const value = /[0-9]/.test(char) ? Number(char) : LETTER_VALUES[char.charCodeAt(0) - 65];
+    return { char, value, weight: 2 ** i, product: value * 2 ** i };
+  });
+  const sum = steps.reduce((s, x) => s + x.product, 0);
+  const expected = (sum % 11) % 10;
+  const valid = Number(n[10]) === expected;
+  return { ...v, well_formed: true, steps, sum, remainder: sum % 11, expected_check_digit: expected, check_digit_valid: valid, valid };
+}
+
+// CheckDigitMath validates a number on the hub and shows the arithmetic; without the hub, on the phone.
 export function CheckDigitMath({ number }: { number: string }) {
   const { t } = useT();
   const [v, setV] = useState<Validation | null>(null);
@@ -128,7 +147,7 @@ export function CheckDigitMath({ number }: { number: string }) {
           if (live) setV(res);
         })
         .catch(() => {
-          if (live) setV(null);
+          if (live) setV(validateHere(number));
         });
     }, 250);
     return () => {

@@ -264,6 +264,15 @@ figcaption { padding-top: 8px; display: grid; gap: 4px; }
 .thumb.failed { outline: 3px solid var(--stop); }
 .live-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; object-fit: contain; display: block; }
 
+/* Gate on the phone. */
+.gate-fresh { margin-top: 0; align-items: center; }
+.gate-body { padding-top: 16px; }
+.gate-body .card > h3:first-child { margin-top: 0; }
+.signature { display: grid; gap: 8px; justify-items: start; }
+.signature canvas { width: 100%; aspect-ratio: 3 / 1; background: #fff; border: 1px solid var(--rule); border-radius: 4px; touch-action: none; }
+.gate-damage { border: 1px solid var(--rule); border-radius: 4px; margin: 0 0 12px; padding: 4px 12px 12px; }
+.gate-damage legend { font-weight: 700; padding: 0 6px; }
+
 /* Narrow screens: the rail becomes a top bar. */
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); }

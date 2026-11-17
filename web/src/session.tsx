@@ -1,16 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getSession, logout, setScope, type Session, type SessionCurrent } from "./gen/api";
-import { onScopeChanged, onUnauthorized, setShownScope } from "./http";
+import { ApiError, onScopeChanged, onUnauthorized, setShownScope } from "./http";
 import { ok } from "./hubApi";
 import { useT } from "./i18n";
-import { writeLocal } from "./storage";
+import { readLocal, writeLocal } from "./storage";
 
 // Written after a scope choice; the other tabs of the browser share the session, so they reload it.
 const SCOPE_KEY = "scope-changed";
+// The last session the server sent: a gate phone reloaded without network keeps working from it.
+// The server still checks every call; signing out or a 401 clears it.
+const SESSION_KEY = "last-session";
 
 // The scope this tab shows, sent with every call so a stale tab is refused instead of writing elsewhere.
 function shown(session: Session): Session {
   setShownScope(`${session.current?.companyId ?? ""}:${session.current?.depotId ?? ""}`);
+  writeLocal(SESSION_KEY, JSON.stringify(session));
   return session;
 }
 
@@ -32,14 +36,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     try {
       setState({ status: "ready", session: shown(await ok(getSession())) });
-    } catch {
+    } catch (e) {
+      const last = e instanceof ApiError ? "" : readLocal(SESSION_KEY); // no answer at all: offline
+      if (last) {
+        setState({ status: "ready", session: shown(JSON.parse(last) as Session) });
+        return;
+      }
       // A 401 already flipped the state to "anon" through onUnauthorized.
       setState((s) => (s.status === "anon" ? s : { status: "down" }));
     }
   }, []);
 
   useEffect(() => {
-    onUnauthorized(() => setState({ status: "anon" }));
+    onUnauthorized(() => {
+      writeLocal(SESSION_KEY, "");
+      setState({ status: "anon" });
+    });
     onScopeChanged(() => void reload());
     const onStorage = (e: StorageEvent) => {
       if (e.key === SCOPE_KEY) void reload();
@@ -62,6 +74,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await logout();
     } finally {
+      writeLocal(SESSION_KEY, "");
       setState({ status: "anon" });
     }
   }, []);

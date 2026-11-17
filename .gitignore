@@ -14,3 +14,8 @@
 
 # Local tool downloads
 /.tools/
+
+# Playwright: signed-in state and run output
+/web/e2e/.auth.json
+/web/test-results/
+/web/playwright-report/

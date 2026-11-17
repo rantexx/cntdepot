@@ -6,6 +6,8 @@ import { dataProvider } from "./admin/dataProvider";
 import { ListPage } from "./admin/ListPage";
 import { Members } from "./admin/Members";
 import { getHealth, listMoves } from "./gen/api";
+import { Gate as GateFlow } from "./gate/Gate";
+import { startOutbox } from "./gate/outbox";
 import { camera as cameraApi, ok, type CameraState } from "./hubApi";
 import { useT, type Key } from "./i18n";
 import { readLocal, writeLocal } from "./storage";
@@ -77,6 +79,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  { route: "gate", href: "#/gate", label: "navGate", perm: "gate" },
   { route: "", href: "#/", label: "navLiveGate", perm: "gate", ocr: true },
   { route: "queue", href: "#/queue", label: "navQueue", perm: "office", ocr: true },
   { route: "camera", href: "#/camera", label: "navCamera", perm: "manage", ocr: true },
@@ -119,6 +122,8 @@ function Shell() {
   const ocr = hasModule("ocr");
   const visible = (n: NavItem) => can(n.perm) && (!n.ocr || ocr);
   const { waiting, camera, demo, engineUp } = useGateStatus(!!current && ocr && can("office"), can("manage"));
+  // The gate outbox sends from any page; the shell remounts per scope, so it restarts in the new one.
+  useEffect(() => (current?.depotId ? startOutbox() : undefined), [current?.depotId]);
   // Day or night is the person's choice on a shared depot PC; unset follows the computer.
   const [theme, setTheme] = useState(() => readLocal("theme") ?? "");
   useEffect(() => {
@@ -144,6 +149,8 @@ function Shell() {
   else if (route === "admin/members" && open(route)) page = <Members />;
   else if (route === "admin/company" && open(route)) page = <Company />;
   else if (route === "capture") page = <Capture />;
+  else if (route === "gate" && open(route)) page = <GateFlow />;
+  else if (route === "" && !can("office")) page = <GateFlow />; // the gate role's home
   else if (route === "queue" && open(route)) page = <Queue />;
   else if (route === "moves" && can("gate")) page = <MoveDetail key={id} id={id} />;
   else if (route === "test" && open(route)) page = <TestRead />;
@@ -151,7 +158,7 @@ function Shell() {
   else if (route === "" && ocr) page = <Home />;
   else page = <Capture />; // without OCR the gate's home is phone capture
   // A truck record belongs to the review queue in the rail.
-  const active = route === "moves" ? "queue" : route === "" && !ocr ? "capture" : route;
+  const active = route === "moves" ? "queue" : route === "" && !can("office") ? "gate" : route === "" && !ocr ? "capture" : route;
   const link = (n: NavItem) => (
     <a key={n.route} href={n.href} aria-current={active === n.route ? "page" : undefined}>
       {t(n.label)}
