@@ -23,7 +23,9 @@ Run `bash scripts/check.sh`. It must print `CHECK OK`. A Stop hook runs it too
 ## Where things are
 
 - Stage 0 spec: `docs/superpowers/specs/2026-11-16-stage-0-foundation-design.md`
+- Stage 1 design (gate and stock): `docs/superpowers/specs/2026-11-17-stage-1-gate-and-stock-design.md`
 - Roadmap: `docs/superpowers/specs/2026-11-15-depot-app-roadmap.md`
 - Stage 0a plan: `docs/superpowers/plans/2026-11-16-stage-0a-foundation.md`
+- Stage 1 plan: `docs/superpowers/plans/2026-11-17-stage-1-gate-and-stock.md`
 - Product and design: `PRODUCT.md`, `DESIGN.md`
 - Local test kit runbook: `docs/runbooks/local-test-kit.md`
