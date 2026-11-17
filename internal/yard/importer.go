@@ -18,6 +18,7 @@ import (
 	sqlcdb "depot/internal/yard/db"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"golang.org/x/text/encoding/charmap"
 )
 
 // Imports read a CSV file (Excel's "CSV" or "CSV UTF-8", ',' or ';' separated)
@@ -75,6 +76,13 @@ func (r record) get(col string) string { return r.v[col] }
 // readTable parses data; blank rows are skipped but counted.
 func readTable(data []byte, cols []string) ([]record, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	if !utf8.Valid(data) { // Excel's plain "CSV" in Turkish is Windows-1254
+		dec, err := charmap.Windows1254.NewDecoder().Bytes(data)
+		if err != nil || bytes.ContainsRune(dec, utf8.RuneError) {
+			return nil, &ImportError{Rows: []RowError{{0, "file", "the file's text encoding is not recognised: save it as CSV UTF-8"}}}
+		}
+		data = dec
+	}
 	first, _, _ := bytes.Cut(data, []byte("\n"))
 	comma := ','
 	if bytes.Count(first, []byte(";")) > bytes.Count(first, []byte(",")) {

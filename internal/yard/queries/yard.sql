@@ -358,9 +358,9 @@ SELECT COALESCE(l.id, '')::text AS line_id, COALESCE(l.code, '')::text AS line_c
        (count(*) FILTER (WHERE a.age BETWEEN 8 AND 30))::bigint AS d8_30,
        (count(*) FILTER (WHERE a.age BETWEEN 31 AND 90))::bigint AS d31_90,
        (count(*) FILTER (WHERE a.age > 90))::bigint AS d90_plus
-FROM visits v
+FROM visits v JOIN depots d ON d.company_id = v.company_id AND d.id = v.depot_id
 LEFT JOIN shipping_lines l ON l.company_id = v.company_id AND l.id = v.line_id
-CROSS JOIN LATERAL (SELECT floor((date_part('epoch', sqlc.arg(at_time)::timestamptz) - date_part('epoch', v.in_at)) / 86400) AS age) a
+CROSS JOIN LATERAL (SELECT ((sqlc.arg(at_time)::timestamptz AT TIME ZONE d.timezone)::date - (v.in_at AT TIME ZONE d.timezone)::date) AS age) a
 WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id) AND v.status = 'in_yard'
 GROUP BY l.id, l.code
 ORDER BY l.code NULLS FIRST;

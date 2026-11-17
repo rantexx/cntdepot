@@ -11,6 +11,7 @@ import (
 	"depot/internal/tenancy"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/text/encoding/charmap"
 )
 
 const stockHeader = "number,type_code,line_code,customer_code,full_empty,in_date,block,row,tier,grade\n"
@@ -180,15 +181,19 @@ func TestImportOrdersGroupsByReference(t *testing.T) {
 func TestAgeingBuckets(t *testing.T) {
 	x := importFixture(t)
 	now := time.Now()
-	add := func(n string, days int, line *string) {
+	loc, _ := time.LoadLocation("Europe/Istanbul")
+	y, mo, d0 := now.In(loc).Date()
+	// A visit that came in `days` calendar days ago at hh:mm depot-local.
+	add := func(n string, days, hh, mm int, line *string) {
 		t.Helper()
-		must[string](t)(x.st.CreateVisit(ctxA, Visit{Number: n, LineID: line, InAt: now.AddDate(0, 0, -days).Add(-time.Minute)}))
+		must[string](t)(x.st.CreateVisit(ctxA, Visit{Number: n, LineID: line, InAt: time.Date(y, mo, d0-days, hh, mm, 0, 0, loc)}))
 	}
 	l := ptrTo("lA")
-	for i, d := range []int{0, 7, 8, 30, 31, 90, 91, 400} {
-		add("TEST000000"+string(rune('0'+i)), d, l)
+	// The calendar day counts, not 24-hour periods: 23:50 eight days ago is 8 days, 00:10 seven days ago is 7.
+	for i, c := range [][3]int{{0, 0, 10}, {7, 0, 10}, {8, 23, 50}, {30, 23, 50}, {31, 0, 10}, {90, 23, 50}, {91, 0, 10}, {400, 12, 0}} {
+		add("TEST000000"+string(rune('0'+i)), c[0], c[1], c[2], l)
 	}
-	add("TEST0000009", 2, nil)
+	add("TEST0000009", 2, 12, 0, nil)
 	// A closed visit and another depot's visit do not count.
 	id := must[string](t)(x.st.CreateVisit(ctxA, Visit{Number: "TEST0000008", LineID: l, InAt: now.AddDate(0, 0, -50)}))
 	if err := x.st.CloseVisit(ctxA, id, nil, now, "x"); err != nil {
@@ -244,4 +249,27 @@ func mustDate(t *testing.T, s string) time.Time {
 		t.Fatal(err)
 	}
 	return d
+}
+
+func TestImportTurkishEncodings(t *testing.T) {
+	x := importFixture(t)
+	utf8CSV := stockHeader + "MSCU1234566,,,,,2026-01-05,İstanbul,ş,,\n"
+	// Excel's plain "CSV" in Turkish is Windows-1254.
+	cp1254, err := charmap.Windows1254.NewEncoder().String(strings.Replace(utf8CSV, "MSCU1234566", "CSQU3054383", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for number, data := range map[string]string{"MSCU1234566": utf8CSV, "CSQU3054383": cp1254} {
+		if n, err := x.svc.ImportStock(ctxA, []byte(data), "office"); err != nil || n != 1 {
+			t.Fatalf("import %s = %d, %v", number, n, err)
+		}
+		if v := must[Visit](t)(x.st.InYardVisit(ctxA, number)); v.Block != "İstanbul" || v.RowNo != "ş" {
+			t.Errorf("%s stored block %q row %q; want İstanbul and ş", number, v.Block, v.RowNo)
+		}
+	}
+	// Bytes that are neither UTF-8 nor Windows-1254 are a row-0 problem, not a server error.
+	_, err = x.svc.ImportStock(ctxA, []byte(stockHeader+"TGHU1234567,,,,,2026-01-05,\x81,,,\n"), "office")
+	if rows := x.rowErrors(err); len(rows) != 1 || rows[0].Row != 0 || !strings.Contains(rows[0].Message, "UTF-8") {
+		t.Fatalf("rows = %+v", rows)
+	}
 }

@@ -5,8 +5,10 @@ go 1.27.1
 require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.41.0
 )
 
 require (
@@ -21,7 +23,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.2 // indirect
-	github.com/oapi-codegen/runtime v1.9.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
@@ -32,7 +33,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
