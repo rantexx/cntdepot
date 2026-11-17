@@ -62,6 +62,7 @@ SELECT v.*, EXISTS (SELECT 1 FROM holds h
 FROM visits v
 WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
   AND (@status::text = '' OR v.status = @status)
+  AND strpos(v.number, @number::text) > 0
   AND (@line_id::text = '' OR v.line_id = @line_id)
   AND (@customer_id::text = '' OR v.customer_id = @customer_id)
   AND starts_with(v.type_code, @type_code::text)
@@ -76,6 +77,7 @@ LIMIT @lim::int OFFSET @off::int;
 SELECT count(*) FROM visits v
 WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
   AND (@status::text = '' OR v.status = @status)
+  AND strpos(v.number, @number::text) > 0
   AND (@line_id::text = '' OR v.line_id = @line_id)
   AND (@customer_id::text = '' OR v.customer_id = @customer_id)
   AND starts_with(v.type_code, @type_code::text)
@@ -158,8 +160,8 @@ WHERE f.company_id = @company_id AND f.id = @id AND f.resolved_at IS NULL
               AND (@depot_id::text = '' OR m.depot_id = @depot_id));
 
 -- name: InsertApproval :execrows
-INSERT INTO approvals (company_id, id, move_id, reasons, requested_by, requested_at)
-SELECT @company_id, @id, m.id, @reasons, @requested_by, @requested_at FROM gate_moves m
+INSERT INTO approvals (company_id, id, move_id, number, reasons, requested_by, requested_at)
+SELECT @company_id, @id, m.id, @number, @reasons, @requested_by, @requested_at FROM gate_moves m
 WHERE m.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depot_id) AND m.id = @move_id;
 
 -- name: GetApproval :one
@@ -209,10 +211,14 @@ UPDATE gate_moves SET visit_id = @visit_id, order_id = @order_id, order_item_id 
     signature_photo_id = @signature_photo_id, form_saved_at = COALESCE(form_saved_at, @form_saved_at), updated_at = @form_saved_at
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
 
+-- GetMoveForm is a move's gate form; line and customer are its visit's, as the form left them.
 -- name: GetMoveForm :one
-SELECT id, visit_id, order_id, order_item_id, truck_plate, trailer_plate, driver_name, haulier_id, seal,
-    full_empty, condition, signature_photo_id, form_saved_at, voided, void_reason
-FROM gate_moves WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
+SELECT m.id, m.visit_id, m.order_id, m.order_item_id, m.truck_plate, m.trailer_plate, m.driver_name, m.haulier_id, m.seal,
+    m.full_empty, m.condition, m.signature_photo_id, m.form_saved_at, m.voided, m.void_reason,
+    m.direction, m.number, m.type_code, v.line_id, v.customer_id,
+    (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections
+FROM gate_moves m LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
+WHERE m.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depot_id) AND m.id = @id;
 
 -- name: VoidMove :execrows
 UPDATE gate_moves SET voided = true, void_reason = @void_reason, updated_at = @updated_at

@@ -200,14 +200,42 @@ func (s *Service) VoidGateMove(ctx context.Context, moveID, reason, actor string
 	})
 }
 
-// DecideApproval approves or denies a pending approval.
+// DecideApproval approves or denies a pending approval. Besides the
+// approval, its move is announced: the gate phone waiting on it follows moves.
 func (s *Service) DecideApproval(ctx context.Context, approvalID string, approve bool, actor string) error {
 	if err := s.st.DecideApproval(ctx, approvalID, approve, actor); err != nil {
 		return err
 	}
+	a, err := s.st.GetApproval(ctx, approvalID)
+	if err != nil {
+		return err
+	}
 	sc, _ := tenancy.From(ctx)
 	s.notify(sc.CompanyID, "approval", approvalID)
+	s.notify(sc.CompanyID, "move", a.MoveID)
 	return nil
+}
+
+// GateRecord is a move's gate form as the office reads it back.
+type GateRecord struct {
+	MoveForm
+	Damages []Damage
+	Flags   []Flag
+}
+
+// GateRecord reads a move's form, damages and flags in one transaction.
+func (s *Service) GateRecord(ctx context.Context, moveID string) (r GateRecord, err error) {
+	err = s.st.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
+		if r.MoveForm, err = q.GetMoveForm(ctx, sqlcdb.GetMoveFormParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: moveID}); err != nil {
+			return notFound(err)
+		}
+		if r.Damages, err = q.ListDamages(ctx, sqlcdb.ListDamagesParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, MoveID: moveID}); err != nil {
+			return err
+		}
+		r.Flags, err = q.ListFlags(ctx, sqlcdb.ListFlagsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, MoveID: moveID})
+		return err
+	})
+	return r, err
 }
 
 func lockMove(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, id string) (sqlcdb.LockMoveRow, error) {
@@ -367,7 +395,7 @@ func (s *Service) apply(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope
 			}
 			pass = strings.TrimSpace(f.Override.Reason)
 		case settings.RefusalMode == "manager_approval":
-			a, ok, err := s.approval(ctx, q, sc, m.ID, f.ApprovalID, d.Refusals, actor, notes)
+			a, ok, err := s.approval(ctx, q, sc, m.ID, number, f.ApprovalID, d.Refusals, actor, notes)
 			if err != nil {
 				return Result{}, err
 			}
@@ -483,7 +511,7 @@ func closeVisitBy(ctx context.Context, q *sqlcdb.Queries, companyID, id string, 
 // refusal: the one the clerk names, else any. Otherwise it returns the
 // approval to wait for: the named one or a pending one with exactly these
 // reasons, else a new pending one.
-func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, moveID, id string, refusals []Reason, actor string, notes *[]note) (Approval, bool, error) {
+func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Scope, moveID, number, id string, refusals []Reason, actor string, notes *[]note) (Approval, bool, error) {
 	all, err := q.ApprovalsOfMove(ctx, sqlcdb.ApprovalsOfMoveParams{CompanyID: sc.CompanyID, MoveID: moveID})
 	if err != nil {
 		return Approval{}, false, err
@@ -515,8 +543,8 @@ func (s *Service) approval(ctx context.Context, q *sqlcdb.Queries, sc tenancy.Sc
 	if err != nil {
 		return Approval{}, false, err
 	}
-	a := Approval{ID: newID(), MoveID: moveID, Status: "pending", Reasons: body}
-	err = one(q.InsertApproval(ctx, sqlcdb.InsertApprovalParams{CompanyID: sc.CompanyID, ID: a.ID, MoveID: moveID,
+	a := Approval{ID: newID(), MoveID: moveID, Number: number, Status: "pending", Reasons: body}
+	err = one(q.InsertApproval(ctx, sqlcdb.InsertApprovalParams{CompanyID: sc.CompanyID, ID: a.ID, MoveID: moveID, Number: number,
 		Reasons: body, RequestedBy: actor, RequestedAt: s.st.now()}))
 	*notes = append(*notes, note{"approval", a.ID})
 	return a, false, err

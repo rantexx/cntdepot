@@ -4,6 +4,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -82,6 +83,10 @@ func (s *Server) routes() {
 	apiMux := http.NewServeMux()
 	strict := api.NewStrictHandlerWithOptions(s, []api.StrictMiddlewareFunc{s.access}, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			if tooBig := new(http.MaxBytesError); errors.As(err, &tooBig) {
+				writeError(w, http.StatusRequestEntityTooLarge, "E4130", fmt.Sprintf("the request body is over %d bytes", tooBig.Limit))
+				return
+			}
 			writeError(w, http.StatusBadRequest, "E4001", "invalid request: "+err.Error())
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) { writeServiceError(w, err) },

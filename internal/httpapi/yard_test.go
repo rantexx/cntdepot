@@ -224,6 +224,9 @@ func TestVisitsListFiltersAndHolds(t *testing.T) {
 	if held.Total != 1 || held.Items[0].ID != visits[0] || !held.Items[0].OnHold {
 		t.Fatalf("on hold = %+v", held)
 	}
+	if byNumber := decode[list](t, office.must(200, "GET", "/api/visits?q=csqu%20305", "")); byNumber.Total != 1 || byNumber.Items[0].ID != visits[1] {
+		t.Fatalf("q = %+v; want the CSQU visit", byNumber)
+	}
 	if none := decode[list](t, office.must(200, "GET", "/api/visits?minDays=3", "")); none.Total != 0 || none.Items == nil {
 		t.Fatalf("minDays = %+v; want an empty list", none)
 	}
@@ -297,7 +300,20 @@ func TestApprovalNotifiesManagersStream(t *testing.T) {
 	if got := string(mgr.must(200, "GET", "/api/approvals?status=pending", "")); !strings.Contains(got, r.ApprovalID) || !strings.Contains(got, "no_order") {
 		t.Errorf("pending = %s", got)
 	}
+	if got := string(mgr.must(200, "GET", "/api/approvals?status=pending", "")); !strings.Contains(got, `"number":"CSQU3054383"`) {
+		t.Errorf("pending lacks the container number: %s", got)
+	}
 	mgr.must(204, "POST", "/api/approvals/"+r.ApprovalID, `{"approve":true}`)
+	// The waiting gate phone follows moves: the decision reaches it as its move's event.
+	deadline = time.After(2 * time.Second)
+	for got := false; !got; {
+		select {
+		case l := <-gLines:
+			got = strings.HasPrefix(l, "data:") && strings.Contains(l, id)
+		case <-deadline:
+			t.Fatal("the gate clerk's stream got no move event after the decision within 2 s")
+		}
+	}
 	res := decode[struct{ Flags []struct{ Code string } }](t,
 		g.must(200, "POST", "/api/moves/"+id+"/gate", `{"direction":"out","number":"CSQU3054383","approvalId":"`+r.ApprovalID+`"}`))
 	if !strings.Contains(string(mustJSON(t, res.Flags)), "override:no_order") {
@@ -324,4 +340,128 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestMoveFormAndVisitDetail(t *testing.T) {
+	e := newYardEnv(t)
+	g, office := e.as(t, "A", "gate"), e.as(t, "A", "office")
+	id := g.newMove()
+	status, body := g.upload(id, "\xff\xd8\xff\xe0dent")
+	if status != http.StatusAccepted {
+		t.Fatalf("upload = %d %s", status, body)
+	}
+	photo := decode[struct{ ID string }](t, body).ID
+	res := decode[struct {
+		VisitID string `json:"visitId"`
+	}](t, g.must(200, "POST", "/api/moves/"+id+"/gate", `{"direction":"in","number":"MSCU1234565","typeCode":"45G1","seal":"S1",
+		"truckPlate":"34ABC12","condition":"damaged","damages":[{"location":"door","description":"dent","photoIds":["`+photo+`"]}]}`))
+
+	type form struct {
+		ID, Direction, Number, Seal, TruckPlate, Condition string
+		FormSavedAt                                        *string
+		Corrections                                        int
+		Damages                                            []struct {
+			Location string
+			PhotoIds []string
+		}
+		Flags []struct{ Code string }
+	}
+	f := decode[form](t, g.must(200, "GET", "/api/moves/"+id+"/form", ""))
+	if f.ID != id || f.Direction != "in" || f.Number != "MSCU1234565" || f.Seal != "S1" || f.TruckPlate != "34ABC12" ||
+		f.Condition != "damaged" || f.FormSavedAt == nil || f.Corrections != 0 || len(f.Damages) != 1 ||
+		f.Damages[0].Location != "door" || len(f.Damages[0].PhotoIds) != 1 || len(f.Flags) != 1 || f.Flags[0].Code != "walkin" {
+		t.Fatalf("form = %+v", f)
+	}
+	office.must(200, "POST", "/api/moves/"+id+"/correct", `{"reason":"seal","form":{"direction":"in","number":"MSCU1234565","typeCode":"45G1","seal":"S2"}}`)
+	v := decode[struct {
+		InForm  *form
+		OutForm *form
+	}](t, g.must(200, "GET", "/api/visits/"+res.VisitID, ""))
+	if v.InForm == nil || v.InForm.Seal != "S2" || v.InForm.Corrections != 1 || v.InForm.Damages == nil || v.OutForm != nil {
+		t.Fatalf("visit forms = in %+v, out %+v", v.InForm, v.OutForm)
+	}
+	if status, _ := e.as(t, "B", "gate").call("GET", "/api/moves/"+id+"/form", ""); status != 404 {
+		t.Errorf("B reads A's form = %d; want 404", status)
+	}
+}
+
+func TestYardValidation(t *testing.T) {
+	e := newYardEnv(t)
+	g, office, owner := e.as(t, "A", "gate"), e.as(t, "A", "office"), e.as(t, "A", "owner")
+	cases := []struct {
+		u                  *user
+		method, path, body string
+		status             int
+		code, field        string
+	}{
+		{g, "POST", "/api/moves/" + g.newMove() + "/gate", `{"direction":"sideways","number":"MSCU1234565"}`, 400, "E4000", "direction"},
+		{g, "POST", "/api/moves/" + g.newMove() + "/gate", `{"direction":"in","number":"MSCU1234565","seal":"` + strings.Repeat("s", 65) + `"}`, 400, "E4000", "seal"},
+		{g, "POST", "/api/moves/" + g.newMove() + "/gate", `{"direction":"in","number":"MSCU1234565","fullEmpty":"X"}`, 400, "E4000", "fullEmpty"},
+		{owner, "PUT", "/api/settings/yard", `{"refusalMode":"maybe","walkinsAllowed":true,"eirTtlDays":30}`, 400, "E4000", "refusalMode"},
+		{owner, "PUT", "/api/settings/yard", `{"refusalMode":"none","walkinsAllowed":true,"eirTtlDays":0}`, 400, "E4000", "eirTtlDays"},
+		{office, "POST", "/api/orders", `{"kind":"release","reference":"R1","items":[{"typeCode":"45G1","quantity":0}]}`, 400, "E4000", "quantity"},
+		{office, "POST", "/api/orders", `{"kind":"release","reference":"R1","items":[{}]}`, 400, "E4000", "items[0]"},
+		{office, "POST", "/api/orders", `{"kind":"swap","reference":"R1","items":[{"typeCode":"45G1"}]}`, 400, "E4000", "kind"},
+		{office, "POST", "/api/blocks", `{"kind":"vessel","value":"X","reason":"r"}`, 400, "E4000", "kind"},
+		// The schema refuses a line of no such id: 422 with a message that names no table or constraint.
+		{office, "POST", "/api/orders", `{"kind":"release","reference":"R1","lineId":"nope","items":[{"typeCode":"45G1"}]}`, 422, "E4221", "linked record"},
+	}
+	for _, c := range cases {
+		status, body := c.u.call(c.method, c.path, c.body)
+		if status != c.status || errorCode(body) != c.code || !strings.Contains(string(body), c.field) {
+			t.Errorf("%s %s %s = %d %s; want %d %s naming %s", c.method, c.path, c.body, status, body, c.status, c.code, c.field)
+		}
+		if strings.Contains(string(body), "fkey") || strings.Contains(string(body), "release_orders") {
+			t.Errorf("%s leaks the schema: %s", c.body, body)
+		}
+	}
+}
+
+func TestOversizedBodyIs413(t *testing.T) {
+	e := newYardEnv(t)
+	g := e.as(t, "A", "gate")
+	status, body := g.call("POST", "/api/moves/"+g.newMove()+"/gate", `{"direction":"in","number":"MSCU1234565","seal":"`+strings.Repeat("s", 70<<10)+`"}`)
+	if status != http.StatusRequestEntityTooLarge || errorCode(body) != "E4130" {
+		t.Fatalf("70 KiB body = %d %s; want 413 E4130", status, body)
+	}
+}
+
+func TestDepotLimitedMemberSeesOnlyItsDepot(t *testing.T) {
+	e := newYardEnv(t)
+	e.exec(t, "A", `INSERT INTO depots (company_id, id, name, country, timezone) VALUES ('A', 'd2', 'Depot 2', 'TR', 'UTC')`)
+	owner := e.as(t, "A", "owner")
+	if err := e.sessions.SetScope(bg, owner.cookie, "A", "d2"); err != nil {
+		t.Fatal(err)
+	}
+	order := decode[struct{ ID string }](t, owner.must(201, "POST", "/api/orders", `{"kind":"release","reference":"R2","items":[{"typeCode":"45G1"}]}`))
+	in := owner.newMove()
+	visit := decode[struct {
+		VisitID string `json:"visitId"`
+	}](t, owner.must(200, "POST", "/api/moves/"+in+"/gate", `{"direction":"in","number":"MSCU1234565","typeCode":"22G1"}`))
+	owner.must(200, "PUT", "/api/settings/yard", `{"refusalMode":"manager_approval","walkinsAllowed":true,"eirTtlDays":30}`)
+	_, body := owner.call("POST", "/api/moves/"+owner.newMove()+"/gate", `{"direction":"out","number":"CSQU3054383"}`)
+	approval := decode[refusalBody](t, body).ApprovalID
+	if approval == "" {
+		t.Fatalf("no approval: %s", body)
+	}
+
+	// A manager limited to d1.
+	e.exec(t, "A", `INSERT INTO invitations (company_id, id, email, role, depot_ids, created_by) VALUES ('A', 'lim', 'lim@a.test', 'manager', ARRAY['d1'], 'test')`)
+	lim := &user{t: t, e: e, cookie: e.signIn(t, "lim@a.test")}
+	if err := e.sessions.SetScope(bg, lim.cookie, "A", "d1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/visits/" + visit.VisitID, ""},
+		{"GET", "/api/orders/" + order.ID, ""},
+		{"GET", "/api/moves/" + in + "/form", ""},
+		{"POST", "/api/approvals/" + approval, `{"approve":true}`},
+	} {
+		if status, body := lim.call(c.method, c.path, c.body); status != 404 {
+			t.Errorf("limited %s %s = %d %s; want 404", c.method, c.path, status, body)
+		}
+	}
+	if got := string(lim.must(200, "GET", "/api/approvals", "")); strings.Contains(got, approval) {
+		t.Errorf("limited member lists d2's approval: %s", got)
+	}
 }

@@ -6,8 +6,10 @@
  * /api/camera*, /api/live/ws, /auth/*. Every error is {"error": {"code", "message"}}.
  * The stream sends "move" events to the company's screens and "approval" events to its managers.
  *
- * Gate and yard errors: 400 E4000 a value is not allowed (bad form, missing reason); 400 E4008 a
- * required field is empty; 404 E4043 no such record; 409 E4090 choose a depot first; 409 E4098
+ * JSON bodies are at most 64 KiB: a larger one is 413 E4130.
+ *
+ * Gate and yard errors: 400 E4000 a value is not allowed (the message names the field); 400 E4008
+ * a required field is empty; 404 E4043 no such record; 409 E4090 choose a depot first; 409 E4098
  * refused; 409 E4099 blocked; 409 E4100 the container is in the yard again under a newer visit;
  * 409 E4101 a correction cannot change the direction; 409 E4102 the move is void; 409 E4103 the
  * move has no saved gate form; 409 E4104 the visit the move opened is closed since; 409 E4105 the
@@ -423,13 +425,29 @@ export interface Reason {
 }
 
 export interface ReasonBody {
+  /** @maxLength 500 */
   reason: string;
 }
 
+export type GateFormDirection = typeof GateFormDirection[keyof typeof GateFormDirection];
+
+
+export const GateFormDirection = {
+  in: 'in',
+  out: 'out',
+} as const;
+
 export type GateFormDamagesItem = {
+  /** @maxLength 500 */
   location: string;
+  /** @maxLength 500 */
   description?: string;
-  /** 1 to 3 photos of this move */
+  /**
+     * photos of this move
+     * @minItems 1
+     * @maxItems 3
+     * @items.maxLength 64
+     */
   photoIds: string[];
 };
 
@@ -437,32 +455,54 @@ export type GateFormDamagesItem = {
  * The clerk passes the refusals with a reason (refusal mode clerk_override).
  */
 export type GateFormOverride = {
+  /** @maxLength 500 */
   reason: string;
 };
 
 export interface GateForm {
-  /** in or out */
-  direction: string;
+  direction: GateFormDirection;
+  /** @maxLength 64 */
   number: string;
+  /** @maxLength 64 */
   typeCode?: string;
-  /** E or F; empty means E */
+  /**
+     * E or F; empty means E
+     * @maxLength 64
+     */
   fullEmpty?: string;
+  /** @maxLength 64 */
   seal?: string;
-  /** sound, damaged or empty */
+  /**
+     * sound, damaged or empty
+     * @maxLength 64
+     */
   condition?: string;
+  /** @maxLength 64 */
   lineId?: string;
+  /** @maxLength 64 */
   customerId?: string;
+  /** @maxLength 64 */
   haulierId?: string;
+  /** @maxLength 64 */
   truckPlate?: string;
+  /** @maxLength 64 */
   trailerPlate?: string;
+  /** @maxLength 200 */
   driverName?: string;
+  /** @maxLength 64 */
   signaturePhotoId?: string;
   damages?: GateFormDamagesItem[];
-  /** the clerk's pick among the candidates of a 409 E4098 */
+  /**
+     * the clerk's pick among the candidates of a 409 E4098
+     * @maxLength 64
+     */
   chosenOrderItemId?: string;
   /** The clerk passes the refusals with a reason (refusal mode clerk_override). */
   override?: GateFormOverride;
-  /** the manager approval of a 409 E4098 (refusal mode manager_approval) */
+  /**
+     * the manager approval of a 409 E4098 (refusal mode manager_approval)
+     * @maxLength 64
+     */
   approvalId?: string;
 }
 
@@ -546,24 +586,37 @@ export type OrderDetail = Order & {
 };
 
 /**
- * A container number (quantity 1) or an ISO type with a quantity.
+ * A container number (quantity 1) or an ISO type with a quantity, exactly one of the two.
  */
 export type OrderCreateItemsItem = {
+  /** @maxLength 64 */
   number?: string;
+  /** @maxLength 64 */
   typeCode?: string;
-  /** E or F; empty means E */
+  /**
+     * E or F; empty means E
+     * @maxLength 64
+     */
   fullEmpty?: string;
-  /** default 1 */
+  /**
+     * default 1
+     * @minimum 1
+     */
   quantity?: number;
 };
 
 export interface OrderCreate {
   kind: OrderKind;
+  /** @maxLength 64 */
   reference: string;
+  /** @maxLength 64 */
   lineId?: string;
+  /** @maxLength 64 */
   customerId?: string;
   validUntil?: string;
+  /** @maxLength 500 */
   note?: string;
+  /** @minItems 1 */
   items: OrderCreateItemsItem[];
 }
 
@@ -621,9 +674,72 @@ export interface Hold {
   releasedAt: string | null;
 }
 
-export type VisitDetail = Visit & {
-  holds: Hold[];
+export interface GateFlag {
+  id: string;
+  moveId: string;
+  code: string;
+  detail: string;
+  resolvedBy: string;
+  /** @nullable */
+  resolvedAt: string | null;
+}
+
+export type MoveFormDamagesItem = {
+  id: string;
+  location: string;
+  description: string;
+  photoIds: string[];
 };
+
+export interface MoveForm {
+  /** the move id */
+  id: string;
+  direction: string;
+  number: string;
+  typeCode: string;
+  fullEmpty: string;
+  seal: string;
+  condition: string;
+  /**
+     * the visit's line
+     * @nullable
+     */
+  lineId: string | null;
+  /**
+     * the visit's customer
+     * @nullable
+     */
+  customerId: string | null;
+  /** @nullable */
+  haulierId: string | null;
+  truckPlate: string;
+  trailerPlate: string;
+  driverName: string;
+  /** @nullable */
+  signaturePhotoId: string | null;
+  /** @nullable */
+  visitId: string | null;
+  /** @nullable */
+  orderId: string | null;
+  /** @nullable */
+  orderItemId: string | null;
+  /** @nullable */
+  formSavedAt: string | null;
+  voided: boolean;
+  voidReason: string;
+  /** how many times the office corrected the form */
+  corrections: number;
+  damages: MoveFormDamagesItem[];
+  flags: GateFlag[];
+}
+
+export type VisitDetail = Visit & ({
+  holds: Hold[];
+  /** the gate-in move's form; null when none or at another depot */
+  inForm: MoveForm | null;
+  /** the gate-out move's form; null when none or at another depot */
+  outForm: MoveForm | null;
+});
 
 export type BlockKind = typeof BlockKind[keyof typeof BlockKind];
 
@@ -646,6 +762,8 @@ export interface Block {
 export interface Approval {
   id: string;
   moveId: string;
+  /** the move's container number */
+  number: string;
   reasons: Reason[];
   requestedBy: string;
   requestedAt: string;
@@ -656,21 +774,19 @@ export interface Approval {
   decidedAt: string | null;
 }
 
-export interface GateFlag {
-  id: string;
-  moveId: string;
-  code: string;
-  detail: string;
-  resolvedBy: string;
-  /** @nullable */
-  resolvedAt: string | null;
-}
+export type YardSettingsRefusalMode = typeof YardSettingsRefusalMode[keyof typeof YardSettingsRefusalMode];
+
+
+export const YardSettingsRefusalMode = {
+  clerk_override: 'clerk_override',
+  manager_approval: 'manager_approval',
+  none: 'none',
+} as const;
 
 export interface YardSettings {
-  /** clerk_override, manager_approval or none */
-  refusalMode: string;
+  refusalMode: YardSettingsRefusalMode;
   walkinsAllowed: boolean;
-  /** at least 1 */
+  /** @minimum 1 */
   eirTtlDays: number;
 }
 
@@ -788,6 +904,7 @@ export type ListHauliersParams = {
 };
 
 export type CorrectMoveBody = {
+  /** @maxLength 500 */
   reason: string;
   form: GateForm;
 };
@@ -800,6 +917,8 @@ export type ListOrdersParams = {
 
 export type ListVisitsParams = {
   status?: VisitStatus;
+  /** container number contains (spaces and case ignored) */
+  q?: string;
   lineId?: string;
   customerId?: string;
   /** ISO type code prefix */
@@ -819,8 +938,11 @@ export type ListVisitsParams = {
 };
 
 export type SetVisitPositionBody = {
+  /** @maxLength 64 */
   block: string;
+  /** @maxLength 64 */
   row: string;
+  /** @maxLength 64 */
   tier: string;
 };
 
@@ -831,7 +953,9 @@ export type SetVisitGradeBody = {
 
 export type CreateBlockBody = {
   kind: BlockKind;
+  /** @maxLength 64 */
   value: string;
+  /** @maxLength 500 */
   reason: string;
 };
 
@@ -2580,6 +2704,49 @@ export const saveGateForm = async (id: string,
     method: 'POST',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
     body: JSON.stringify(gateForm)
+  }
+);}
+
+
+
+export type getMoveFormResponse200 = {
+  data: MoveForm
+  status: 200
+}
+
+export type getMoveFormResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getMoveFormResponseSuccess = (getMoveFormResponse200) & {
+  headers: Headers;
+};
+export type getMoveFormResponseError = (getMoveFormResponseDefault) & {
+  headers: Headers;
+};
+
+export type getMoveFormResponse = (getMoveFormResponseSuccess | getMoveFormResponseError)
+
+export const getGetMoveFormUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/form`
+}
+
+/**
+ * The move's gate form as saved (formSavedAt is null before the first save), its damages and flags.
+ */
+export const getMoveForm = async (id: string, options?: Parameters<typeof http>[1]): Promise<getMoveFormResponse> => {
+
+  return http<getMoveFormResponse>(getGetMoveFormUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -3,15 +3,16 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"depot/internal/api"
 	"depot/internal/yard"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The gate form and the yard's records. Records reach the API through conv:
@@ -34,13 +35,15 @@ func optText(p *string) *string {
 	return nil
 }
 
-// yardErrors map the yard's refusals of a request onto answers; the message is the error's own.
+// yardErrors map the yard's refusals of a request onto answers; the message is the yard error's own.
 var yardErrors = []struct {
 	err    error
 	status int
 	code   string
 }{
 	{yard.ErrNotFound, http.StatusNotFound, "E4043"},
+	{yard.ErrInvalid, http.StatusBadRequest, "E4000"},
+	{yard.ErrMissingLink, http.StatusUnprocessableEntity, "E4221"},
 	{yard.ErrBadForm, http.StatusBadRequest, "E4000"},
 	{yard.ErrReasonRequired, http.StatusBadRequest, "E4000"},
 	{yard.ErrBadLink, http.StatusUnprocessableEntity, "E4221"},
@@ -52,22 +55,73 @@ var yardErrors = []struct {
 	{yard.ErrOrderClosed, http.StatusConflict, "E4105"},
 }
 
-// yardError is the answer to a yard error, or to a value the schema refuses.
+// yardError is the answer to a yard error, or nil. A wrapped one (the
+// schema refused a write) is logged: the answer names no table or constraint.
 func yardError(err error) *apiError {
 	for _, e := range yardErrors {
 		if errors.Is(err, e.err) {
-			return &apiError{e.status, e.code, err.Error()}
+			if err != e.err {
+				log.Printf("httpapi: %v", err)
+			}
+			return &apiError{e.status, e.code, e.err.Error()}
 		}
 	}
-	var pg *pgconn.PgError
-	switch {
-	case !errors.As(err, &pg):
-	case pg.Code == "23514": // check_violation: a kind, grade, mode or quantity out of range
-		return &apiError{http.StatusBadRequest, "E4000", "a value is not allowed: " + pg.ConstraintName}
-	case pg.Code == "23503": // foreign_key_violation: a line, customer or haulier not of this company
-		return &apiError{http.StatusUnprocessableEntity, "E4221", "a linked record does not exist"}
+	return nil
+}
+
+// Request text limits, as api/openapi.yaml states them (the generated server does not check them).
+const (
+	maxCode = 64  // codes, ids, numbers, plates, seals, positions
+	maxName = 200 // names
+	maxText = 500 // reasons, notes, damage text
+)
+
+// field is one request value to check: at most max characters and, when oneOf is set, one of those.
+type field struct {
+	name, v string
+	max     int
+	oneOf   []string
+}
+
+// checkFields answers 400 E4000 naming the first field out of bounds.
+func checkFields(fs ...field) error {
+	for _, f := range fs {
+		if n := utf8.RuneCountInString(f.v); n > f.max {
+			return fail(http.StatusBadRequest, "E4000", fmt.Sprintf("%s: at most %d characters", f.name, f.max))
+		}
+		if f.oneOf != nil && !slices.Contains(f.oneOf, f.v) {
+			return fail(http.StatusBadRequest, "E4000", fmt.Sprintf("%s: one of %q", f.name, f.oneOf))
+		}
 	}
 	return nil
+}
+
+func code(name string, v *string) field { return field{name: name, v: val(v), max: maxCode} }
+
+func checkGateForm(f api.GateForm) error {
+	fs := []field{
+		{name: "direction", v: string(f.Direction), max: maxCode, oneOf: []string{"in", "out"}},
+		{name: "number", v: f.Number, max: maxCode}, code("typeCode", f.TypeCode),
+		{name: "fullEmpty", v: strings.ToUpper(strings.TrimSpace(val(f.FullEmpty))), max: maxCode, oneOf: []string{"", "E", "F"}},
+		{name: "condition", v: strings.TrimSpace(val(f.Condition)), max: maxCode, oneOf: []string{"", "sound", "damaged"}},
+		code("seal", f.Seal), code("lineId", f.LineId), code("customerId", f.CustomerId), code("haulierId", f.HaulierId),
+		code("truckPlate", f.TruckPlate), code("trailerPlate", f.TrailerPlate),
+		{name: "driverName", v: val(f.DriverName), max: maxName},
+		code("signaturePhotoId", f.SignaturePhotoId), code("chosenOrderItemId", f.ChosenOrderItemId), code("approvalId", f.ApprovalId),
+	}
+	if f.Override != nil {
+		fs = append(fs, field{name: "override.reason", v: f.Override.Reason, max: maxText})
+	}
+	for _, d := range val(f.Damages) {
+		if len(d.PhotoIds) < 1 || len(d.PhotoIds) > 3 {
+			return fail(http.StatusBadRequest, "E4000", "damages.photoIds: 1 to 3 photos per damage")
+		}
+		fs = append(fs, field{name: "damages.location", v: d.Location, max: maxText}, field{name: "damages.description", v: val(d.Description), max: maxText})
+		for _, p := range d.PhotoIds {
+			fs = append(fs, field{name: "damages.photoIds", v: p, max: maxCode})
+		}
+	}
+	return checkFields(fs...)
 }
 
 // gateAnswer is a save's 200 body, or its 409 body when nothing was applied:
@@ -99,6 +153,9 @@ func gateAnswer(res yard.Result) (ok api.GateResult, refused *api.GateRefusal, e
 }
 
 func (s *Server) SaveGateForm(ctx context.Context, req api.SaveGateFormRequestObject) (api.SaveGateFormResponseObject, error) {
+	if err := checkGateForm(*req.Body); err != nil {
+		return nil, err
+	}
 	f, err := conv[yard.GateForm](req.Body)
 	if err != nil {
 		return nil, err
@@ -116,6 +173,12 @@ func (s *Server) SaveGateForm(ctx context.Context, req api.SaveGateFormRequestOb
 }
 
 func (s *Server) CorrectMove(ctx context.Context, req api.CorrectMoveRequestObject) (api.CorrectMoveResponseObject, error) {
+	if err := checkGateForm(req.Body.Form); err != nil {
+		return nil, err
+	}
+	if err := checkFields(field{name: "reason", v: req.Body.Reason, max: maxText}); err != nil {
+		return nil, err
+	}
 	f, err := conv[yard.GateForm](req.Body.Form)
 	if err != nil {
 		return nil, err
@@ -132,7 +195,27 @@ func (s *Server) CorrectMove(ctx context.Context, req api.CorrectMoveRequestObje
 }
 
 func (s *Server) VoidMove(ctx context.Context, req api.VoidMoveRequestObject) (api.VoidMoveResponseObject, error) {
+	if err := checkFields(field{name: "reason", v: req.Body.Reason, max: maxText}); err != nil {
+		return nil, err
+	}
 	return api.VoidMove204Response{}, s.opts.Yard.VoidGateMove(ctx, req.Id, req.Body.Reason, actor(ctx))
+}
+
+// formJSON is a move's gate record in the API's shape.
+func formJSON(r yard.GateRecord) any {
+	return struct {
+		yard.MoveForm
+		Damages []yard.Damage
+		Flags   []yard.Flag
+	}{r.MoveForm, list(r.Damages), list(r.Flags)}
+}
+
+func (s *Server) GetMoveForm(ctx context.Context, req api.GetMoveFormRequestObject) (api.GetMoveFormResponseObject, error) {
+	r, err := s.opts.Yard.GateRecord(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	return conv[api.GetMoveForm200JSONResponse](formJSON(r))
 }
 
 func (s *Server) CreateEirLink(ctx context.Context, req api.CreateEirLinkRequestObject) (api.CreateEirLinkResponseObject, error) {
@@ -206,6 +289,26 @@ func (s *Server) CreateOrder(ctx context.Context, req api.CreateOrderRequestObje
 	if o.Reference == "" || len(b.Items) == 0 {
 		return nil, fail(http.StatusBadRequest, "E4008", "an order needs a reference and at least one item")
 	}
+	fs := []field{{name: "kind", v: string(b.Kind), max: maxCode, oneOf: []string{"release", "redelivery"}},
+		{name: "reference", v: o.Reference, max: maxCode}, code("lineId", b.LineId), code("customerId", b.CustomerId),
+		{name: "note", v: o.Note, max: maxText}}
+	for i, it := range b.Items {
+		at := fmt.Sprintf("items[%d]", i)
+		number, typeCode := strings.TrimSpace(val(it.Number)), strings.TrimSpace(val(it.TypeCode))
+		switch q := val(it.Quantity); {
+		case (number == "") == (typeCode == ""):
+			return nil, fail(http.StatusBadRequest, "E4000", at+": a container number or an ISO type, exactly one of the two")
+		case it.Quantity != nil && q < 1:
+			return nil, fail(http.StatusBadRequest, "E4000", at+".quantity: at least 1")
+		case number != "" && q > 1:
+			return nil, fail(http.StatusBadRequest, "E4000", at+".quantity: a named container is quantity 1")
+		}
+		fs = append(fs, field{name: at + ".number", v: number, max: maxCode}, field{name: at + ".typeCode", v: typeCode, max: maxCode},
+			field{name: at + ".fullEmpty", v: strings.ToUpper(strings.TrimSpace(val(it.FullEmpty))), max: maxCode, oneOf: []string{"", "E", "F"}})
+	}
+	if err := checkFields(fs...); err != nil {
+		return nil, err
+	}
 	if b.ValidUntil != nil {
 		o.ValidUntil = &b.ValidUntil.Time
 	}
@@ -237,7 +340,7 @@ func (s *Server) ListVisits(ctx context.Context, req api.ListVisitsRequestObject
 	p := req.Params
 	limit, offset := pageOf(p.Page, p.PerPage)
 	rows, total, err := s.opts.Yard.FindVisits(ctx, yard.VisitFilter{
-		Status: string(val(p.Status)), LineID: strings.TrimSpace(val(p.LineId)), CustomerID: strings.TrimSpace(val(p.CustomerId)),
+		Status: string(val(p.Status)), Number: val(p.Q), LineID: strings.TrimSpace(val(p.LineId)), CustomerID: strings.TrimSpace(val(p.CustomerId)),
 		TypeCode: val(p.Type), Grade: strings.ToUpper(strings.TrimSpace(val(p.Grade))), OnHold: val(p.Hold), MinDays: val(p.MinDays),
 	}, limit, offset)
 	if err != nil {
@@ -263,15 +366,43 @@ func (s *Server) GetVisit(ctx context.Context, req api.GetVisitRequestObject) (a
 	if err != nil {
 		return nil, err
 	}
+	// form is a move's record; a move at another depot (a gate-out there) is out of scope: null.
+	form := func(moveID *string) (any, error) {
+		if moveID == nil {
+			return nil, nil
+		}
+		r, err := s.opts.Yard.GateRecord(ctx, *moveID)
+		if errors.Is(err, yard.ErrNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return formJSON(r), nil
+	}
+	in, err := form(v.InMoveID)
+	if err != nil {
+		return nil, err
+	}
+	out, err := form(v.OutMoveID)
+	if err != nil {
+		return nil, err
+	}
 	return conv[api.GetVisit200JSONResponse](struct {
 		yard.Visit
-		Holds []yard.Hold
-	}{v, list(holds)})
+		Holds   []yard.Hold
+		InForm  any
+		OutForm any
+	}{v, list(holds), in, out})
 }
 
 func (s *Server) SetVisitPosition(ctx context.Context, req api.SetVisitPositionRequestObject) (api.SetVisitPositionResponseObject, error) {
 	b := req.Body
 	trim := strings.TrimSpace
+	if err := checkFields(field{name: "block", v: trim(b.Block), max: maxCode}, field{name: "row", v: trim(b.Row), max: maxCode},
+		field{name: "tier", v: trim(b.Tier), max: maxCode}); err != nil {
+		return nil, err
+	}
 	if err := s.opts.Yard.SetPosition(ctx, req.Id, trim(b.Block), trim(b.Row), trim(b.Tier)); err != nil {
 		return nil, err
 	}
@@ -280,7 +411,11 @@ func (s *Server) SetVisitPosition(ctx context.Context, req api.SetVisitPositionR
 }
 
 func (s *Server) SetVisitGrade(ctx context.Context, req api.SetVisitGradeRequestObject) (api.SetVisitGradeResponseObject, error) {
-	if err := s.opts.Yard.SetGrade(ctx, req.Id, strings.ToUpper(strings.TrimSpace(req.Body.Grade))); err != nil {
+	grade := strings.ToUpper(strings.TrimSpace(req.Body.Grade))
+	if err := checkFields(field{name: "grade", v: grade, max: maxCode, oneOf: []string{"", "A", "B", "C", "FOOD"}}); err != nil {
+		return nil, err
+	}
+	if err := s.opts.Yard.SetGrade(ctx, req.Id, grade); err != nil {
 		return nil, err
 	}
 	v, err := s.visit(ctx, req.Id)
@@ -291,6 +426,9 @@ func (s *Server) PlaceHold(ctx context.Context, req api.PlaceHoldRequestObject) 
 	reason := strings.TrimSpace(req.Body.Reason)
 	if reason == "" {
 		return nil, fail(http.StatusBadRequest, "E4008", "a hold needs a reason")
+	}
+	if err := checkFields(field{name: "reason", v: reason, max: maxText}); err != nil {
+		return nil, err
 	}
 	id, err := s.opts.Yard.PlaceHold(ctx, req.Id, reason, actor(ctx))
 	if err != nil {
@@ -338,6 +476,10 @@ func (s *Server) CreateBlock(ctx context.Context, req api.CreateBlockRequestObje
 	value, reason := strings.TrimSpace(b.Value), strings.TrimSpace(b.Reason)
 	if value == "" || reason == "" {
 		return nil, fail(http.StatusBadRequest, "E4008", "a block needs a value and a reason")
+	}
+	if err := checkFields(field{name: "kind", v: string(b.Kind), max: maxCode, oneOf: []string{"container", "line"}},
+		field{name: "value", v: value, max: maxCode}, field{name: "reason", v: reason, max: maxText}); err != nil {
+		return nil, err
 	}
 	id, err := s.opts.Yard.UpsertBlock(ctx, string(b.Kind), value, reason, actor(ctx))
 	if err != nil {
@@ -391,7 +533,14 @@ func (s *Server) GetYardSettings(ctx context.Context, _ api.GetYardSettingsReque
 
 func (s *Server) SetYardSettings(ctx context.Context, req api.SetYardSettingsRequestObject) (api.SetYardSettingsResponseObject, error) {
 	b := req.Body
-	if err := s.opts.Yard.SetSettings(ctx, yard.Settings{RefusalMode: b.RefusalMode, WalkinsAllowed: b.WalkinsAllowed,
+	if err := checkFields(field{name: "refusalMode", v: string(b.RefusalMode), max: maxCode,
+		oneOf: []string{"clerk_override", "manager_approval", "none"}}); err != nil {
+		return nil, err
+	}
+	if b.EirTtlDays < 1 {
+		return nil, fail(http.StatusBadRequest, "E4000", "eirTtlDays: at least 1")
+	}
+	if err := s.opts.Yard.SetSettings(ctx, yard.Settings{RefusalMode: string(b.RefusalMode), WalkinsAllowed: b.WalkinsAllowed,
 		EirTtlDays: int64(b.EirTtlDays)}); err != nil {
 		return nil, err
 	}

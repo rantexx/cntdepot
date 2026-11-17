@@ -12,7 +12,7 @@ import (
 )
 
 const approvalsOfMove = `-- name: ApprovalsOfMove :many
-SELECT company_id, id, move_id, reasons, requested_by, requested_at, status, decided_by, decided_at FROM approvals WHERE company_id = $1 AND move_id = $2 ORDER BY id
+SELECT company_id, id, move_id, reasons, requested_by, requested_at, status, decided_by, decided_at, number FROM approvals WHERE company_id = $1 AND move_id = $2 ORDER BY id
 `
 
 type ApprovalsOfMoveParams struct {
@@ -39,6 +39,7 @@ func (q *Queries) ApprovalsOfMove(ctx context.Context, arg ApprovalsOfMoveParams
 			&i.Status,
 			&i.DecidedBy,
 			&i.DecidedAt,
+			&i.Number,
 		); err != nil {
 			return nil, err
 		}
@@ -84,19 +85,21 @@ const countVisits = `-- name: CountVisits :one
 SELECT count(*) FROM visits v
 WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
   AND ($3::text = '' OR v.status = $3)
-  AND ($4::text = '' OR v.line_id = $4)
-  AND ($5::text = '' OR v.customer_id = $5)
-  AND starts_with(v.type_code, $6::text)
-  AND ($7::text = '' OR v.grade = $7)
-  AND (NOT $8::boolean OR EXISTS (SELECT 1 FROM holds h
+  AND strpos(v.number, $4::text) > 0
+  AND ($5::text = '' OR v.line_id = $5)
+  AND ($6::text = '' OR v.customer_id = $6)
+  AND starts_with(v.type_code, $7::text)
+  AND ($8::text = '' OR v.grade = $8)
+  AND (NOT $9::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND ($9::timestamptz IS NULL OR v.in_at <= $9)
+  AND ($10::timestamptz IS NULL OR v.in_at <= $10)
 `
 
 type CountVisitsParams struct {
 	CompanyID  string
 	DepotID    string
 	Status     string
+	Number     string
 	LineID     string
 	CustomerID string
 	TypeCode   string
@@ -110,6 +113,7 @@ func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int64
 		arg.CompanyID,
 		arg.DepotID,
 		arg.Status,
+		arg.Number,
 		arg.LineID,
 		arg.CustomerID,
 		arg.TypeCode,
@@ -263,21 +267,23 @@ SELECT v.company_id, v.id, v.depot_id, v.number, v.type_code, v.line_id, v.custo
 FROM visits v
 WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
   AND ($3::text = '' OR v.status = $3)
-  AND ($4::text = '' OR v.line_id = $4)
-  AND ($5::text = '' OR v.customer_id = $5)
-  AND starts_with(v.type_code, $6::text)
-  AND ($7::text = '' OR v.grade = $7)
-  AND (NOT $8::boolean OR EXISTS (SELECT 1 FROM holds h
+  AND strpos(v.number, $4::text) > 0
+  AND ($5::text = '' OR v.line_id = $5)
+  AND ($6::text = '' OR v.customer_id = $6)
+  AND starts_with(v.type_code, $7::text)
+  AND ($8::text = '' OR v.grade = $8)
+  AND (NOT $9::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND ($9::timestamptz IS NULL OR v.in_at <= $9)
+  AND ($10::timestamptz IS NULL OR v.in_at <= $10)
 ORDER BY v.id DESC
-LIMIT $11::int OFFSET $10::int
+LIMIT $12::int OFFSET $11::int
 `
 
 type FindVisitsParams struct {
 	CompanyID  string
 	DepotID    string
 	Status     string
+	Number     string
 	LineID     string
 	CustomerID string
 	TypeCode   string
@@ -318,6 +324,7 @@ func (q *Queries) FindVisits(ctx context.Context, arg FindVisitsParams) ([]FindV
 		arg.CompanyID,
 		arg.DepotID,
 		arg.Status,
+		arg.Number,
 		arg.LineID,
 		arg.CustomerID,
 		arg.TypeCode,
@@ -399,7 +406,7 @@ func (q *Queries) FormRefs(ctx context.Context, arg FormRefsParams) (FormRefsRow
 }
 
 const getApproval = `-- name: GetApproval :one
-SELECT a.company_id, a.id, a.move_id, a.reasons, a.requested_by, a.requested_at, a.status, a.decided_by, a.decided_at FROM approvals a JOIN gate_moves m ON m.company_id = a.company_id AND m.id = a.move_id
+SELECT a.company_id, a.id, a.move_id, a.reasons, a.requested_by, a.requested_at, a.status, a.decided_by, a.decided_at, a.number FROM approvals a JOIN gate_moves m ON m.company_id = a.company_id AND m.id = a.move_id
 WHERE a.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND a.id = $3
 `
 
@@ -422,14 +429,18 @@ func (q *Queries) GetApproval(ctx context.Context, arg GetApprovalParams) (Appro
 		&i.Status,
 		&i.DecidedBy,
 		&i.DecidedAt,
+		&i.Number,
 	)
 	return i, err
 }
 
 const getMoveForm = `-- name: GetMoveForm :one
-SELECT id, visit_id, order_id, order_item_id, truck_plate, trailer_plate, driver_name, haulier_id, seal,
-    full_empty, condition, signature_photo_id, form_saved_at, voided, void_reason
-FROM gate_moves WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) AND id = $3
+SELECT m.id, m.visit_id, m.order_id, m.order_item_id, m.truck_plate, m.trailer_plate, m.driver_name, m.haulier_id, m.seal,
+    m.full_empty, m.condition, m.signature_photo_id, m.form_saved_at, m.voided, m.void_reason,
+    m.direction, m.number, m.type_code, v.line_id, v.customer_id,
+    (SELECT count(*) FROM events e WHERE e.company_id = m.company_id AND e.stream = m.id AND e.kind = 'move.corrected')::bigint AS corrections
+FROM gate_moves m LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
+WHERE m.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND m.id = $3
 `
 
 type GetMoveFormParams struct {
@@ -454,8 +465,15 @@ type GetMoveFormRow struct {
 	FormSavedAt      *time.Time
 	Voided           bool
 	VoidReason       string
+	Direction        string
+	Number           string
+	TypeCode         string
+	LineID           *string
+	CustomerID       *string
+	Corrections      int64
 }
 
+// GetMoveForm is a move's gate form; line and customer are its visit's, as the form left them.
 func (q *Queries) GetMoveForm(ctx context.Context, arg GetMoveFormParams) (GetMoveFormRow, error) {
 	row := q.db.QueryRow(ctx, getMoveForm, arg.CompanyID, arg.DepotID, arg.ID)
 	var i GetMoveFormRow
@@ -475,6 +493,12 @@ func (q *Queries) GetMoveForm(ctx context.Context, arg GetMoveFormParams) (GetMo
 		&i.FormSavedAt,
 		&i.Voided,
 		&i.VoidReason,
+		&i.Direction,
+		&i.Number,
+		&i.TypeCode,
+		&i.LineID,
+		&i.CustomerID,
+		&i.Corrections,
 	)
 	return i, err
 }
@@ -604,14 +628,15 @@ func (q *Queries) InYardVisit(ctx context.Context, arg InYardVisitParams) (Visit
 }
 
 const insertApproval = `-- name: InsertApproval :execrows
-INSERT INTO approvals (company_id, id, move_id, reasons, requested_by, requested_at)
-SELECT $1, $2, m.id, $3, $4, $5 FROM gate_moves m
-WHERE m.company_id = $1 AND ($6::text = '' OR m.depot_id = $6) AND m.id = $7
+INSERT INTO approvals (company_id, id, move_id, number, reasons, requested_by, requested_at)
+SELECT $1, $2, m.id, $3, $4, $5, $6 FROM gate_moves m
+WHERE m.company_id = $1 AND ($7::text = '' OR m.depot_id = $7) AND m.id = $8
 `
 
 type InsertApprovalParams struct {
 	CompanyID   string
 	ID          string
+	Number      string
 	Reasons     json.RawMessage
 	RequestedBy string
 	RequestedAt time.Time
@@ -623,6 +648,7 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 	result, err := q.db.Exec(ctx, insertApproval,
 		arg.CompanyID,
 		arg.ID,
+		arg.Number,
 		arg.Reasons,
 		arg.RequestedBy,
 		arg.RequestedAt,
@@ -911,7 +937,7 @@ func (q *Queries) InsertVisit(ctx context.Context, arg InsertVisitParams) error 
 }
 
 const listApprovals = `-- name: ListApprovals :many
-SELECT a.company_id, a.id, a.move_id, a.reasons, a.requested_by, a.requested_at, a.status, a.decided_by, a.decided_at FROM approvals a JOIN gate_moves m ON m.company_id = a.company_id AND m.id = a.move_id
+SELECT a.company_id, a.id, a.move_id, a.reasons, a.requested_by, a.requested_at, a.status, a.decided_by, a.decided_at, a.number FROM approvals a JOIN gate_moves m ON m.company_id = a.company_id AND m.id = a.move_id
 WHERE a.company_id = $1 AND ($2::text = '' OR m.depot_id = $2)
   AND ($3::text = '' OR a.status = $3)
 ORDER BY a.id
@@ -942,6 +968,7 @@ func (q *Queries) ListApprovals(ctx context.Context, arg ListApprovalsParams) ([
 			&i.Status,
 			&i.DecidedBy,
 			&i.DecidedAt,
+			&i.Number,
 		); err != nil {
 			return nil, err
 		}

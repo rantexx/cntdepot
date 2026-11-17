@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"depot/internal/db"
@@ -21,6 +22,7 @@ import (
 	sqlcdb "depot/internal/yard/db"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oklog/ulid/v2"
 )
@@ -41,7 +43,14 @@ type (
 	MoveForm   = sqlcdb.GetMoveFormRow // the gate form columns of a gate move
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	// The schema refused a write: a check constraint (ErrInvalid) or a
+	// reference to a row that does not exist (ErrMissingLink). The database
+	// error is wrapped too, for the log.
+	ErrInvalid     = errors.New("a value is not allowed")
+	ErrMissingLink = errors.New("a linked record does not exist")
+)
 
 // Store is the yard's part of the database. The pool must connect as depot_app.
 type Store struct {
@@ -56,7 +65,17 @@ func NewStore(pool *pgxpool.Pool) *Store {
 
 func (s *Store) run(ctx context.Context, fn func(q *sqlcdb.Queries, sc tenancy.Scope) error) error {
 	sc, _ := tenancy.From(ctx)
-	return db.InCompany(ctx, s.pool, func(tx pgx.Tx) error { return fn(sqlcdb.New(tx), sc) })
+	err := db.InCompany(ctx, s.pool, func(tx pgx.Tx) error { return fn(sqlcdb.New(tx), sc) })
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		switch pg.Code {
+		case "23514": // check_violation
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		case "23503": // foreign_key_violation
+			return fmt.Errorf("%w: %w", ErrMissingLink, err)
+		}
+	}
+	return err
 }
 
 func newID() string { return ulid.Make().String() }
@@ -211,11 +230,12 @@ func (s *Store) ListVisits(ctx context.Context, status string) (out []Visit, err
 }
 
 // VisitFilter narrows the yard list. Zero values match all; TypeCode
-// matches as a prefix ("45" is every 45 type) and MinDays is days in the yard.
+// matches as a prefix ("45" is every 45 type), MinDays is days in the yard,
+// and Number matches anywhere in the container number.
 type VisitFilter struct {
-	Status, LineID, CustomerID, TypeCode, Grade string
-	OnHold                                      bool
-	MinDays                                     int
+	Status, Number, LineID, CustomerID, TypeCode, Grade string
+	OnHold                                              bool
+	MinDays                                             int
 }
 
 // VisitRow is a visit in the yard list, with whether it has an open hold.
@@ -229,12 +249,12 @@ func (s *Store) FindVisits(ctx context.Context, f VisitFilter, limit, offset int
 		before = ptrTo(s.now().AddDate(0, 0, -f.MinDays))
 	}
 	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
-		p := sqlcdb.CountVisitsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Status: f.Status, LineID: f.LineID,
+		p := sqlcdb.CountVisitsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Status: f.Status, Number: iso6346.Normalize(f.Number), LineID: f.LineID,
 			CustomerID: f.CustomerID, TypeCode: iso6346.Normalize(f.TypeCode), Grade: f.Grade, OnHoldOnly: f.OnHold, InBefore: before}
 		if total, err = q.CountVisits(ctx, p); err != nil {
 			return err
 		}
-		out, err = q.FindVisits(ctx, sqlcdb.FindVisitsParams{CompanyID: p.CompanyID, DepotID: p.DepotID, Status: p.Status,
+		out, err = q.FindVisits(ctx, sqlcdb.FindVisitsParams{CompanyID: p.CompanyID, DepotID: p.DepotID, Status: p.Status, Number: p.Number,
 			LineID: p.LineID, CustomerID: p.CustomerID, TypeCode: p.TypeCode, Grade: p.Grade, OnHoldOnly: p.OnHoldOnly,
 			InBefore: p.InBefore, Lim: int64(limit), Off: int64(offset)})
 		return err

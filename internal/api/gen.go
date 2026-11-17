@@ -37,6 +37,24 @@ func (e BlockKind) Valid() bool {
 	}
 }
 
+// Defines values for GateFormDirection.
+const (
+	GateFormDirectionIn  GateFormDirection = "in"
+	GateFormDirectionOut GateFormDirection = "out"
+)
+
+// Valid indicates whether the value is a known member of the GateFormDirection enum.
+func (e GateFormDirection) Valid() bool {
+	switch e {
+	case GateFormDirectionIn:
+		return true
+	case GateFormDirectionOut:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MoveSource.
 const (
 	MoveSourceCamera MoveSource = "camera"
@@ -189,16 +207,37 @@ func (e Status) Valid() bool {
 
 // Defines values for VisitStatus.
 const (
-	InYard VisitStatus = "in_yard"
-	Out    VisitStatus = "out"
+	VisitStatusInYard VisitStatus = "in_yard"
+	VisitStatusOut    VisitStatus = "out"
 )
 
 // Valid indicates whether the value is a known member of the VisitStatus enum.
 func (e VisitStatus) Valid() bool {
 	switch e {
-	case InYard:
+	case VisitStatusInYard:
 		return true
-	case Out:
+	case VisitStatusOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for YardSettingsRefusalMode.
+const (
+	ClerkOverride   YardSettingsRefusalMode = "clerk_override"
+	ManagerApproval YardSettingsRefusalMode = "manager_approval"
+	None            YardSettingsRefusalMode = "none"
+)
+
+// Valid indicates whether the value is a known member of the YardSettingsRefusalMode enum.
+func (e YardSettingsRefusalMode) Valid() bool {
+	switch e {
+	case ClerkOverride:
+		return true
+	case ManagerApproval:
+		return true
+	case None:
 		return true
 	default:
 		return false
@@ -228,13 +267,16 @@ func (e ListApprovalsParamsStatus) Valid() bool {
 
 // Approval defines model for Approval.
 type Approval struct {
-	DecidedAt   *time.Time `json:"decidedAt"`
-	DecidedBy   string     `json:"decidedBy"`
-	Id          string     `json:"id"`
-	MoveId      string     `json:"moveId"`
-	Reasons     []Reason   `json:"reasons"`
-	RequestedAt time.Time  `json:"requestedAt"`
-	RequestedBy string     `json:"requestedBy"`
+	DecidedAt *time.Time `json:"decidedAt"`
+	DecidedBy string     `json:"decidedBy"`
+	Id        string     `json:"id"`
+	MoveId    string     `json:"moveId"`
+
+	// Number the move's container number
+	Number      string    `json:"number"`
+	Reasons     []Reason  `json:"reasons"`
+	RequestedAt time.Time `json:"requestedAt"`
+	RequestedBy string    `json:"requestedBy"`
 
 	// Status pending, approved or denied
 	Status string `json:"status"`
@@ -394,13 +436,11 @@ type GateForm struct {
 		Description *string `json:"description,omitempty"`
 		Location    string  `json:"location"`
 
-		// PhotoIds 1 to 3 photos of this move
+		// PhotoIds photos of this move
 		PhotoIds []string `json:"photoIds"`
 	} `json:"damages,omitempty"`
-
-	// Direction in or out
-	Direction  string  `json:"direction"`
-	DriverName *string `json:"driverName,omitempty"`
+	Direction  GateFormDirection `json:"direction"`
+	DriverName *string           `json:"driverName,omitempty"`
 
 	// FullEmpty E or F; empty means E
 	FullEmpty *string `json:"fullEmpty,omitempty"`
@@ -418,6 +458,9 @@ type GateForm struct {
 	TruckPlate       *string `json:"truckPlate,omitempty"`
 	TypeCode         *string `json:"typeCode,omitempty"`
 }
+
+// GateFormDirection defines model for GateForm.Direction.
+type GateFormDirection string
 
 // GateRefusal defines model for GateRefusal.
 type GateRefusal struct {
@@ -640,6 +683,46 @@ type MoveDetail struct {
 
 // MoveDetailSource defines model for MoveDetail.Source.
 type MoveDetailSource string
+
+// MoveForm defines model for MoveForm.
+type MoveForm struct {
+	Condition string `json:"condition"`
+
+	// Corrections how many times the office corrected the form
+	Corrections int `json:"corrections"`
+
+	// CustomerId the visit's customer
+	CustomerId *string `json:"customerId"`
+	Damages    []struct {
+		Description string   `json:"description"`
+		Id          string   `json:"id"`
+		Location    string   `json:"location"`
+		PhotoIds    []string `json:"photoIds"`
+	} `json:"damages"`
+	Direction   string     `json:"direction"`
+	DriverName  string     `json:"driverName"`
+	Flags       []GateFlag `json:"flags"`
+	FormSavedAt *time.Time `json:"formSavedAt"`
+	FullEmpty   string     `json:"fullEmpty"`
+	HaulierId   *string    `json:"haulierId"`
+
+	// Id the move id
+	Id string `json:"id"`
+
+	// LineId the visit's line
+	LineId           *string `json:"lineId"`
+	Number           string  `json:"number"`
+	OrderId          *string `json:"orderId"`
+	OrderItemId      *string `json:"orderItemId"`
+	Seal             string  `json:"seal"`
+	SignaturePhotoId *string `json:"signaturePhotoId"`
+	TrailerPlate     string  `json:"trailerPlate"`
+	TruckPlate       string  `json:"truckPlate"`
+	TypeCode         string  `json:"typeCode"`
+	VisitId          *string `json:"visitId"`
+	VoidReason       string  `json:"voidReason"`
+	Voided           bool    `json:"voided"`
+}
 
 // Order defines model for Order.
 type Order struct {
@@ -884,25 +967,31 @@ type Visit struct {
 
 // VisitDetail defines model for VisitDetail.
 type VisitDetail struct {
-	Block       string      `json:"block"`
-	CloseReason string      `json:"closeReason"`
-	CustomerId  *string     `json:"customerId"`
-	DepotId     string      `json:"depotId"`
-	FullEmpty   string      `json:"fullEmpty"`
-	Grade       string      `json:"grade"`
-	Holds       []Hold      `json:"holds"`
-	Id          string      `json:"id"`
-	Imported    bool        `json:"imported"`
-	InAt        time.Time   `json:"inAt"`
-	InMoveId    *string     `json:"inMoveId"`
-	LineId      *string     `json:"lineId"`
-	Number      string      `json:"number"`
-	OutAt       *time.Time  `json:"outAt"`
-	OutMoveId   *string     `json:"outMoveId"`
-	RowNo       string      `json:"rowNo"`
-	Status      VisitStatus `json:"status"`
-	Tier        string      `json:"tier"`
-	TypeCode    string      `json:"typeCode"`
+	Block       string    `json:"block"`
+	CloseReason string    `json:"closeReason"`
+	CustomerId  *string   `json:"customerId"`
+	DepotId     string    `json:"depotId"`
+	FullEmpty   string    `json:"fullEmpty"`
+	Grade       string    `json:"grade"`
+	Holds       []Hold    `json:"holds"`
+	Id          string    `json:"id"`
+	Imported    bool      `json:"imported"`
+	InAt        time.Time `json:"inAt"`
+
+	// InForm the gate-in move's form; null when none or at another depot
+	InForm   *MoveForm  `json:"inForm"`
+	InMoveId *string    `json:"inMoveId"`
+	LineId   *string    `json:"lineId"`
+	Number   string     `json:"number"`
+	OutAt    *time.Time `json:"outAt"`
+
+	// OutForm the gate-out move's form; null when none or at another depot
+	OutForm   *MoveForm   `json:"outForm"`
+	OutMoveId *string     `json:"outMoveId"`
+	RowNo     string      `json:"rowNo"`
+	Status    VisitStatus `json:"status"`
+	Tier      string      `json:"tier"`
+	TypeCode  string      `json:"typeCode"`
 }
 
 // VisitList defines model for VisitList.
@@ -939,13 +1028,13 @@ type VisitStatus string
 
 // YardSettings defines model for YardSettings.
 type YardSettings struct {
-	// EirTtlDays at least 1
-	EirTtlDays int `json:"eirTtlDays"`
-
-	// RefusalMode clerk_override, manager_approval or none
-	RefusalMode    string `json:"refusalMode"`
-	WalkinsAllowed bool   `json:"walkinsAllowed"`
+	EirTtlDays     int                     `json:"eirTtlDays"`
+	RefusalMode    YardSettingsRefusalMode `json:"refusalMode"`
+	WalkinsAllowed bool                    `json:"walkinsAllowed"`
 }
+
+// YardSettingsRefusalMode defines model for YardSettings.RefusalMode.
+type YardSettingsRefusalMode string
 
 // Id defines model for Id.
 type Id = string
@@ -1104,9 +1193,12 @@ type TestReadMultipartBody struct {
 
 // ListVisitsParams defines parameters for ListVisits.
 type ListVisitsParams struct {
-	Status     *VisitStatus `form:"status,omitempty" json:"status,omitempty"`
-	LineId     *string      `form:"lineId,omitempty" json:"lineId,omitempty"`
-	CustomerId *string      `form:"customerId,omitempty" json:"customerId,omitempty"`
+	Status *VisitStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Q container number contains (spaces and case ignored)
+	Q          *string `form:"q,omitempty" json:"q,omitempty"`
+	LineId     *string `form:"lineId,omitempty" json:"lineId,omitempty"`
+	CustomerId *string `form:"customerId,omitempty" json:"customerId,omitempty"`
 
 	// Type ISO type code prefix
 	Type  *string `form:"type,omitempty" json:"type,omitempty"`
@@ -1331,6 +1423,9 @@ type ServerInterface interface {
 
 	// (POST /api/moves/{id}/eir)
 	CreateEirLink(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/moves/{id}/form)
+	GetMoveForm(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (POST /api/moves/{id}/gate)
 	SaveGateForm(w http.ResponseWriter, r *http.Request, id Id)
@@ -2374,6 +2469,32 @@ func (siw *ServerInterfaceWrapper) CreateEirLink(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetMoveForm operation middleware
+func (siw *ServerInterfaceWrapper) GetMoveForm(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMoveForm(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SaveGateForm operation middleware
 func (siw *ServerInterfaceWrapper) SaveGateForm(w http.ResponseWriter, r *http.Request) {
 
@@ -2881,6 +3002,19 @@ func (siw *ServerInterfaceWrapper) ListVisits(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "lineId" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "lineId", r.URL.Query(), &params.LineId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -3260,6 +3394,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/hauliers/{id}", wrapper.DeactivateHaulier)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/hauliers/{id}", wrapper.UpdateHaulier)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/gate", wrapper.SaveGateForm)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/moves/{id}/form", wrapper.GetMoveForm)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/eir", wrapper.CreateEirLink)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/correct", wrapper.CorrectMove)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/void", wrapper.VoidMove)
@@ -4683,6 +4818,45 @@ func (response CreateEirLinkdefaultJSONResponse) VisitCreateEirLinkResponse(w ht
 	return err
 }
 
+type GetMoveFormRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetMoveFormResponseObject interface {
+	VisitGetMoveFormResponse(w http.ResponseWriter) error
+}
+
+type GetMoveForm200JSONResponse MoveForm
+
+func (response GetMoveForm200JSONResponse) VisitGetMoveFormResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMoveFormdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetMoveFormdefaultJSONResponse) VisitGetMoveFormResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaveGateFormRequestObject struct {
 	Id   Id `json:"id"`
 	Body *SaveGateFormJSONRequestBody
@@ -5793,6 +5967,9 @@ type StrictServerInterface interface {
 
 	// (POST /api/moves/{id}/eir)
 	CreateEirLink(ctx context.Context, request CreateEirLinkRequestObject) (CreateEirLinkResponseObject, error)
+
+	// (GET /api/moves/{id}/form)
+	GetMoveForm(ctx context.Context, request GetMoveFormRequestObject) (GetMoveFormResponseObject, error)
 
 	// (POST /api/moves/{id}/gate)
 	SaveGateForm(ctx context.Context, request SaveGateFormRequestObject) (SaveGateFormResponseObject, error)
@@ -6942,6 +7119,32 @@ func (sh *strictHandler) CreateEirLink(w http.ResponseWriter, r *http.Request, i
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateEirLinkResponseObject); ok {
 		if err := validResponse.VisitCreateEirLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMoveForm operation middleware
+func (sh *strictHandler) GetMoveForm(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetMoveFormRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMoveForm(ctx, request.(GetMoveFormRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMoveForm")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMoveFormResponseObject); ok {
+		if err := validResponse.VisitGetMoveFormResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

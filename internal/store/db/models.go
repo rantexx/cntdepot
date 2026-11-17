@@ -21,6 +21,7 @@ type Approval struct {
 	Status      string
 	DecidedBy   string
 	DecidedAt   pgtype.Timestamptz
+	Number      string
 }
 
 type BlockList struct {
