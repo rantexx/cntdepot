@@ -367,6 +367,8 @@ type Company struct {
 
 // CreateMoveRequest defines model for CreateMoveRequest.
 type CreateMoveRequest struct {
+	// Id the phone outbox's own id (16-64 of A-Z a-z 0-9 - _); a resend returns the stored move
+	Id     *string `json:"id,omitempty"`
 	IsTest *bool   `json:"is_test,omitempty"`
 	Lane   *string `json:"lane,omitempty"`
 }

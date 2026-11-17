@@ -1088,3 +1088,19 @@ func TestPublicHostsAreAllowed(t *testing.T) {
 		t.Error("no configured hosts must allow nothing")
 	}
 }
+
+func TestCreateMoveWithClientID(t *testing.T) {
+	u := newEnv(t, nil).as(t, "A", "gate")
+	const id = "01JCLIENTOUTBOX0000000001"
+	for i := 0; i < 2; i++ { // a resend returns the stored move
+		status, body := u.call("POST", "/api/moves", `{"lane":"1","id":"`+id+`"}`)
+		var m struct{ ID string }
+		_ = json.Unmarshal(body, &m)
+		if status != http.StatusCreated || m.ID != id {
+			t.Fatalf("create %d = %d %s", i, status, body)
+		}
+	}
+	if status, body := u.call("POST", "/api/moves", `{"id":"bad id"}`); status != http.StatusBadRequest {
+		t.Fatalf("bad id = %d %s; want 400", status, body)
+	}
+}

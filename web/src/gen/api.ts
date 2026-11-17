@@ -135,6 +135,11 @@ export interface CreateMoveRequest {
   /** @maxLength 32 */
   lane?: string;
   is_test?: boolean;
+  /**
+     * the phone outbox's own id (16-64 of A-Z a-z 0-9 - _); a resend returns the stored move
+     * @maxLength 64
+     */
+  id?: string;
 }
 
 export type ResolveRequestAction = typeof ResolveRequestAction[keyof typeof ResolveRequestAction];

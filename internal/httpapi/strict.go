@@ -185,7 +185,7 @@ func (s *Server) CreateMove(ctx context.Context, req api.CreateMoveRequestObject
 	if len([]rune(lane)) > 32 {
 		return nil, fail(http.StatusBadRequest, "E4002", "lane name too long")
 	}
-	m, err := s.opts.Service.NewMove(ctx, lane, val(req.Body.IsTest), actor(ctx))
+	m, err := s.opts.Service.CreateMove(ctx, strings.TrimSpace(val(req.Body.Id)), lane, val(req.Body.IsTest), actor(ctx))
 	if err != nil {
 		return nil, err
 	}

@@ -296,7 +296,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "E4041", "move not found")
 	case errors.Is(err, gate.ErrClosed):
 		writeError(w, http.StatusConflict, "E4090", err.Error())
-	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto):
+	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto), errors.Is(err, gate.ErrBadID):
 		writeError(w, http.StatusBadRequest, "E4000", err.Error())
 	case yardError(err) != nil:
 		ae = yardError(err)

@@ -829,7 +829,10 @@ components:
         auth_required: {type: boolean}
     CreateMoveRequest:
       type: object
-      properties: {lane: {type: string, maxLength: 32}, is_test: {type: boolean}}
+      properties:
+        lane: {type: string, maxLength: 32}
+        is_test: {type: boolean}
+        id: {type: string, maxLength: 64, description: "the phone outbox's own id (16-64 of A-Z a-z 0-9 - _); a resend returns the stored move"}
     ResolveRequest:
       type: object
       required: [action, by]
