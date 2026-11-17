@@ -1,6 +1,6 @@
 import { useList } from "@refinedev/core";
 import { useState } from "react";
-import { ContainerNumber, dateTime, errText, MovePhotos, ReasonText } from "../components";
+import { ContainerNumber, dateTime, errText, MovePhotos, ReasonText, useReasonDetail } from "../components";
 import { decideApproval, type Approval } from "../gen/api";
 import { useMoveEvents } from "../live";
 import { useT } from "../i18n";
@@ -9,6 +9,7 @@ import { useT } from "../i18n";
 // ("approval" events) and reloads after every reconnect, so no polling is needed.
 export function Approvals() {
   const { t } = useT();
+  const detail = useReasonDetail();
   const { result, query } = useList<Approval>({
     resource: "approvals",
     pagination: { mode: "off" },
@@ -53,7 +54,7 @@ export function Approvals() {
           </div>
           <p>
             {a.reasons.map((r) => (
-              <span key={r.code} className="chip" title={r.detail}>
+              <span key={r.code} className="chip" title={r.detail ? detail(r.detail) : undefined}>
                 <ReasonText code={r.code} />
               </span>
             ))}

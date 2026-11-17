@@ -748,6 +748,8 @@ export interface Visit {
 
 export type VisitListItem = Visit & {
   onHold: boolean;
+  /** whole calendar days in the depot's own time zone from the gate-in to now (or to the gate-out), as in the ageing report */
+  daysInYard: number;
 };
 
 export interface VisitList {
@@ -1020,7 +1022,7 @@ export type ListVisitsParams = {
   /** true lists only visits with an open hold */
   hold?: boolean;
   /**
-   * at least this many days in the yard
+   * at least this many depot-local calendar days in the yard (daysInYard)
    * @minimum 0
    */
   minDays?: number;

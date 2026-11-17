@@ -58,8 +58,10 @@ ORDER BY id DESC;
 -- WHERE clauses equal), a page, and whether each visit has an open hold.
 -- name: FindVisits :many
 SELECT v.*, EXISTS (SELECT 1 FROM holds h
-       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold
-FROM visits v
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold,
+       a.days AS days_in_yard
+FROM visits v JOIN depots d ON d.company_id = v.company_id AND d.id = v.depot_id
+CROSS JOIN LATERAL (SELECT GREATEST(((COALESCE(v.out_at, sqlc.arg(at_time)::timestamptz) AT TIME ZONE d.timezone)::date - (v.in_at AT TIME ZONE d.timezone)::date), 0)::int AS days) a
 WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
   AND (@status::text = '' OR v.status = @status)
   AND strpos(v.number, @number::text) > 0
@@ -69,12 +71,13 @@ WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depo
   AND (@grade::text = '' OR v.grade = @grade)
   AND (NOT @on_hold_only::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND (sqlc.narg(in_before)::timestamptz IS NULL OR v.in_at <= sqlc.narg(in_before))
+  AND (@min_days::int <= 0 OR a.days >= @min_days::int)
 ORDER BY v.id DESC
 LIMIT @lim::int OFFSET @off::int;
 
 -- name: CountVisits :one
-SELECT count(*) FROM visits v
+SELECT count(*) FROM visits v JOIN depots d ON d.company_id = v.company_id AND d.id = v.depot_id
+CROSS JOIN LATERAL (SELECT GREATEST(((COALESCE(v.out_at, sqlc.arg(at_time)::timestamptz) AT TIME ZONE d.timezone)::date - (v.in_at AT TIME ZONE d.timezone)::date), 0)::int AS days) a
 WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id)
   AND (@status::text = '' OR v.status = @status)
   AND strpos(v.number, @number::text) > 0
@@ -84,7 +87,7 @@ WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depo
   AND (@grade::text = '' OR v.grade = @grade)
   AND (NOT @on_hold_only::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND (sqlc.narg(in_before)::timestamptz IS NULL OR v.in_at <= sqlc.narg(in_before));
+  AND (@min_days::int <= 0 OR a.days >= @min_days::int);
 
 -- Only an open visit closes: a replay must not overwrite a closed one.
 -- name: CloseVisit :execrows

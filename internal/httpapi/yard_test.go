@@ -496,3 +496,55 @@ func TestTurnAwayOverHTTP(t *testing.T) {
 		t.Fatalf("another company = %d %s; want 404", status, body)
 	}
 }
+
+func TestNumberCorrectionMovesTheVisit(t *testing.T) {
+	e := newYardEnv(t)
+	g, office := e.as(t, "A", "gate"), e.as(t, "A", "office")
+	id := g.newMove()
+	g.must(200, "POST", "/api/moves/"+id+"/gate", `{"direction":"in","number":"MSCU1234565","typeCode":"22G1"}`)
+	office.must(200, "POST", "/api/moves/"+id+"/correct", `{"reason":"misread","form":{"direction":"in","number":"CSQU3054383","typeCode":"22G1"}}`)
+	if got := string(office.must(200, "GET", "/api/visits?q=CSQU3054383", "")); !strings.Contains(got, "CSQU3054383") || strings.Contains(got, `"total":0`) {
+		t.Errorf("visits of the new number = %s", got)
+	}
+	if got := string(office.must(200, "GET", "/api/visits?q=MSCU1234565", "")); !strings.Contains(got, `"total":0`) {
+		t.Errorf("visits of the old number = %s; want none", got)
+	}
+}
+
+func TestResolveFlagNote(t *testing.T) {
+	e := newYardEnv(t)
+	g, office := e.as(t, "A", "gate"), e.as(t, "A", "office")
+	id := g.newMove()
+	g.must(200, "POST", "/api/moves/"+id+"/gate", `{"direction":"in","number":"CSQU3054383"}`) // a walk-in: a flag
+	flags := decode[[]struct {
+		ID, Code    string
+		ResolveNote string `json:"resolveNote"`
+	}](t, office.must(200, "GET", "/api/gate-flags?open=true", ""))
+	if len(flags) == 0 {
+		t.Fatal("no open flag to resolve")
+	}
+	long := `{"note":"` + strings.Repeat("x", 501) + `"}`
+	if status, body := office.call("POST", "/api/gate-flags/"+flags[0].ID+"/resolve", long); status != 400 || errorCode(body) != "E4000" {
+		t.Errorf("long note = %d %s; want 400 E4000", status, body)
+	}
+	office.must(204, "POST", "/api/gate-flags/"+flags[0].ID+"/resolve", `{"note":"called the driver"}`)
+	all := decode[[]struct {
+		ID          string
+		ResolveNote string `json:"resolveNote"`
+	}](t, office.must(200, "GET", "/api/gate-flags?moveId="+id, ""))
+	if len(all) == 0 || all[0].ID != flags[0].ID || all[0].ResolveNote != "called the driver" {
+		t.Errorf("flags = %+v; want the note read back", all)
+	}
+}
+
+func TestVisitListDaysInYard(t *testing.T) {
+	e := newYardEnv(t)
+	g, office := e.as(t, "A", "gate"), e.as(t, "A", "office")
+	g.must(200, "POST", "/api/moves/"+g.newMove()+"/gate", `{"direction":"in","number":"MSCU1234565"}`)
+	if got := string(office.must(200, "GET", "/api/visits", "")); !strings.Contains(got, `"daysInYard":0`) {
+		t.Errorf("visits = %s; want daysInYard 0", got)
+	}
+	if got := string(office.must(200, "GET", "/api/visits?minDays=1", "")); !strings.Contains(got, `"total":0`) {
+		t.Errorf("minDays=1 = %s; want none", got)
+	}
+}

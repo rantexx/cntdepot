@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getMove, validateNumber, type Attempt, type Box, type Candidate, type Move, type Photo, type Status, type Validation } from "./gen/api";
 import { blobUrl, ok } from "./hubApi";
-import { useT, type Key } from "./i18n";
+import { currentLang, useT, type Key } from "./i18n";
 
 // Every state wears its ISO 3864 safety colour: green done, yellow needs a
 // person, red refused, grey nothing to do; reading is an outlined sign.
@@ -278,14 +278,12 @@ export function ReadCrop({ photos, attempts }: { photos: Photo[] | null; attempt
 
 // ---- office screens ----
 
+// Dates follow the language of the screen, not the computer.
 export const dateTime = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—";
+  iso ? new Date(iso).toLocaleString(currentLang() === "tr" ? "tr-TR" : "en-GB", { dateStyle: "short", timeStyle: "short" }) : "—";
 
 /** The text of a failed call, or the fallback when the error has none. */
 export const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
-
-// shortcut: whole 24 h periods since the gate-in; the reports count depot-local calendar days. Exact enough for a colour.
-export const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 86_400_000));
 
 // Ageing bands match the ageing report: 0-7 calm, 8-30 watch, 31-90 act, 90+ stop.
 export function Age({ days }: { days: number }) {
@@ -300,6 +298,16 @@ export function ReasonText({ code }: { code: string }) {
   const [head, rest] = code.split(":");
   const label = (c: string) => t(`reason_${c}` as Key) ?? c;
   return <>{head === "override" && rest ? `${t("reason_override")}: ${label(rest)}` : label(head)}</>;
+}
+
+/** A flag's detail: refusal codes ("hold_open,no_order") in words; any other text stays as written. */
+export function useReasonDetail() {
+  const { t } = useT();
+  return (detail: string) =>
+    detail
+      .split(",")
+      .map((tok) => t(`reason_${tok.trim()}` as Key) ?? tok)
+      .join(", ");
 }
 
 /** A link that downloads a CSV export of the office. */

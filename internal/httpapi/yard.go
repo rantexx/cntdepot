@@ -538,6 +538,9 @@ func (s *Server) ResolveGateFlag(ctx context.Context, req api.ResolveGateFlagReq
 	if req.Body != nil {
 		note = val(req.Body.Note)
 	}
+	if err := checkFields(field{name: "note", v: note, max: maxText}); err != nil {
+		return nil, err
+	}
 	return api.ResolveGateFlag204Response{}, s.opts.Yard.ResolveFlag(ctx, req.Id, actor(ctx), note)
 }
 

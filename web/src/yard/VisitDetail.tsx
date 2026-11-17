@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Age, ContainerNumber, daysSince, dateTime, errText, MovePhotos, ReasonText } from "../components";
+import { Age, ContainerNumber, dateTime, errText, MovePhotos, ReasonText, useReasonDetail, validateHere } from "../components";
 import {
   correctMove,
   createEirLink,
   getVisit,
+  listVisits,
   placeHold,
   releaseHold,
   setVisitGrade,
@@ -13,7 +14,7 @@ import {
   type MoveForm,
   type VisitDetail as Detail,
 } from "../gen/api";
-import { ok } from "../hubApi";
+import { ok, typedNumber } from "../hubApi";
 import { useT } from "../i18n";
 
 const GRADES = ["", "A", "B", "C", "FOOD"];
@@ -42,15 +43,18 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
   const [mode, setMode] = useState<"" | "correct" | "void">("");
   const [reason, setReason] = useState("");
   const [draft, setDraft] = useState({
+    number: form.number,
     typeCode: form.typeCode,
     fullEmpty: form.fullEmpty || "E",
     seal: form.seal,
-    condition: form.condition,
+    condition: form.condition === "sound" || form.condition === "damaged" ? form.condition : "",
     truckPlate: form.truckPlate,
     trailerPlate: form.trailerPlate,
     driverName: form.driverName,
   });
   const [eir, setEir] = useState("");
+  const check = validateHere(draft.number);
+  const detail = useReasonDetail();
 
   async function openEir() {
     try {
@@ -71,8 +75,8 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
     // The correction rewrites the whole form: keep what the office does not edit here.
     const body: GateForm = {
       direction: form.direction as GateForm["direction"],
-      number: form.number,
       ...draft,
+      number: typedNumber(draft.number).trim(),
       lineId: form.lineId ?? undefined,
       customerId: form.customerId ?? undefined,
       haulierId: form.haulierId ?? undefined,
@@ -96,6 +100,7 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
           )}
         </h3>
         <div className="row">
+          {eir && <input readOnly value={eir} aria-label="EIR" onFocus={(e) => e.target.select()} />}
           <button type="button" onClick={() => void openEir()}>
             {t("openEir")}
           </button>
@@ -111,7 +116,6 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
           )}
         </div>
       </div>
-      {eir && <input readOnly value={eir} aria-label="EIR" onFocus={(e) => e.target.select()} />}
       <dl className="facts-grid">
         <div>
           <dt>{t("gateTruck")}</dt>
@@ -141,7 +145,7 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
       {form.flags.length > 0 && (
         <p>
           {form.flags.map((f) => (
-            <span key={f.id} className="chip" title={f.detail}>
+            <span key={f.id} className="chip" title={detail(f.detail)}>
               <ReasonText code={f.code} />
             </span>
           ))}
@@ -165,6 +169,11 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
           {mode === "correct" && (
             <>
               <label>
+                {t("number")}
+                <input value={draft.number} onChange={set("number")} maxLength={64} autoCapitalize="characters" />
+                <span className={check.valid ? "ok-text small" : "error small"}>{check.valid ? t("validNumber") : t("invalidNumber")}</span>
+              </label>
+              <label>
                 {t("typeCode")}
                 <input value={draft.typeCode} onChange={set("typeCode")} maxLength={8} />
               </label>
@@ -182,9 +191,9 @@ function MoveBlock({ form, label, reload }: { form: MoveForm; label: string; rel
               <label>
                 {t("gateCondition")}
                 <select value={draft.condition} onChange={set("condition")}>
+                  <option value="">–</option>
                   <option value="sound">{t("gateSound")}</option>
                   <option value="damaged">{t("gateDamaged")}</option>
-                  <option value="empty">{t("gateEmpty")}</option>
                 </select>
               </label>
               <label>
@@ -228,6 +237,15 @@ export function VisitDetail({ id }: { id: string }) {
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
   const { msg, act } = useAct(load);
+  // The yard list carries the depot-local day count (the ageing report's rule); the visit itself does not.
+  const [days, setDays] = useState<number | null>(null);
+  useEffect(() => {
+    if (!v) return;
+    ok(listVisits({ q: v.number, status: v.status })).then(
+      (r) => setDays(r.items.find((x) => x.id === v.id)?.daysInYard ?? null),
+      () => setDays(null),
+    );
+  }, [v?.id, v?.status]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pos, setPos] = useState({ block: "", row: "", tier: "" });
   const [reason, setReason] = useState("");
   useEffect(() => {
@@ -249,7 +267,7 @@ export function VisitDetail({ id }: { id: string }) {
           <small>{v.typeCode}</small>
         </h1>
         {open.length > 0 && <span className="hold-sign">{t("onHold")}</span>}
-        {v.status === "in_yard" ? <Age days={daysSince(v.inAt)} /> : <span className="chip">{t("leftYard")}</span>}
+        {v.status !== "in_yard" ? <span className="chip">{t("leftYard")}</span> : days !== null && <Age days={days} />}
       </div>
       <section className="card">
         <dl className="facts-grid">
@@ -333,6 +351,7 @@ export function VisitDetail({ id }: { id: string }) {
             </li>
           ))}
         </ul>
+        {v.status === "in_yard" && (
         <form
           className="admin-form"
           onSubmit={(e) => {
@@ -348,6 +367,7 @@ export function VisitDetail({ id }: { id: string }) {
             {t("placeHold")}
           </button>
         </form>
+        )}
         {msg && (
           <p className="error" role="alert">
             {msg}
@@ -355,8 +375,8 @@ export function VisitDetail({ id }: { id: string }) {
         )}
       </section>
 
-      {v.inForm && <MoveBlock form={v.inForm} label={t("gateIn")} reload={load} />}
-      {v.outForm && <MoveBlock form={v.outForm} label={t("gateOut")} reload={load} />}
+      {v.inForm && <MoveBlock key={`${v.inForm.id}:${v.inForm.corrections}:${v.inForm.voided}`} form={v.inForm} label={t("gateIn")} reload={load} />}
+      {v.outForm && <MoveBlock key={`${v.outForm.id}:${v.outForm.corrections}:${v.outForm.voided}`} form={v.outForm} label={t("gateOut")} reload={load} />}
     </div>
   );
 }

@@ -398,6 +398,7 @@ const tr = {
   walkinsAllowed: "Talimatsız (walk-in) girişe izin ver",
   eirTtlDays: "EIR bağlantısı kaç gün geçerli",
   saved: "Kaydedildi",
+  customer: "Müşteri",
 };
 
 export type Key = keyof typeof tr;
@@ -799,6 +800,7 @@ const en: Record<Key, string> = {
   walkinsAllowed: "Allow walk-ins without an order",
   eirTtlDays: "EIR link valid for (days)",
   saved: "Saved",
+  customer: "Customer",
 };
 
 export type Lang = "tr" | "en";
@@ -809,6 +811,9 @@ const listeners = new Set<() => void>();
 let current: Lang = readLocal("lang") === "tr" ? "tr" : "en";
 // Uppercase labels follow the page language (Turkish turns i into İ).
 document.documentElement.lang = current;
+
+/** The language now shown, for code outside a component (date formats). */
+export const currentLang = () => current;
 
 function setLang(lang: Lang) {
   current = lang;

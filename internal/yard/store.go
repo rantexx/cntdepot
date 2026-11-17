@@ -230,7 +230,7 @@ func (s *Store) ListVisits(ctx context.Context, status string) (out []Visit, err
 }
 
 // VisitFilter narrows the yard list. Zero values match all; TypeCode
-// matches as a prefix ("45" is every 45 type), MinDays is days in the yard,
+// matches as a prefix ("45" is every 45 type), MinDays is depot-local calendar days in the yard,
 // and Number matches anywhere in the container number.
 type VisitFilter struct {
 	Status, Number, LineID, CustomerID, TypeCode, Grade string
@@ -244,19 +244,16 @@ type VisitRow = sqlcdb.FindVisitsRow
 // FindVisits returns one page of the filtered visits, newest first, and the
 // number of all that match.
 func (s *Store) FindVisits(ctx context.Context, f VisitFilter, limit, offset int) (out []VisitRow, total int64, err error) {
-	var before *time.Time
-	if f.MinDays > 0 {
-		before = ptrTo(s.now().AddDate(0, 0, -f.MinDays))
-	}
+	now := s.now() // days in the yard are depot-local calendar days at this moment, as in the ageing report
 	err = s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
 		p := sqlcdb.CountVisitsParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, Status: f.Status, Number: iso6346.Normalize(f.Number), LineID: f.LineID,
-			CustomerID: f.CustomerID, TypeCode: iso6346.Normalize(f.TypeCode), Grade: f.Grade, OnHoldOnly: f.OnHold, InBefore: before}
+			CustomerID: f.CustomerID, TypeCode: iso6346.Normalize(f.TypeCode), Grade: f.Grade, OnHoldOnly: f.OnHold, MinDays: int64(f.MinDays), AtTime: now}
 		if total, err = q.CountVisits(ctx, p); err != nil {
 			return err
 		}
 		out, err = q.FindVisits(ctx, sqlcdb.FindVisitsParams{CompanyID: p.CompanyID, DepotID: p.DepotID, Status: p.Status, Number: p.Number,
 			LineID: p.LineID, CustomerID: p.CustomerID, TypeCode: p.TypeCode, Grade: p.Grade, OnHoldOnly: p.OnHoldOnly,
-			InBefore: p.InBefore, Lim: int64(limit), Off: int64(offset)})
+			MinDays: p.MinDays, AtTime: p.AtTime, Lim: int64(limit), Off: int64(offset)})
 		return err
 	})
 	return out, total, err

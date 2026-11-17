@@ -139,20 +139,22 @@ func (q *Queries) CloseVisit(ctx context.Context, arg CloseVisitParams) (int64, 
 }
 
 const countVisits = `-- name: CountVisits :one
-SELECT count(*) FROM visits v
-WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
-  AND ($3::text = '' OR v.status = $3)
-  AND strpos(v.number, $4::text) > 0
-  AND ($5::text = '' OR v.line_id = $5)
-  AND ($6::text = '' OR v.customer_id = $6)
-  AND starts_with(v.type_code, $7::text)
-  AND ($8::text = '' OR v.grade = $8)
-  AND (NOT $9::boolean OR EXISTS (SELECT 1 FROM holds h
+SELECT count(*) FROM visits v JOIN depots d ON d.company_id = v.company_id AND d.id = v.depot_id
+CROSS JOIN LATERAL (SELECT GREATEST(((COALESCE(v.out_at, $1::timestamptz) AT TIME ZONE d.timezone)::date - (v.in_at AT TIME ZONE d.timezone)::date), 0)::int AS days) a
+WHERE v.company_id = $2 AND ($3::text = '' OR v.depot_id = $3)
+  AND ($4::text = '' OR v.status = $4)
+  AND strpos(v.number, $5::text) > 0
+  AND ($6::text = '' OR v.line_id = $6)
+  AND ($7::text = '' OR v.customer_id = $7)
+  AND starts_with(v.type_code, $8::text)
+  AND ($9::text = '' OR v.grade = $9)
+  AND (NOT $10::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND ($10::timestamptz IS NULL OR v.in_at <= $10)
+  AND ($11::int <= 0 OR a.days >= $11::int)
 `
 
 type CountVisitsParams struct {
+	AtTime     time.Time
 	CompanyID  string
 	DepotID    string
 	Status     string
@@ -162,11 +164,12 @@ type CountVisitsParams struct {
 	TypeCode   string
 	Grade      string
 	OnHoldOnly bool
-	InBefore   *time.Time
+	MinDays    int64
 }
 
 func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countVisits,
+		arg.AtTime,
 		arg.CompanyID,
 		arg.DepotID,
 		arg.Status,
@@ -176,7 +179,7 @@ func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int64
 		arg.TypeCode,
 		arg.Grade,
 		arg.OnHoldOnly,
-		arg.InBefore,
+		arg.MinDays,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -349,23 +352,26 @@ func (q *Queries) EIRLookup(ctx context.Context, tokenHash string) (EIRLookupRow
 
 const findVisits = `-- name: FindVisits :many
 SELECT v.company_id, v.id, v.depot_id, v.number, v.type_code, v.line_id, v.customer_id, v.status, v.full_empty, v.grade, v.block, v.row_no, v.tier, v.in_move_id, v.out_move_id, v.in_at, v.out_at, v.imported, v.close_reason, EXISTS (SELECT 1 FROM holds h
-       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold
-FROM visits v
-WHERE v.company_id = $1 AND ($2::text = '' OR v.depot_id = $2)
-  AND ($3::text = '' OR v.status = $3)
-  AND strpos(v.number, $4::text) > 0
-  AND ($5::text = '' OR v.line_id = $5)
-  AND ($6::text = '' OR v.customer_id = $6)
-  AND starts_with(v.type_code, $7::text)
-  AND ($8::text = '' OR v.grade = $8)
-  AND (NOT $9::boolean OR EXISTS (SELECT 1 FROM holds h
+       WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL) AS on_hold,
+       a.days AS days_in_yard
+FROM visits v JOIN depots d ON d.company_id = v.company_id AND d.id = v.depot_id
+CROSS JOIN LATERAL (SELECT GREATEST(((COALESCE(v.out_at, $1::timestamptz) AT TIME ZONE d.timezone)::date - (v.in_at AT TIME ZONE d.timezone)::date), 0)::int AS days) a
+WHERE v.company_id = $2 AND ($3::text = '' OR v.depot_id = $3)
+  AND ($4::text = '' OR v.status = $4)
+  AND strpos(v.number, $5::text) > 0
+  AND ($6::text = '' OR v.line_id = $6)
+  AND ($7::text = '' OR v.customer_id = $7)
+  AND starts_with(v.type_code, $8::text)
+  AND ($9::text = '' OR v.grade = $9)
+  AND (NOT $10::boolean OR EXISTS (SELECT 1 FROM holds h
        WHERE h.company_id = v.company_id AND h.visit_id = v.id AND h.released_at IS NULL))
-  AND ($10::timestamptz IS NULL OR v.in_at <= $10)
+  AND ($11::int <= 0 OR a.days >= $11::int)
 ORDER BY v.id DESC
-LIMIT $12::int OFFSET $11::int
+LIMIT $13::int OFFSET $12::int
 `
 
 type FindVisitsParams struct {
+	AtTime     time.Time
 	CompanyID  string
 	DepotID    string
 	Status     string
@@ -375,7 +381,7 @@ type FindVisitsParams struct {
 	TypeCode   string
 	Grade      string
 	OnHoldOnly bool
-	InBefore   *time.Time
+	MinDays    int64
 	Off        int64
 	Lim        int64
 }
@@ -401,12 +407,14 @@ type FindVisitsRow struct {
 	Imported    bool
 	CloseReason string
 	OnHold      bool
+	DaysInYard  int64
 }
 
 // FindVisits is the office's yard list: filters as CountVisits (keep the two
 // WHERE clauses equal), a page, and whether each visit has an open hold.
 func (q *Queries) FindVisits(ctx context.Context, arg FindVisitsParams) ([]FindVisitsRow, error) {
 	rows, err := q.db.Query(ctx, findVisits,
+		arg.AtTime,
 		arg.CompanyID,
 		arg.DepotID,
 		arg.Status,
@@ -416,7 +424,7 @@ func (q *Queries) FindVisits(ctx context.Context, arg FindVisitsParams) ([]FindV
 		arg.TypeCode,
 		arg.Grade,
 		arg.OnHoldOnly,
-		arg.InBefore,
+		arg.MinDays,
 		arg.Off,
 		arg.Lim,
 	)
@@ -448,6 +456,7 @@ func (q *Queries) FindVisits(ctx context.Context, arg FindVisitsParams) ([]FindV
 			&i.Imported,
 			&i.CloseReason,
 			&i.OnHold,
+			&i.DaysInYard,
 		); err != nil {
 			return nil, err
 		}

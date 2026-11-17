@@ -911,3 +911,26 @@ func TestTurnAwayMove(t *testing.T) {
 		t.Fatalf("turn away from another depot = %v", err)
 	}
 }
+
+// A correction records what really happened: a block-listed number is stored, and the office sees a flag.
+func TestCorrectionToBlockedNumberIsStoredAndFlagged(t *testing.T) {
+	x := newFixture(t)
+	if _, err := x.svc.UpsertBlock(ctxA, "container", numB, "stolen", "office"); err != nil {
+		t.Fatal(err)
+	}
+	f := gateIn(numA)
+	f.MoveID = x.move(ctxA)
+	x.save(ctxA, f)
+	f.Number = numB
+	c, err := x.svc.CorrectGateMove(ctxA, f.MoveID, f, "OCR misread", "office")
+	if err != nil || c.Refused != nil {
+		t.Fatalf("correction = %+v %v; want it stored", c, err)
+	}
+	if v := x.visit(ctxA, c.VisitID); v.Number != numB {
+		t.Fatalf("visit = %+v", v)
+	}
+	flags, err := x.svc.ListFlags(ctxA, f.MoveID, true)
+	if err != nil || !slices.ContainsFunc(flags, func(fl Flag) bool { return fl.Code == "override:blocked" }) {
+		t.Fatalf("open flags = %+v %v; want override:blocked", flags, err)
+	}
+}

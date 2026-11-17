@@ -1,6 +1,6 @@
 import { useList } from "@refinedev/core";
 import { useEffect, useState } from "react";
-import { errText, ReasonText } from "../components";
+import { errText, ReasonText, useReasonDetail } from "../components";
 import { getMoveForm, resolveGateFlag, type GateFlag, type MoveForm } from "../gen/api";
 import { ok } from "../hubApi";
 import { useMoveEvents } from "../live";
@@ -9,6 +9,7 @@ import { useT } from "../i18n";
 // One open flag: the container it is about, and a note field to resolve it.
 function Issue({ flag, done }: { flag: GateFlag; done: () => void }) {
   const { t } = useT();
+  const detail = useReasonDetail();
   const [form, setForm] = useState<MoveForm | null>(null);
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState("");
@@ -30,7 +31,7 @@ function Issue({ flag, done }: { flag: GateFlag; done: () => void }) {
     <tr>
       <td>
         <ReasonText code={flag.code} />
-        {flag.detail && <div className="small muted">{flag.detail}</div>}
+        {flag.detail && <div className="small muted">{detail(flag.detail)}</div>}
       </td>
       <td className="mono">
         {form?.visitId ? <a href={`#/visits/${form.visitId}`}>{form.number}</a> : (form?.number ?? "")}

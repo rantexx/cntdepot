@@ -3,10 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 // The office walk-through of Stage 1 on the real hub: import, order, gate-out on a phone, hold,
-// manager approval, EIR link, CSV export. Screenshots go to .impeccable/review/stage1-*.jpg.
+// manager approval, EIR link, CSV export. With SHOTS=1 the screenshots go to .impeccable/review/stage1-*.jpg.
 const SHOTS = path.resolve(import.meta.dirname, "../../.impeccable/review");
-fs.mkdirSync(SHOTS, { recursive: true });
-const shot = (page: Page, name: string) => page.screenshot({ path: path.join(SHOTS, `stage1-${name}.jpg`), type: "jpeg", quality: 80, fullPage: true });
+const shot = async (page: Page, name: string) => {
+  if (!process.env.SHOTS) return;
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(SHOTS, `stage1-${name}.jpg`), type: "jpeg", quality: 80, fullPage: true });
+};
 
 // ISO 6346 letter values skip 11, 22 and 33.
 const LETTERS = "A10B12C13D14E15F16G17H18I19J20K21L23M24N25O26P27Q28R29S30T31U32V34W35X36Y37Z38";
@@ -22,6 +25,8 @@ test("office walk-through", async ({ page: phone, browser }) => {
   const [a, b, old] = [containerNumber(), containerNumber(), containerNumber()];
   const ctx = await browser.newContext({ baseURL: "http://127.0.0.1:18093", storageState: "e2e/.auth.json", viewport: { width: 1280, height: 900 }, acceptDownloads: true });
   const desk = await ctx.newPage();
+  const before = await (await ctx.request.get("/api/settings/yard")).json();
+  try {
 
   // 1. Import a sample stock CSV (one old container for the ageing colour).
   await desk.goto("/#/import");
@@ -33,7 +38,7 @@ test("office walk-through", async ({ page: phone, browser }) => {
   await expect(desk.getByRole("status")).toContainText("Imported: 3");
   await shot(desk, "1-import");
   await desk.goto("/#/yard");
-  await expect(desk.getByText(a.slice(0, 4))).toHaveCount(3);
+  for (const n of [a, b, old]) await expect(desk.getByRole("link", { name: new RegExp(n.slice(4, 10)) })).toBeVisible();
   await shot(desk, "1-yard");
 
   // 2. A release order for 2 x 45G1.
@@ -78,11 +83,13 @@ test("office walk-through", async ({ page: phone, browser }) => {
   await refused.getByRole("button", { name: "Refuse the truck" }).click();
   // The turned-away truck is an open gate issue; the office resolves it with a note.
   await desk.goto("/#/issues");
-  await expect(desk.getByText("Turned away")).toBeVisible();
+  const issue = desk.getByRole("row").filter({ hasText: b.slice(4, 10) });
+  await expect(issue.getByText("Turned away")).toBeVisible();
+  await expect(issue.getByText("On hold")).toBeVisible(); // the refusal code in words
   await shot(desk, "4-issues");
-  await desk.getByLabel("What was done? (note)").first().fill("Driver sent back until customs clear it");
-  await desk.getByRole("button", { name: "Resolve" }).first().click();
-  await expect(desk.getByText("No open gate issues.")).toBeVisible();
+  await issue.getByLabel("What was done? (note)").fill("Driver sent back until customs clear it");
+  await issue.getByRole("button", { name: "Resolve" }).click();
+  await expect(issue).toHaveCount(0);
 
   // 5. Switch to manager approval, retry, and approve from the Approvals screen.
   await desk.goto("/#/settings");
@@ -98,10 +105,11 @@ test("office walk-through", async ({ page: phone, browser }) => {
   await phone.getByLabel("Container number").fill(b);
   await phone.getByRole("button", { name: /^save$/i }).click();
   await expect(phone.getByText("Waiting for the manager…")).toBeVisible();
-  await expect(desk.getByRole("button", { name: "Approve" })).toBeVisible({ timeout: 20_000 }); // live, no reload
+  const card = desk.locator("section.approval").filter({ hasText: b.slice(4, 10) });
+  await expect(card.getByRole("button", { name: "Approve" })).toBeVisible({ timeout: 20_000 }); // live, no reload
   await shot(desk, "5-approvals");
-  await desk.getByRole("button", { name: "Approve" }).click();
-  await expect(desk.getByText("No approvals waiting.")).toBeVisible();
+  await card.getByRole("button", { name: "Approve" }).click();
+  await expect(card).toHaveCount(0);
   await expect(phone.getByRole("button", { name: "Share EIR" })).toBeVisible({ timeout: 30_000 });
   await shot(phone, "5-approved-phone");
 
@@ -124,5 +132,12 @@ test("office walk-through", async ({ page: phone, browser }) => {
   expect(text).toContain(old);
   expect(text.charCodeAt(0)).toBe(0xfeff);
   await shot(desk, "7-yard-export");
-  await ctx.close();
+  } finally {
+    // The hub is shared with the other specs: put the refusal mode back.
+    await ctx.request.put("/api/settings/yard", {
+      headers: { "X-Depot-Client": "web" },
+      data: before,
+    });
+    await ctx.close();
+  }
 });

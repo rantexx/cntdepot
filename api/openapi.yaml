@@ -520,7 +520,7 @@ paths:
         - {name: type, in: query, description: ISO type code prefix, schema: {type: string}}
         - {name: grade, in: query, schema: {type: string}}
         - {name: hold, in: query, description: true lists only visits with an open hold, schema: {type: boolean}}
-        - {name: minDays, in: query, description: at least this many days in the yard, schema: {type: integer, minimum: 0}}
+        - {name: minDays, in: query, description: at least this many depot-local calendar days in the yard (daysInYard), schema: {type: integer, minimum: 0}}
         - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/PerPage"}
       responses:
@@ -1314,8 +1314,10 @@ components:
       allOf:
         - $ref: "#/components/schemas/Visit"
         - type: object
-          required: [onHold]
-          properties: {onHold: {type: boolean}}
+          required: [onHold, daysInYard]
+          properties:
+            onHold: {type: boolean}
+            daysInYard: {type: integer, description: "whole calendar days in the depot's own time zone from the gate-in to now (or to the gate-out), as in the ageing report"}
     VisitList:
       type: object
       required: [items, total]

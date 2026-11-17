@@ -1105,25 +1105,28 @@ type VisitList struct {
 
 // VisitListItem defines model for VisitListItem.
 type VisitListItem struct {
-	Block       string      `json:"block"`
-	CloseReason string      `json:"closeReason"`
-	CustomerId  *string     `json:"customerId"`
-	DepotId     string      `json:"depotId"`
-	FullEmpty   string      `json:"fullEmpty"`
-	Grade       string      `json:"grade"`
-	Id          string      `json:"id"`
-	Imported    bool        `json:"imported"`
-	InAt        time.Time   `json:"inAt"`
-	InMoveId    *string     `json:"inMoveId"`
-	LineId      *string     `json:"lineId"`
-	Number      string      `json:"number"`
-	OnHold      bool        `json:"onHold"`
-	OutAt       *time.Time  `json:"outAt"`
-	OutMoveId   *string     `json:"outMoveId"`
-	RowNo       string      `json:"rowNo"`
-	Status      VisitStatus `json:"status"`
-	Tier        string      `json:"tier"`
-	TypeCode    string      `json:"typeCode"`
+	Block       string  `json:"block"`
+	CloseReason string  `json:"closeReason"`
+	CustomerId  *string `json:"customerId"`
+
+	// DaysInYard whole calendar days in the depot's own time zone from the gate-in to now (or to the gate-out), as in the ageing report
+	DaysInYard int         `json:"daysInYard"`
+	DepotId    string      `json:"depotId"`
+	FullEmpty  string      `json:"fullEmpty"`
+	Grade      string      `json:"grade"`
+	Id         string      `json:"id"`
+	Imported   bool        `json:"imported"`
+	InAt       time.Time   `json:"inAt"`
+	InMoveId   *string     `json:"inMoveId"`
+	LineId     *string     `json:"lineId"`
+	Number     string      `json:"number"`
+	OnHold     bool        `json:"onHold"`
+	OutAt      *time.Time  `json:"outAt"`
+	OutMoveId  *string     `json:"outMoveId"`
+	RowNo      string      `json:"rowNo"`
+	Status     VisitStatus `json:"status"`
+	Tier       string      `json:"tier"`
+	TypeCode   string      `json:"typeCode"`
 }
 
 // VisitStatus defines model for VisitStatus.
@@ -1334,7 +1337,7 @@ type ListVisitsParams struct {
 	// Hold true lists only visits with an open hold
 	Hold *bool `form:"hold,omitempty" json:"hold,omitempty"`
 
-	// MinDays at least this many days in the yard
+	// MinDays at least this many depot-local calendar days in the yard (daysInYard)
 	MinDays *int     `form:"minDays,omitempty" json:"minDays,omitempty"`
 	Page    *Page    `form:"page,omitempty" json:"page,omitempty"`
 	PerPage *PerPage `form:"perPage,omitempty" json:"perPage,omitempty"`
