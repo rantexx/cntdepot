@@ -11,6 +11,63 @@ import (
 	"time"
 )
 
+const ageingByLine = `-- name: AgeingByLine :many
+SELECT COALESCE(l.id, '')::text AS line_id, COALESCE(l.code, '')::text AS line_code,
+       (count(*) FILTER (WHERE a.age <= 7))::bigint AS d0_7,
+       (count(*) FILTER (WHERE a.age BETWEEN 8 AND 30))::bigint AS d8_30,
+       (count(*) FILTER (WHERE a.age BETWEEN 31 AND 90))::bigint AS d31_90,
+       (count(*) FILTER (WHERE a.age > 90))::bigint AS d90_plus
+FROM visits v
+LEFT JOIN shipping_lines l ON l.company_id = v.company_id AND l.id = v.line_id
+CROSS JOIN LATERAL (SELECT floor((date_part('epoch', $1::timestamptz) - date_part('epoch', v.in_at)) / 86400) AS age) a
+WHERE v.company_id = $2 AND ($3::text = '' OR v.depot_id = $3) AND v.status = 'in_yard'
+GROUP BY l.id, l.code
+ORDER BY l.code NULLS FIRST
+`
+
+type AgeingByLineParams struct {
+	AtTime    time.Time
+	CompanyID string
+	DepotID   string
+}
+
+type AgeingByLineRow struct {
+	LineID   string
+	LineCode string
+	D07      int64
+	D830     int64
+	D3190    int64
+	D90Plus  int64
+}
+
+// Days in the yard, floored; a visit dated in the future counts as 0-7.
+func (q *Queries) AgeingByLine(ctx context.Context, arg AgeingByLineParams) ([]AgeingByLineRow, error) {
+	rows, err := q.db.Query(ctx, ageingByLine, arg.AtTime, arg.CompanyID, arg.DepotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgeingByLineRow
+	for rows.Next() {
+		var i AgeingByLineRow
+		if err := rows.Scan(
+			&i.LineID,
+			&i.LineCode,
+			&i.D07,
+			&i.D830,
+			&i.D3190,
+			&i.D90Plus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const approvalsOfMove = `-- name: ApprovalsOfMove :many
 SELECT company_id, id, move_id, reasons, requested_by, requested_at, status, decided_by, decided_at, number FROM approvals WHERE company_id = $1 AND move_id = $2 ORDER BY id
 `
@@ -124,6 +181,35 @@ func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int64
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const customerCodes = `-- name: CustomerCodes :many
+SELECT id, upper(trim(code))::text AS code FROM customers WHERE company_id = $1
+`
+
+type CustomerCodesRow struct {
+	ID   string
+	Code string
+}
+
+func (q *Queries) CustomerCodes(ctx context.Context, companyID string) ([]CustomerCodesRow, error) {
+	rows, err := q.db.Query(ctx, customerCodes, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CustomerCodesRow
+	for rows.Next() {
+		var i CustomerCodesRow
+		if err := rows.Scan(&i.ID, &i.Code); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const decideApproval = `-- name: DecideApproval :execrows
@@ -405,6 +491,125 @@ func (q *Queries) FormRefs(ctx context.Context, arg FormRefsParams) (FormRefsRow
 	return i, err
 }
 
+const gateCountsToday = `-- name: GateCountsToday :one
+
+SELECT (count(*) FILTER (WHERE m.direction = 'in'))::bigint AS in_today,
+       (count(*) FILTER (WHERE m.direction = 'out'))::bigint AS out_today
+FROM gate_moves m JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+WHERE m.company_id = $1 AND ($2::text = '' OR m.depot_id = $2)
+  AND m.form_saved_at IS NOT NULL AND NOT m.voided
+  AND (m.form_saved_at AT TIME ZONE d.timezone)::date = ($3::timestamptz AT TIME ZONE d.timezone)::date
+`
+
+type GateCountsTodayParams struct {
+	CompanyID string
+	DepotID   string
+	AtTime    time.Time
+}
+
+type GateCountsTodayRow struct {
+	InToday  int64
+	OutToday int64
+}
+
+// Reports. An empty depot_id means every depot; "today" and dates are the depot's own calendar.
+func (q *Queries) GateCountsToday(ctx context.Context, arg GateCountsTodayParams) (GateCountsTodayRow, error) {
+	row := q.db.QueryRow(ctx, gateCountsToday, arg.CompanyID, arg.DepotID, arg.AtTime)
+	var i GateCountsTodayRow
+	err := row.Scan(&i.InToday, &i.OutToday)
+	return i, err
+}
+
+const gateLog = `-- name: GateLog :many
+SELECT m.id, m.depot_id, m.direction, m.number, m.type_code, m.form_saved_at::timestamptz AS at, m.truck_plate, m.trailer_plate,
+       m.driver_name, m.seal, m.full_empty, m.condition, m.voided,
+       COALESCE(l.code, '')::text AS line_code, COALESCE(cu.code, '')::text AS customer_code, COALESCE(h.code, '')::text AS haulier_code,
+       (SELECT count(*) FROM gate_flags f WHERE f.company_id = m.company_id AND f.move_id = m.id)::bigint AS flags
+FROM gate_moves m
+JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
+LEFT JOIN shipping_lines l ON l.company_id = v.company_id AND l.id = v.line_id
+LEFT JOIN customers cu ON cu.company_id = v.company_id AND cu.id = v.customer_id
+LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
+WHERE m.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND m.form_saved_at IS NOT NULL
+  AND ($3::date IS NULL OR (m.form_saved_at AT TIME ZONE d.timezone)::date >= $3)
+  AND ($4::date IS NULL OR (m.form_saved_at AT TIME ZONE d.timezone)::date <= $4)
+ORDER BY m.form_saved_at DESC, m.id DESC
+LIMIT $5::int
+`
+
+type GateLogParams struct {
+	CompanyID string
+	DepotID   string
+	FromDate  *time.Time
+	ToDate    *time.Time
+	Lim       int64
+}
+
+type GateLogRow struct {
+	ID           string
+	DepotID      string
+	Direction    string
+	Number       string
+	TypeCode     string
+	At           time.Time
+	TruckPlate   string
+	TrailerPlate string
+	DriverName   string
+	Seal         string
+	FullEmpty    string
+	Condition    string
+	Voided       bool
+	LineCode     string
+	CustomerCode string
+	HaulierCode  string
+	Flags        int64
+}
+
+func (q *Queries) GateLog(ctx context.Context, arg GateLogParams) ([]GateLogRow, error) {
+	rows, err := q.db.Query(ctx, gateLog,
+		arg.CompanyID,
+		arg.DepotID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GateLogRow
+	for rows.Next() {
+		var i GateLogRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DepotID,
+			&i.Direction,
+			&i.Number,
+			&i.TypeCode,
+			&i.At,
+			&i.TruckPlate,
+			&i.TrailerPlate,
+			&i.DriverName,
+			&i.Seal,
+			&i.FullEmpty,
+			&i.Condition,
+			&i.Voided,
+			&i.LineCode,
+			&i.CustomerCode,
+			&i.HaulierCode,
+			&i.Flags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getApproval = `-- name: GetApproval :one
 SELECT a.company_id, a.id, a.move_id, a.reasons, a.requested_by, a.requested_at, a.status, a.decided_by, a.decided_at, a.number FROM approvals a JOIN gate_moves m ON m.company_id = a.company_id AND m.id = a.move_id
 WHERE a.company_id = $1 AND ($2::text = '' OR m.depot_id = $2) AND a.id = $3
@@ -586,6 +791,35 @@ func (q *Queries) GetVisit(ctx context.Context, arg GetVisitParams) (Visit, erro
 		&i.CloseReason,
 	)
 	return i, err
+}
+
+const inYardAmong = `-- name: InYardAmong :many
+SELECT number FROM visits WHERE company_id = $1 AND status = 'in_yard' AND number = ANY($2::text[])
+`
+
+type InYardAmongParams struct {
+	CompanyID string
+	Numbers   []string
+}
+
+func (q *Queries) InYardAmong(ctx context.Context, arg InYardAmongParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, inYardAmong, arg.CompanyID, arg.Numbers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var number string
+		if err := rows.Scan(&number); err != nil {
+			return nil, err
+		}
+		items = append(items, number)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const inYardVisit = `-- name: InYardVisit :one
@@ -934,6 +1168,35 @@ func (q *Queries) InsertVisit(ctx context.Context, arg InsertVisitParams) error 
 		arg.CloseReason,
 	)
 	return err
+}
+
+const lineCodes = `-- name: LineCodes :many
+SELECT id, upper(trim(code))::text AS code FROM shipping_lines WHERE company_id = $1
+`
+
+type LineCodesRow struct {
+	ID   string
+	Code string
+}
+
+func (q *Queries) LineCodes(ctx context.Context, companyID string) ([]LineCodesRow, error) {
+	rows, err := q.db.Query(ctx, lineCodes, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LineCodesRow
+	for rows.Next() {
+		var i LineCodesRow
+		if err := rows.Scan(&i.ID, &i.Code); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listApprovals = `-- name: ListApprovals :many
@@ -1596,6 +1859,46 @@ type OpenOrderItemsParams struct {
 
 func (q *Queries) OpenOrderItems(ctx context.Context, arg OpenOrderItemsParams) ([]OrderItem, error) {
 	rows, err := q.db.Query(ctx, openOrderItems, arg.CompanyID, arg.DepotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OrderItem
+	for rows.Next() {
+		var i OrderItem
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.ID,
+			&i.OrderID,
+			&i.Number,
+			&i.TypeCode,
+			&i.FullEmpty,
+			&i.Quantity,
+			&i.Used,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const orderItemsInScope = `-- name: OrderItemsInScope :many
+SELECT i.company_id, i.id, i.order_id, i.number, i.type_code, i.full_empty, i.quantity, i.used FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = $1 AND ($2::text = '' OR o.depot_id = $2)
+ORDER BY i.id
+`
+
+type OrderItemsInScopeParams struct {
+	CompanyID string
+	DepotID   string
+}
+
+func (q *Queries) OrderItemsInScope(ctx context.Context, arg OrderItemsInScopeParams) ([]OrderItem, error) {
+	rows, err := q.db.Query(ctx, orderItemsInScope, arg.CompanyID, arg.DepotID)
 	if err != nil {
 		return nil, err
 	}

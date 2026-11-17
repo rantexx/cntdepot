@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -265,6 +266,33 @@ func (e ListApprovalsParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for ImportTemplateParamsName.
+const (
+	OrdersCsv ImportTemplateParamsName = "orders.csv"
+	StockCsv  ImportTemplateParamsName = "stock.csv"
+)
+
+// Valid indicates whether the value is a known member of the ImportTemplateParamsName enum.
+func (e ImportTemplateParamsName) Valid() bool {
+	switch e {
+	case OrdersCsv:
+		return true
+	case StockCsv:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgeingRow One line (lineId and lineCode are empty for containers without a line).
+type AgeingRow struct {
+	// Buckets keys 0-7, 8-30, 31-90, 90+
+	Buckets  map[string]int `json:"buckets"`
+	LineCode string         `json:"lineCode"`
+	LineId   string         `json:"lineId"`
+	Total    int            `json:"total"`
+}
+
 // Approval defines model for Approval.
 type Approval struct {
 	DecidedAt *time.Time `json:"decidedAt"`
@@ -373,6 +401,15 @@ type CustomerPatch struct {
 	Name    *string `json:"name,omitempty"`
 }
 
+// Dashboard defines model for Dashboard.
+type Dashboard struct {
+	InToday      int         `json:"inToday"`
+	InYardByLine []LineCount `json:"inYardByLine"`
+	OpenFlags    int         `json:"openFlags"`
+	OpenHolds    int         `json:"openHolds"`
+	OutToday     int         `json:"outToday"`
+}
+
 // Depot defines model for Depot.
 type Depot struct {
 	Country  string `json:"country"`
@@ -462,6 +499,27 @@ type GateForm struct {
 // GateFormDirection defines model for GateForm.Direction.
 type GateFormDirection string
 
+// GateLogRow defines model for GateLogRow.
+type GateLogRow struct {
+	At           time.Time `json:"at"`
+	Condition    string    `json:"condition"`
+	CustomerCode string    `json:"customerCode"`
+	DepotId      string    `json:"depotId"`
+	Direction    string    `json:"direction"`
+	DriverName   string    `json:"driverName"`
+	Flags        int       `json:"flags"`
+	FullEmpty    string    `json:"fullEmpty"`
+	HaulierCode  string    `json:"haulierCode"`
+	Id           string    `json:"id"`
+	LineCode     string    `json:"lineCode"`
+	Number       string    `json:"number"`
+	Seal         string    `json:"seal"`
+	TrailerPlate string    `json:"trailerPlate"`
+	TruckPlate   string    `json:"truckPlate"`
+	TypeCode     string    `json:"typeCode"`
+	Voided       bool      `json:"voided"`
+}
+
 // GateRefusal defines model for GateRefusal.
 type GateRefusal struct {
 	ApprovalId *string `json:"approvalId,omitempty"`
@@ -550,6 +608,32 @@ type Hold struct {
 	VisitId    string     `json:"visitId"`
 }
 
+// ImportRejected defines model for ImportRejected.
+type ImportRejected struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+
+	// Rows at most 200 problems
+	Rows []ImportRowError `json:"rows"`
+}
+
+// ImportResult defines model for ImportResult.
+type ImportResult struct {
+	// Imported visits (stock) or orders (orders) created
+	Imported int `json:"imported"`
+}
+
+// ImportRowError defines model for ImportRowError.
+type ImportRowError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+
+	// Row 1-based data row, header excluded; 0 for the header
+	Row int `json:"row"`
+}
+
 // Invitation defines model for Invitation.
 type Invitation struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -568,6 +652,13 @@ type Line struct {
 	Contact string `json:"contact"`
 	Id      string `json:"id"`
 	Name    string `json:"name"`
+}
+
+// LineCount defines model for LineCount.
+type LineCount struct {
+	Count    int    `json:"count"`
+	LineCode string `json:"lineCode"`
+	LineId   string `json:"lineId"`
 }
 
 // LineCreate defines model for LineCreate.
@@ -1109,6 +1200,19 @@ type ListHauliersParams struct {
 	PerPage *PerPage `form:"perPage,omitempty" json:"perPage,omitempty"`
 }
 
+// ImportOrdersMultipartBody defines parameters for ImportOrders.
+type ImportOrdersMultipartBody struct {
+	File openapi_types.File `json:"file"`
+}
+
+// ImportStockMultipartBody defines parameters for ImportStock.
+type ImportStockMultipartBody struct {
+	File openapi_types.File `json:"file"`
+}
+
+// ImportTemplateParamsName defines parameters for ImportTemplate.
+type ImportTemplateParamsName string
+
 // CreateInvitationJSONBody defines parameters for CreateInvitation.
 type CreateInvitationJSONBody struct {
 	// DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
@@ -1178,6 +1282,12 @@ type SearchLinersParams struct {
 // SearchLocodesParams defines parameters for SearchLocodes.
 type SearchLocodesParams struct {
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// GateLogParams defines parameters for GateLog.
+type GateLogParams struct {
+	From *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
+	To   *openapi_types.Date `form:"to,omitempty" json:"to,omitempty"`
 }
 
 // SetScopeJSONBody defines parameters for SetScope.
@@ -1252,6 +1362,12 @@ type CreateHaulierJSONRequestBody = HaulierCreate
 
 // UpdateHaulierJSONRequestBody defines body for UpdateHaulier for application/json ContentType.
 type UpdateHaulierJSONRequestBody = HaulierPatch
+
+// ImportOrdersMultipartRequestBody defines body for ImportOrders for multipart/form-data ContentType.
+type ImportOrdersMultipartRequestBody ImportOrdersMultipartBody
+
+// ImportStockMultipartRequestBody defines body for ImportStock for multipart/form-data ContentType.
+type ImportStockMultipartRequestBody ImportStockMultipartBody
 
 // CreateInvitationJSONRequestBody defines body for CreateInvitation for application/json ContentType.
 type CreateInvitationJSONRequestBody CreateInvitationJSONBody
@@ -1379,6 +1495,15 @@ type ServerInterface interface {
 	// (POST /api/holds/{id}/release)
 	ReleaseHold(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (POST /api/import/orders)
+	ImportOrders(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/import/stock)
+	ImportStock(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/import/templates/{name})
+	ImportTemplate(w http.ResponseWriter, r *http.Request, name ImportTemplateParamsName)
+
 	// (GET /api/invitations)
 	ListInvitations(w http.ResponseWriter, r *http.Request)
 
@@ -1468,6 +1593,15 @@ type ServerInterface interface {
 
 	// (GET /api/ref/locodes)
 	SearchLocodes(w http.ResponseWriter, r *http.Request, params SearchLocodesParams)
+
+	// (GET /api/reports/ageing)
+	ReportAgeing(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/reports/dashboard)
+	ReportDashboard(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/reports/gate-log)
+	GateLog(w http.ResponseWriter, r *http.Request, params GateLogParams)
 
 	// (GET /api/session)
 	GetSession(w http.ResponseWriter, r *http.Request)
@@ -2051,6 +2185,60 @@ func (siw *ServerInterfaceWrapper) ReleaseHold(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReleaseHold(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportOrders operation middleware
+func (siw *ServerInterfaceWrapper) ImportOrders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportOrders(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportStock operation middleware
+func (siw *ServerInterfaceWrapper) ImportStock(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportStock(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportTemplate operation middleware
+func (siw *ServerInterfaceWrapper) ImportTemplate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name ImportTemplateParamsName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportTemplate(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2870,6 +3058,80 @@ func (siw *ServerInterfaceWrapper) SearchLocodes(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ReportAgeing operation middleware
+func (siw *ServerInterfaceWrapper) ReportAgeing(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportAgeing(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReportDashboard operation middleware
+func (siw *ServerInterfaceWrapper) ReportDashboard(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportDashboard(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GateLog operation middleware
+func (siw *ServerInterfaceWrapper) GateLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GateLogParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GateLog(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSession operation middleware
 func (siw *ServerInterfaceWrapper) GetSession(w http.ResponseWriter, r *http.Request) {
 
@@ -3418,6 +3680,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/gate-flags/{id}/resolve", wrapper.ResolveGateFlag)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/settings/yard", wrapper.GetYardSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/settings/yard", wrapper.SetYardSettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/reports/dashboard", wrapper.ReportDashboard)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/reports/ageing", wrapper.ReportAgeing)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/reports/gate-log", wrapper.GateLog)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/import/stock", wrapper.ImportStock)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/import/orders", wrapper.ImportOrders)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/import/templates/{name}", wrapper.ImportTemplate)
 
 	return m
 }
@@ -4223,6 +4491,165 @@ type ReleaseHolddefaultJSONResponse struct {
 }
 
 func (response ReleaseHolddefaultJSONResponse) VisitReleaseHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportOrdersRequestObject struct {
+	Body *multipart.Reader
+}
+
+type ImportOrdersResponseObject interface {
+	VisitImportOrdersResponse(w http.ResponseWriter) error
+}
+
+type ImportOrders200JSONResponse ImportResult
+
+func (response ImportOrders200JSONResponse) VisitImportOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportOrders422JSONResponse ImportRejected
+
+func (response ImportOrders422JSONResponse) VisitImportOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportOrdersdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ImportOrdersdefaultJSONResponse) VisitImportOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportStockRequestObject struct {
+	Body *multipart.Reader
+}
+
+type ImportStockResponseObject interface {
+	VisitImportStockResponse(w http.ResponseWriter) error
+}
+
+type ImportStock200JSONResponse ImportResult
+
+func (response ImportStock200JSONResponse) VisitImportStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportStock422JSONResponse ImportRejected
+
+func (response ImportStock422JSONResponse) VisitImportStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportStockdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ImportStockdefaultJSONResponse) VisitImportStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportTemplateRequestObject struct {
+	Name ImportTemplateParamsName `json:"name"`
+}
+
+type ImportTemplateResponseObject interface {
+	VisitImportTemplateResponse(w http.ResponseWriter) error
+}
+
+type ImportTemplate200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type ImportTemplate200TextcsvResponse struct {
+	Body          io.Reader
+	Headers       ImportTemplate200ResponseHeaders
+	ContentLength int64
+}
+
+func (response ImportTemplate200TextcsvResponse) VisitImportTemplateResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/csv")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type ImportTemplatedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ImportTemplatedefaultJSONResponse) VisitImportTemplateResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -5409,6 +5836,121 @@ func (response SearchLocodesdefaultJSONResponse) VisitSearchLocodesResponse(w ht
 	return err
 }
 
+type ReportAgeingRequestObject struct {
+}
+
+type ReportAgeingResponseObject interface {
+	VisitReportAgeingResponse(w http.ResponseWriter) error
+}
+
+type ReportAgeing200JSONResponse []AgeingRow
+
+func (response ReportAgeing200JSONResponse) VisitReportAgeingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReportAgeingdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ReportAgeingdefaultJSONResponse) VisitReportAgeingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReportDashboardRequestObject struct {
+}
+
+type ReportDashboardResponseObject interface {
+	VisitReportDashboardResponse(w http.ResponseWriter) error
+}
+
+type ReportDashboard200JSONResponse Dashboard
+
+func (response ReportDashboard200JSONResponse) VisitReportDashboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReportDashboarddefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ReportDashboarddefaultJSONResponse) VisitReportDashboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GateLogRequestObject struct {
+	Params GateLogParams
+}
+
+type GateLogResponseObject interface {
+	VisitGateLogResponse(w http.ResponseWriter) error
+}
+
+type GateLog200JSONResponse []GateLogRow
+
+func (response GateLog200JSONResponse) VisitGateLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GateLogdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GateLogdefaultJSONResponse) VisitGateLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetSessionRequestObject struct {
 }
 
@@ -5923,6 +6465,15 @@ type StrictServerInterface interface {
 	// (POST /api/holds/{id}/release)
 	ReleaseHold(ctx context.Context, request ReleaseHoldRequestObject) (ReleaseHoldResponseObject, error)
 
+	// (POST /api/import/orders)
+	ImportOrders(ctx context.Context, request ImportOrdersRequestObject) (ImportOrdersResponseObject, error)
+
+	// (POST /api/import/stock)
+	ImportStock(ctx context.Context, request ImportStockRequestObject) (ImportStockResponseObject, error)
+
+	// (GET /api/import/templates/{name})
+	ImportTemplate(ctx context.Context, request ImportTemplateRequestObject) (ImportTemplateResponseObject, error)
+
 	// (GET /api/invitations)
 	ListInvitations(ctx context.Context, request ListInvitationsRequestObject) (ListInvitationsResponseObject, error)
 
@@ -6012,6 +6563,15 @@ type StrictServerInterface interface {
 
 	// (GET /api/ref/locodes)
 	SearchLocodes(ctx context.Context, request SearchLocodesRequestObject) (SearchLocodesResponseObject, error)
+
+	// (GET /api/reports/ageing)
+	ReportAgeing(ctx context.Context, request ReportAgeingRequestObject) (ReportAgeingResponseObject, error)
+
+	// (GET /api/reports/dashboard)
+	ReportDashboard(ctx context.Context, request ReportDashboardRequestObject) (ReportDashboardResponseObject, error)
+
+	// (GET /api/reports/gate-log)
+	GateLog(ctx context.Context, request GateLogRequestObject) (GateLogResponseObject, error)
 
 	// (GET /api/session)
 	GetSession(ctx context.Context, request GetSessionRequestObject) (GetSessionResponseObject, error)
@@ -6697,6 +7257,94 @@ func (sh *strictHandler) ReleaseHold(w http.ResponseWriter, r *http.Request, id 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ReleaseHoldResponseObject); ok {
 		if err := validResponse.VisitReleaseHoldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportOrders operation middleware
+func (sh *strictHandler) ImportOrders(w http.ResponseWriter, r *http.Request) {
+	var request ImportOrdersRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportOrders(ctx, request.(ImportOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportOrders")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportOrdersResponseObject); ok {
+		if err := validResponse.VisitImportOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportStock operation middleware
+func (sh *strictHandler) ImportStock(w http.ResponseWriter, r *http.Request) {
+	var request ImportStockRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportStock(ctx, request.(ImportStockRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportStock")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportStockResponseObject); ok {
+		if err := validResponse.VisitImportStockResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportTemplate operation middleware
+func (sh *strictHandler) ImportTemplate(w http.ResponseWriter, r *http.Request, name ImportTemplateParamsName) {
+	var request ImportTemplateRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportTemplate(ctx, request.(ImportTemplateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportTemplate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportTemplateResponseObject); ok {
+		if err := validResponse.VisitImportTemplateResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -7552,6 +8200,80 @@ func (sh *strictHandler) SearchLocodes(w http.ResponseWriter, r *http.Request, p
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SearchLocodesResponseObject); ok {
 		if err := validResponse.VisitSearchLocodesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReportAgeing operation middleware
+func (sh *strictHandler) ReportAgeing(w http.ResponseWriter, r *http.Request) {
+	var request ReportAgeingRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReportAgeing(ctx, request.(ReportAgeingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReportAgeing")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReportAgeingResponseObject); ok {
+		if err := validResponse.VisitReportAgeingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReportDashboard operation middleware
+func (sh *strictHandler) ReportDashboard(w http.ResponseWriter, r *http.Request) {
+	var request ReportDashboardRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReportDashboard(ctx, request.(ReportDashboardRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReportDashboard")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReportDashboardResponseObject); ok {
+		if err := validResponse.VisitReportDashboardResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GateLog operation middleware
+func (sh *strictHandler) GateLog(w http.ResponseWriter, r *http.Request, params GateLogParams) {
+	var request GateLogRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GateLog(ctx, request.(GateLogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GateLog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GateLogResponseObject); ok {
+		if err := validResponse.VisitGateLogResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

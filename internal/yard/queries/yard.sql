@@ -340,3 +340,58 @@ JOIN companies c ON c.id = m.company_id
 JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
 LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
 WHERE m.company_id = @company_id AND m.id = @id;
+
+-- Reports. An empty depot_id means every depot; "today" and dates are the depot's own calendar.
+
+-- name: GateCountsToday :one
+SELECT (count(*) FILTER (WHERE m.direction = 'in'))::bigint AS in_today,
+       (count(*) FILTER (WHERE m.direction = 'out'))::bigint AS out_today
+FROM gate_moves m JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+WHERE m.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depot_id)
+  AND m.form_saved_at IS NOT NULL AND NOT m.voided
+  AND (m.form_saved_at AT TIME ZONE d.timezone)::date = (sqlc.arg(at_time)::timestamptz AT TIME ZONE d.timezone)::date;
+
+-- Days in the yard, floored; a visit dated in the future counts as 0-7.
+-- name: AgeingByLine :many
+SELECT COALESCE(l.id, '')::text AS line_id, COALESCE(l.code, '')::text AS line_code,
+       (count(*) FILTER (WHERE a.age <= 7))::bigint AS d0_7,
+       (count(*) FILTER (WHERE a.age BETWEEN 8 AND 30))::bigint AS d8_30,
+       (count(*) FILTER (WHERE a.age BETWEEN 31 AND 90))::bigint AS d31_90,
+       (count(*) FILTER (WHERE a.age > 90))::bigint AS d90_plus
+FROM visits v
+LEFT JOIN shipping_lines l ON l.company_id = v.company_id AND l.id = v.line_id
+CROSS JOIN LATERAL (SELECT floor((date_part('epoch', sqlc.arg(at_time)::timestamptz) - date_part('epoch', v.in_at)) / 86400) AS age) a
+WHERE v.company_id = @company_id AND (@depot_id::text = '' OR v.depot_id = @depot_id) AND v.status = 'in_yard'
+GROUP BY l.id, l.code
+ORDER BY l.code NULLS FIRST;
+
+-- name: GateLog :many
+SELECT m.id, m.depot_id, m.direction, m.number, m.type_code, m.form_saved_at::timestamptz AS at, m.truck_plate, m.trailer_plate,
+       m.driver_name, m.seal, m.full_empty, m.condition, m.voided,
+       COALESCE(l.code, '')::text AS line_code, COALESCE(cu.code, '')::text AS customer_code, COALESCE(h.code, '')::text AS haulier_code,
+       (SELECT count(*) FROM gate_flags f WHERE f.company_id = m.company_id AND f.move_id = m.id)::bigint AS flags
+FROM gate_moves m
+JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
+LEFT JOIN shipping_lines l ON l.company_id = v.company_id AND l.id = v.line_id
+LEFT JOIN customers cu ON cu.company_id = v.company_id AND cu.id = v.customer_id
+LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
+WHERE m.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depot_id) AND m.form_saved_at IS NOT NULL
+  AND (sqlc.narg(from_date)::date IS NULL OR (m.form_saved_at AT TIME ZONE d.timezone)::date >= sqlc.narg(from_date))
+  AND (sqlc.narg(to_date)::date IS NULL OR (m.form_saved_at AT TIME ZONE d.timezone)::date <= sqlc.narg(to_date))
+ORDER BY m.form_saved_at DESC, m.id DESC
+LIMIT @lim::int;
+
+-- name: LineCodes :many
+SELECT id, upper(trim(code))::text AS code FROM shipping_lines WHERE company_id = @company_id;
+
+-- name: CustomerCodes :many
+SELECT id, upper(trim(code))::text AS code FROM customers WHERE company_id = @company_id;
+
+-- name: OrderItemsInScope :many
+SELECT i.* FROM order_items i JOIN release_orders o ON o.company_id = i.company_id AND o.id = i.order_id
+WHERE i.company_id = @company_id AND (@depot_id::text = '' OR o.depot_id = @depot_id)
+ORDER BY i.id;
+
+-- name: InYardAmong :many
+SELECT number FROM visits WHERE company_id = @company_id AND status = 'in_yard' AND number = ANY(@numbers::text[]);

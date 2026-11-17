@@ -102,6 +102,7 @@ func (s *Server) routes() {
 	manage := func(h http.HandlerFunc) http.Handler { return auth.Require(auth.PermManage, h) }
 	apiMux.Handle("GET /api/stream", gateOnly(s.stream))
 	apiMux.Handle("GET /api/blobs/{digest}", gateOnly(s.getBlob))
+	apiMux.Handle("GET /api/export/{file}", auth.Require(auth.PermOffice, http.HandlerFunc(s.export)))
 	if s.opts.Hub {
 		apiMux.Handle("GET /api/camera", manage(s.getCamera))
 		apiMux.Handle("PUT /api/camera", manage(s.putCamera))

@@ -69,6 +69,9 @@ var operationAccess = map[string]auth.Perm{
 
 	"ListApprovals": auth.PermManage, "DecideApproval": auth.PermManage, "GetYardSettings": auth.PermManage,
 	"SetYardSettings": auth.PermOwner,
+
+	"ReportDashboard": auth.PermOffice, "ReportAgeing": auth.PermOffice, "GateLog": auth.PermOffice,
+	"ImportStock": auth.PermOffice, "ImportOrders": auth.PermOffice, "ImportTemplate": auth.PermOffice,
 }
 
 type requestKey struct{}

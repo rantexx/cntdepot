@@ -660,6 +660,80 @@ paths:
       responses:
         "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/YardSettings"}}}}
         default: {$ref: "#/components/responses/Error"}
+  /api/reports/dashboard:
+    get:
+      operationId: reportDashboard
+      description: Today's gate moves (in the depot's own calendar day), the yard by line, open holds and open gate flags, for the session's depot (every depot of the company when none is chosen).
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Dashboard"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/reports/ageing:
+    get:
+      operationId: reportAgeing
+      description: In-yard containers by whole days in the yard, per line, in the buckets 0-7, 8-30, 31-90 and 90+.
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/AgeingRow"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/reports/gate-log:
+    get:
+      operationId: gateLog
+      description: Saved gate forms, newest first, at most 5000. from and to are depot-local dates, both inclusive.
+      parameters:
+        - {name: from, in: query, schema: {type: string, format: date}}
+        - {name: to, in: query, schema: {type: string, format: date}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/GateLogRow"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/import/stock:
+    post:
+      operationId: importStock
+      description: |
+        Opening stock from a CSV file (at most 5 MiB and 20000 rows; ',' or ';' separated; dates YYYY-MM-DD or DD.MM.YYYY).
+        Needs a chosen depot. All or nothing: any bad row rejects the whole file with 422 E4220.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200": {description: imported, content: {application/json: {schema: {$ref: "#/components/schemas/ImportResult"}}}}
+        "422": {description: a bad row; nothing was imported, content: {application/json: {schema: {$ref: "#/components/schemas/ImportRejected"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/import/orders:
+    post:
+      operationId: importOrders
+      description: Release and redelivery orders from a CSV file, one row per item; rows with the same kind and reference are one order. Same limits and all-or-nothing rule as the stock import.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200": {description: imported, content: {application/json: {schema: {$ref: "#/components/schemas/ImportResult"}}}}
+        "422": {description: a bad row; nothing was imported, content: {application/json: {schema: {$ref: "#/components/schemas/ImportRejected"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/import/templates/{name}:
+    get:
+      operationId: importTemplate
+      description: An import file's header row and one example row (UTF-8 with BOM). The name is stock.csv or orders.csv.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string, enum: [stock.csv, orders.csv]}}
+      responses:
+        "200":
+          description: ok
+          headers:
+            Content-Disposition: {schema: {type: string}}
+          content:
+            text/csv: {schema: {type: string, format: binary}}
+        default: {$ref: "#/components/responses/Error"}
 components:
   parameters:
     Id: {name: id, in: path, required: true, schema: {type: string}}
@@ -671,6 +745,69 @@ components:
       description: error
       content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   schemas:
+    LineCount:
+      type: object
+      required: [lineId, lineCode, count]
+      properties: {lineId: {type: string}, lineCode: {type: string}, count: {type: integer}}
+    Dashboard:
+      type: object
+      required: [inToday, outToday, inYardByLine, openHolds, openFlags]
+      properties:
+        inToday: {type: integer}
+        outToday: {type: integer}
+        inYardByLine: {type: array, items: {$ref: "#/components/schemas/LineCount"}}
+        openHolds: {type: integer}
+        openFlags: {type: integer}
+    AgeingRow:
+      type: object
+      description: One line (lineId and lineCode are empty for containers without a line).
+      required: [lineId, lineCode, total, buckets]
+      properties:
+        lineId: {type: string}
+        lineCode: {type: string}
+        total: {type: integer}
+        buckets: {type: object, description: "keys 0-7, 8-30, 31-90, 90+", additionalProperties: {type: integer}}
+    GateLogRow:
+      type: object
+      required: [id, depotId, direction, number, typeCode, at, truckPlate, trailerPlate, driverName, seal, fullEmpty, condition, voided, lineCode, customerCode, haulierCode, flags]
+      properties:
+        id: {type: string}
+        depotId: {type: string}
+        direction: {type: string}
+        number: {type: string}
+        typeCode: {type: string}
+        at: {type: string, format: date-time}
+        truckPlate: {type: string}
+        trailerPlate: {type: string}
+        driverName: {type: string}
+        seal: {type: string}
+        fullEmpty: {type: string}
+        condition: {type: string}
+        voided: {type: boolean}
+        lineCode: {type: string}
+        customerCode: {type: string}
+        haulierCode: {type: string}
+        flags: {type: integer}
+    ImportResult:
+      type: object
+      required: [imported]
+      properties: {imported: {type: integer, description: visits (stock) or orders (orders) created}}
+    ImportRowError:
+      type: object
+      required: [row, field, message]
+      properties:
+        row: {type: integer, description: "1-based data row, header excluded; 0 for the header"}
+        field: {type: string}
+        message: {type: string}
+    ImportRejected:
+      type: object
+      required: [error, rows]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties: {code: {type: string}, message: {type: string}}
+        rows: {type: array, description: at most 200 problems, items: {$ref: "#/components/schemas/ImportRowError"}}
     ErrorResponse:
       type: object
       required: [error]

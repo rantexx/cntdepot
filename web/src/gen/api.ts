@@ -19,6 +19,79 @@
  * OpenAPI spec version: 0.1.0
  */
 import { http } from '../http';
+export interface LineCount {
+  lineId: string;
+  lineCode: string;
+  count: number;
+}
+
+export interface Dashboard {
+  inToday: number;
+  outToday: number;
+  inYardByLine: LineCount[];
+  openHolds: number;
+  openFlags: number;
+}
+
+/**
+ * keys 0-7, 8-30, 31-90, 90+
+ */
+export type AgeingRowBuckets = {[key: string]: number};
+
+/**
+ * One line (lineId and lineCode are empty for containers without a line).
+ */
+export interface AgeingRow {
+  lineId: string;
+  lineCode: string;
+  total: number;
+  /** keys 0-7, 8-30, 31-90, 90+ */
+  buckets: AgeingRowBuckets;
+}
+
+export interface GateLogRow {
+  id: string;
+  depotId: string;
+  direction: string;
+  number: string;
+  typeCode: string;
+  at: string;
+  truckPlate: string;
+  trailerPlate: string;
+  driverName: string;
+  seal: string;
+  fullEmpty: string;
+  condition: string;
+  voided: boolean;
+  lineCode: string;
+  customerCode: string;
+  haulierCode: string;
+  flags: number;
+}
+
+export interface ImportResult {
+  /** visits (stock) or orders (orders) created */
+  imported: number;
+}
+
+export interface ImportRowError {
+  /** 1-based data row, header excluded; 0 for the header */
+  row: number;
+  field: string;
+  message: string;
+}
+
+export type ImportRejectedError = {
+  code: string;
+  message: string;
+};
+
+export interface ImportRejected {
+  error: ImportRejectedError;
+  /** at most 200 problems */
+  rows: ImportRowError[];
+}
+
 export type ErrorResponseError = {
   code: string;
   message: string;
@@ -984,6 +1057,19 @@ export type ListGateFlagsParams = {
   /** true lists only unresolved flags */
   open?: boolean;
   moveId?: string;
+};
+
+export type GateLogParams = {
+  from?: string;
+  to?: string;
+};
+
+export type ImportStockBody = {
+  file: Blob | File;
+};
+
+export type ImportOrdersBody = {
+  file: Blob | File;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -3752,5 +3838,285 @@ export const setYardSettings = async (yardSettings: YardSettings, options?: Para
     method: 'PUT',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
     body: JSON.stringify(yardSettings)
+  }
+);}
+
+
+
+export type reportDashboardResponse200 = {
+  data: Dashboard
+  status: 200
+}
+
+export type reportDashboardResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type reportDashboardResponseSuccess = (reportDashboardResponse200) & {
+  headers: Headers;
+};
+export type reportDashboardResponseError = (reportDashboardResponseDefault) & {
+  headers: Headers;
+};
+
+export type reportDashboardResponse = (reportDashboardResponseSuccess | reportDashboardResponseError)
+
+export const getReportDashboardUrl = () => {
+
+
+
+
+  return `/api/reports/dashboard`
+}
+
+/**
+ * Today's gate moves (in the depot's own calendar day), the yard by line, open holds and open gate flags, for the session's depot (every depot of the company when none is chosen).
+ */
+export const reportDashboard = async ( options?: Parameters<typeof http>[1]): Promise<reportDashboardResponse> => {
+
+  return http<reportDashboardResponse>(getReportDashboardUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type reportAgeingResponse200 = {
+  data: AgeingRow[]
+  status: 200
+}
+
+export type reportAgeingResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type reportAgeingResponseSuccess = (reportAgeingResponse200) & {
+  headers: Headers;
+};
+export type reportAgeingResponseError = (reportAgeingResponseDefault) & {
+  headers: Headers;
+};
+
+export type reportAgeingResponse = (reportAgeingResponseSuccess | reportAgeingResponseError)
+
+export const getReportAgeingUrl = () => {
+
+
+
+
+  return `/api/reports/ageing`
+}
+
+/**
+ * In-yard containers by whole days in the yard, per line, in the buckets 0-7, 8-30, 31-90 and 90+.
+ */
+export const reportAgeing = async ( options?: Parameters<typeof http>[1]): Promise<reportAgeingResponse> => {
+
+  return http<reportAgeingResponse>(getReportAgeingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type gateLogResponse200 = {
+  data: GateLogRow[]
+  status: 200
+}
+
+export type gateLogResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type gateLogResponseSuccess = (gateLogResponse200) & {
+  headers: Headers;
+};
+export type gateLogResponseError = (gateLogResponseDefault) & {
+  headers: Headers;
+};
+
+export type gateLogResponse = (gateLogResponseSuccess | gateLogResponseError)
+
+export const getGateLogUrl = (params?: GateLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/reports/gate-log?${stringifiedParams}` : `/api/reports/gate-log`
+}
+
+/**
+ * Saved gate forms, newest first, at most 5000. from and to are depot-local dates, both inclusive.
+ */
+export const gateLog = async (params?: GateLogParams, options?: Parameters<typeof http>[1]): Promise<gateLogResponse> => {
+
+  return http<gateLogResponse>(getGateLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type importStockResponse200 = {
+  data: ImportResult
+  status: 200
+}
+
+export type importStockResponse422 = {
+  data: ImportRejected
+  status: 422
+}
+
+export type importStockResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 422>
+}
+
+export type importStockResponseSuccess = (importStockResponse200) & {
+  headers: Headers;
+};
+export type importStockResponseError = (importStockResponse422 | importStockResponseDefault) & {
+  headers: Headers;
+};
+
+export type importStockResponse = (importStockResponseSuccess | importStockResponseError)
+
+export const getImportStockUrl = () => {
+
+
+
+
+  return `/api/import/stock`
+}
+
+/**
+ * Opening stock from a CSV file (at most 5 MiB and 20000 rows; ',' or ';' separated; dates YYYY-MM-DD or DD.MM.YYYY).
+ * Needs a chosen depot. All or nothing: any bad row rejects the whole file with 422 E4220.
+ */
+export const importStock = async (importStockBody: ImportStockBody, options?: Parameters<typeof http>[1]): Promise<importStockResponse> => {
+    const formData = new FormData();
+formData.append(`file`, importStockBody.file);
+
+  return http<importStockResponse>(getImportStockUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+export type importOrdersResponse200 = {
+  data: ImportResult
+  status: 200
+}
+
+export type importOrdersResponse422 = {
+  data: ImportRejected
+  status: 422
+}
+
+export type importOrdersResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200 | 422>
+}
+
+export type importOrdersResponseSuccess = (importOrdersResponse200) & {
+  headers: Headers;
+};
+export type importOrdersResponseError = (importOrdersResponse422 | importOrdersResponseDefault) & {
+  headers: Headers;
+};
+
+export type importOrdersResponse = (importOrdersResponseSuccess | importOrdersResponseError)
+
+export const getImportOrdersUrl = () => {
+
+
+
+
+  return `/api/import/orders`
+}
+
+/**
+ * Release and redelivery orders from a CSV file, one row per item; rows with the same kind and reference are one order. Same limits and all-or-nothing rule as the stock import.
+ */
+export const importOrders = async (importOrdersBody: ImportOrdersBody, options?: Parameters<typeof http>[1]): Promise<importOrdersResponse> => {
+    const formData = new FormData();
+formData.append(`file`, importOrdersBody.file);
+
+  return http<importOrdersResponse>(getImportOrdersUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+export type importTemplateResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type importTemplateResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type importTemplateResponseSuccess = (importTemplateResponse200) & {
+  headers: Headers;
+};
+export type importTemplateResponseError = (importTemplateResponseDefault) & {
+  headers: Headers;
+};
+
+export type importTemplateResponse = (importTemplateResponseSuccess | importTemplateResponseError)
+
+export const getImportTemplateUrl = (name: 'stock.csv' | 'orders.csv',) => {
+
+
+
+
+  return `/api/import/templates/${name}`
+}
+
+/**
+ * An import file's header row and one example row (UTF-8 with BOM). The name is stock.csv or orders.csv.
+ */
+export const importTemplate = async (name: 'stock.csv' | 'orders.csv', options?: Parameters<typeof http>[1]): Promise<importTemplateResponse> => {
+
+  return http<importTemplateResponse>(getImportTemplateUrl(name),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}

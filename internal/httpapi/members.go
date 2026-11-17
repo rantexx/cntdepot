@@ -22,6 +22,9 @@ func checkBody(next http.Handler) http.Handler {
 		limit := int64(64 << 10)
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			limit = maxUpload
+			if strings.HasPrefix(r.Pattern, "POST /api/import/") {
+				limit = maxImportFile + 64<<10
+			}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		if r.Pattern == "POST /api/invitations" || r.Pattern == "PATCH /api/members/{userId}" {
