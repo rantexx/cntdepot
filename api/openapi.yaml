@@ -14,7 +14,7 @@ info:
     refused; 409 E4099 blocked; 409 E4100 the container is in the yard again under a newer visit;
     409 E4101 a correction cannot change the direction; 409 E4102 the move is void; 409 E4103 the
     move has no saved gate form; 409 E4104 the visit the move opened is closed since; 409 E4105 the
-    order is not open; 422 E4221 a linked record (photo, order item, approval, line, customer,
+    order is not open; 409 E4106 the move's gate form is saved; 422 E4221 a linked record (photo, order item, approval, line, customer,
     haulier) does not exist or does not belong to this move or depot.
 servers:
   - url: /
@@ -453,6 +453,20 @@ paths:
         content: {application/json: {schema: {$ref: "#/components/schemas/ReasonBody"}}}
       responses:
         "204": {description: voided}
+        default: {$ref: "#/components/responses/Error"}
+  /api/moves/{id}/turn-away:
+    post:
+      operationId: turnAwayMove
+      description: >-
+        Gate. The truck was turned away: the move keeps the typed number, is void ("turned away") and gets a
+        turned_away flag with the refusal codes for the office. A repeat is a no-op. 409 E4106 when the move's
+        gate form is saved; 409 E4102 when the office voided it.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/TurnAway"}}}
+      responses:
+        "204": {description: turned away}
         default: {$ref: "#/components/responses/Error"}
   /api/gate/snapshot:
     get:
@@ -1129,6 +1143,18 @@ components:
       type: object
       required: [code]
       properties: {code: {type: string}, detail: {type: string}}
+    TurnAway:
+      type: object
+      required: [number, reasons]
+      properties:
+        number: {type: string, maxLength: 64}
+        reasons:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [code]
+            properties: {code: {type: string, maxLength: 64}, detail: {type: string, maxLength: 500}}
     ReasonBody:
       type: object
       required: [reason]

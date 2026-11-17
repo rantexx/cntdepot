@@ -1023,6 +1023,15 @@ type TestReadResult struct {
 	Frame Frame   `json:"frame"`
 }
 
+// TurnAway defines model for TurnAway.
+type TurnAway struct {
+	Number  string `json:"number"`
+	Reasons []struct {
+		Code   string  `json:"code"`
+		Detail *string `json:"detail,omitempty"`
+	} `json:"reasons"`
+}
+
 // Validation defines model for Validation.
 type Validation struct {
 	CheckDigitValid    bool    `json:"check_digit_valid"`
@@ -1401,6 +1410,9 @@ type AddPhotoMultipartRequestBody AddPhotoMultipartBody
 // ResolveMoveJSONRequestBody defines body for ResolveMove for application/json ContentType.
 type ResolveMoveJSONRequestBody = ResolveRequest
 
+// TurnAwayMoveJSONRequestBody defines body for TurnAwayMove for application/json ContentType.
+type TurnAwayMoveJSONRequestBody = TurnAway
+
 // VoidMoveJSONRequestBody defines body for VoidMove for application/json ContentType.
 type VoidMoveJSONRequestBody = ReasonBody
 
@@ -1568,6 +1580,9 @@ type ServerInterface interface {
 
 	// (POST /api/moves/{id}/resolve)
 	ResolveMove(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/moves/{id}/turn-away)
+	TurnAwayMove(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (POST /api/moves/{id}/void)
 	VoidMove(w http.ResponseWriter, r *http.Request, id Id)
@@ -2815,6 +2830,32 @@ func (siw *ServerInterfaceWrapper) ResolveMove(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// TurnAwayMove operation middleware
+func (siw *ServerInterfaceWrapper) TurnAwayMove(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TurnAwayMove(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // VoidMove operation middleware
 func (siw *ServerInterfaceWrapper) VoidMove(w http.ResponseWriter, r *http.Request) {
 
@@ -3662,6 +3703,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/eir", wrapper.CreateEirLink)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/correct", wrapper.CorrectMove)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/void", wrapper.VoidMove)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/moves/{id}/turn-away", wrapper.TurnAwayMove)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/gate/snapshot", wrapper.GateSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/orders", wrapper.ListOrders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/orders", wrapper.CreateOrder)
@@ -5499,6 +5541,40 @@ func (response ResolveMovedefaultJSONResponse) VisitResolveMoveResponse(w http.R
 	return err
 }
 
+type TurnAwayMoveRequestObject struct {
+	Id   Id `json:"id"`
+	Body *TurnAwayMoveJSONRequestBody
+}
+
+type TurnAwayMoveResponseObject interface {
+	VisitTurnAwayMoveResponse(w http.ResponseWriter) error
+}
+
+type TurnAwayMove204Response struct {
+}
+
+func (response TurnAwayMove204Response) VisitTurnAwayMoveResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type TurnAwayMovedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response TurnAwayMovedefaultJSONResponse) VisitTurnAwayMoveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type VoidMoveRequestObject struct {
 	Id   Id `json:"id"`
 	Body *VoidMoveJSONRequestBody
@@ -6538,6 +6614,9 @@ type StrictServerInterface interface {
 
 	// (POST /api/moves/{id}/resolve)
 	ResolveMove(ctx context.Context, request ResolveMoveRequestObject) (ResolveMoveResponseObject, error)
+
+	// (POST /api/moves/{id}/turn-away)
+	TurnAwayMove(ctx context.Context, request TurnAwayMoveRequestObject) (TurnAwayMoveResponseObject, error)
 
 	// (POST /api/moves/{id}/void)
 	VoidMove(ctx context.Context, request VoidMoveRequestObject) (VoidMoveResponseObject, error)
@@ -7953,6 +8032,39 @@ func (sh *strictHandler) ResolveMove(w http.ResponseWriter, r *http.Request, id 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ResolveMoveResponseObject); ok {
 		if err := validResponse.VisitResolveMoveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TurnAwayMove operation middleware
+func (sh *strictHandler) TurnAwayMove(w http.ResponseWriter, r *http.Request, id Id) {
+	var request TurnAwayMoveRequestObject
+
+	request.Id = id
+
+	var body TurnAwayMoveJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TurnAwayMove(ctx, request.(TurnAwayMoveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TurnAwayMove")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TurnAwayMoveResponseObject); ok {
+		if err := validResponse.VisitTurnAwayMoveResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

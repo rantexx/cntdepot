@@ -1591,7 +1591,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]Visit
 
 const lockMove = `-- name: LockMove :one
 
-SELECT id, depot_id, direction, number, visit_id, order_id, order_item_id, form_saved_at, voided
+SELECT id, depot_id, direction, number, visit_id, order_id, order_item_id, form_saved_at, voided, void_reason
 FROM gate_moves WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) AND id = $3
 FOR UPDATE
 `
@@ -1612,6 +1612,7 @@ type LockMoveRow struct {
 	OrderItemID *string
 	FormSavedAt *time.Time
 	Voided      bool
+	VoidReason  string
 }
 
 // The gate save (yard.Service). Every query is confined to the company; the
@@ -1629,6 +1630,7 @@ func (q *Queries) LockMove(ctx context.Context, arg LockMoveParams) (LockMoveRow
 		&i.OrderItemID,
 		&i.FormSavedAt,
 		&i.Voided,
+		&i.VoidReason,
 	)
 	return i, err
 }
@@ -2225,6 +2227,39 @@ func (q *Queries) SetVisitPosition(ctx context.Context, arg SetVisitPositionPara
 		arg.Tier,
 		arg.CompanyID,
 		arg.DepotID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const turnAwayMove = `-- name: TurnAwayMove :execrows
+UPDATE gate_moves SET number = CASE WHEN $1::text = '' THEN number ELSE $1::text END,
+    status = 'refused', resolved_by = CASE WHEN resolved_by = '' THEN $2 ELSE resolved_by END,
+    voided = true, void_reason = $3, updated_at = $4
+WHERE company_id = $5 AND id = $6
+`
+
+type TurnAwayMoveParams struct {
+	Number     string
+	Actor      string
+	VoidReason string
+	UpdatedAt  time.Time
+	CompanyID  string
+	ID         string
+}
+
+// A truck the gate turned away: the typed number is kept, the move leaves the
+// review queue (refused, resolved) and is void.
+func (q *Queries) TurnAwayMove(ctx context.Context, arg TurnAwayMoveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, turnAwayMove,
+		arg.Number,
+		arg.Actor,
+		arg.VoidReason,
+		arg.UpdatedAt,
+		arg.CompanyID,
 		arg.ID,
 	)
 	if err != nil {

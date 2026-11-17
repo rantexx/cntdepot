@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getSession, logout, setScope, type Session, type SessionCurrent } from "./gen/api";
+import { forgetForSignOut, unsentCount } from "./gate/outbox";
 import { ApiError, onScopeChanged, onUnauthorized, setShownScope } from "./http";
 import { ok } from "./hubApi";
 import { useT } from "./i18n";
@@ -31,6 +32,9 @@ interface Ctx {
 const SessionContext = createContext<Ctx | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
+  const { t } = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
   const [state, setState] = useState<State>({ status: "loading" });
 
   const reload = useCallback(async () => {
@@ -70,11 +74,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     writeLocal(SCOPE_KEY, `${companyId}:${depotId}:${Date.now()}`); // a new value, so the event fires every time
   }, []);
 
+  // A shared gate phone: the cached lists go with the person; unsent gate records stay (they are real trucks),
+  // so the person is warned first.
   const signOut = useCallback(async () => {
+    const unsent = await unsentCount().catch(() => 0);
+    if (unsent > 0 && !window.confirm(tRef.current("gateUnsentSignOut"))) return;
     try {
       await logout();
     } finally {
       writeLocal(SESSION_KEY, "");
+      await forgetForSignOut().catch(() => undefined);
       setState({ status: "anon" });
     }
   }, []);

@@ -28,7 +28,11 @@ var (
 	ErrVisitMoved     = errors.New("the visit this move opened has been closed since: correct or void that move first")
 	ErrVisitConflict  = errors.New("the container is in the yard again under a newer visit: correct or void that move first")
 	ErrDirectionFixed = errors.New("a correction cannot change the direction: void the move and record a new one")
+	ErrFormSaved      = errors.New("the move's gate form is saved: the office corrects or voids it")
 )
+
+// TurnedAway is the void reason of a move whose truck the gate turned away.
+const TurnedAway = "turned away"
 
 // GateForm is the clerk's gate form for one move.
 type GateForm struct {
@@ -197,6 +201,37 @@ func (s *Service) VoidGateMove(ctx context.Context, moveID, reason, actor string
 		}
 		*notes = append(*notes, note{"move", m.ID})
 		return s.event(ctx, q, sc, m.ID, "move.voided", actor, map[string]any{"reason": reason})
+	})
+}
+
+// TurnAwayMove records that the gate turned the truck away: the move keeps the
+// typed number, is void with reason TurnedAway, and gets a turned_away flag
+// (the refusal codes) for the office. A repeat is a no-op; a move whose gate
+// form was saved is refused (ErrFormSaved), and one voided otherwise is ErrVoided.
+func (s *Service) TurnAwayMove(ctx context.Context, moveID, number string, reasons []Reason, actor string) error {
+	return s.tx(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, notes *[]note) error {
+		m, err := lockMove(ctx, q, sc, moveID)
+		switch {
+		case err != nil:
+			return err
+		case m.Voided && m.VoidReason == TurnedAway:
+			return nil
+		case m.Voided:
+			return ErrVoided
+		case m.FormSavedAt != nil:
+			return ErrFormSaved
+		}
+		now := s.st.now()
+		if err := one(q.TurnAwayMove(ctx, sqlcdb.TurnAwayMoveParams{CompanyID: sc.CompanyID, ID: m.ID,
+			Number: iso6346.Normalize(number), Actor: actor, VoidReason: TurnedAway, UpdatedAt: now})); err != nil {
+			return err
+		}
+		if err := one(q.InsertFlag(ctx, sqlcdb.InsertFlagParams{CompanyID: sc.CompanyID, ID: newID(), MoveID: m.ID,
+			Code: "turned_away", Detail: strings.Join(reasonCodes(reasons), ",")})); err != nil {
+			return err
+		}
+		*notes = append(*notes, note{"move", m.ID})
+		return s.event(ctx, q, sc, m.ID, "move.turned_away", actor, map[string]any{"number": number, "reasons": reasons})
 	})
 }
 

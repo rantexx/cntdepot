@@ -869,3 +869,45 @@ func TestPlaceholderVisitIsNeverReopened(t *testing.T) {
 		t.Fatalf("placeholder reopened: %+v", v)
 	}
 }
+
+func TestTurnAwayMove(t *testing.T) {
+	x := newFixture(t)
+	id := x.move(ctxA)
+	reasons := []Reason{{"no_order", ""}, {"hold_open", "customs"}}
+	for i := 0; i < 2; i++ { // a repeat is a no-op
+		if err := x.svc.TurnAwayMove(ctxA, id, " mscu 1234565", reasons, "clerk"); err != nil {
+			t.Fatalf("turn away %d: %v", i, err)
+		}
+	}
+	m, err := x.moves.GetMove(ctxA, id)
+	if err != nil || m.Number != numA || m.Status != "refused" || m.ResolvedBy != "clerk" {
+		t.Fatalf("move = %+v, %v", m, err)
+	}
+	if form, _ := x.st.GetMoveForm(ctxA, id); !form.Voided || form.VoidReason != TurnedAway {
+		t.Fatalf("form = %+v", form)
+	}
+	fl, _ := x.st.ListFlags(ctxA, id, false)
+	if len(fl) != 1 || fl[0].Code != "turned_away" || fl[0].Detail != "hold_open,no_order" {
+		t.Fatalf("flags = %+v", fl)
+	}
+	if v, _, _ := x.svc.FindVisits(ctxA, VisitFilter{Number: numA}, 10, 0); len(v) != 0 {
+		t.Fatalf("visits = %+v", v)
+	}
+
+	// A saved form is the office's to void; a move voided by the office stays as it is.
+	saved := gateIn(numA)
+	saved.MoveID = x.move(ctxA)
+	x.save(ctxA, saved)
+	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "clerk"); !errors.Is(err, ErrFormSaved) {
+		t.Fatalf("turn away saved = %v", err)
+	}
+	if err := x.svc.VoidGateMove(ctxA, saved.MoveID, "test truck", "office"); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.svc.TurnAwayMove(ctxA, saved.MoveID, numA, nil, "clerk"); !errors.Is(err, ErrVoided) {
+		t.Fatalf("turn away voided = %v", err)
+	}
+	if err := x.svc.TurnAwayMove(ctxD2, id, numA, nil, "clerk"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("turn away from another depot = %v", err)
+	}
+}

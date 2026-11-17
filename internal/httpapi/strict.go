@@ -57,7 +57,7 @@ var operationAccess = map[string]auth.Perm{
 	"ListInvitations": auth.PermOwner, "CreateInvitation": auth.PermOwner, "DeleteInvitation": auth.PermOwner,
 
 	// The gate and the yard.
-	"SaveGateForm": auth.PermGate, "CreateEirLink": auth.PermGate, "GateSnapshot": auth.PermGate,
+	"SaveGateForm": auth.PermGate, "TurnAwayMove": auth.PermGate, "CreateEirLink": auth.PermGate, "GateSnapshot": auth.PermGate,
 	"GetOrder": auth.PermGate, "GetVisit": auth.PermGate, "GetMoveForm": auth.PermGate,
 
 	"ListOrders": auth.PermOffice, "CreateOrder": auth.PermOffice, "CancelOrder": auth.PermOffice,

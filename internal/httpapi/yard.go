@@ -53,6 +53,7 @@ var yardErrors = []struct {
 	{yard.ErrNotSaved, http.StatusConflict, "E4103"},
 	{yard.ErrVisitMoved, http.StatusConflict, "E4104"},
 	{yard.ErrOrderClosed, http.StatusConflict, "E4105"},
+	{yard.ErrFormSaved, http.StatusConflict, "E4106"},
 }
 
 // yardError is the answer to a yard error, or nil. A wrapped one (the
@@ -192,6 +193,19 @@ func (s *Server) CorrectMove(ctx context.Context, req api.CorrectMoveRequestObje
 		return api.CorrectMove409JSONResponse(*refused), err
 	}
 	return api.CorrectMove200JSONResponse(ok), err
+}
+
+func (s *Server) TurnAwayMove(ctx context.Context, req api.TurnAwayMoveRequestObject) (api.TurnAwayMoveResponseObject, error) {
+	fs := []field{{name: "number", v: req.Body.Number, max: maxCode}}
+	reasons := make([]yard.Reason, 0, len(req.Body.Reasons))
+	for _, r := range req.Body.Reasons {
+		fs = append(fs, field{name: "reasons.code", v: r.Code, max: maxCode}, field{name: "reasons.detail", v: val(r.Detail), max: maxText})
+		reasons = append(reasons, yard.Reason{Code: r.Code, Detail: val(r.Detail)})
+	}
+	if err := checkFields(fs...); err != nil {
+		return nil, err
+	}
+	return api.TurnAwayMove204Response{}, s.opts.Yard.TurnAwayMove(ctx, req.Id, req.Body.Number, reasons, actor(ctx))
 }
 
 func (s *Server) VoidMove(ctx context.Context, req api.VoidMoveRequestObject) (api.VoidMoveResponseObject, error) {

@@ -3,7 +3,7 @@
 // depot) they were saved in. The server treats a resent id as the same move and a resent photo
 // as the same photo, so sending again after a lost answer is harmless.
 import { useSyncExternalStore } from "react";
-import { addPhoto, createMove, saveGateForm, type GateForm, type GateRefusal, type GateResult } from "../gen/api";
+import { addPhoto, createMove, saveGateForm, turnAwayMove, type GateForm, type GateRefusal, type GateResult, type TurnAway } from "../gen/api";
 import { ApiError, getShownScope } from "../http";
 import { ok, UPLOAD_TIMEOUT_MS } from "../hubApi";
 import { run } from "./idb";
@@ -32,7 +32,12 @@ interface Base {
 
 /** A form's damage and signature photo ids are the ids of this outbox's photo entries until sent. */
 export type Entry = Base &
-  ({ kind: "move"; payload: { lane: string } } | { kind: "photo"; payload: PhotoPayload } | { kind: "form"; payload: { form: GateForm } });
+  (
+    | { kind: "move"; payload: { lane: string } }
+    | { kind: "photo"; payload: PhotoPayload }
+    | { kind: "form"; payload: { form: GateForm } }
+    | { kind: "turnaway"; payload: TurnAway } // the gate refused the truck: recorded on the move for the office
+  );
 
 export type NewEntry = Omit<Entry, "seq" | "tries" | "state" | "savedAt" | "refusal" | "error">;
 
@@ -52,6 +57,7 @@ export function ulid(): string {
 let entries: Entry[] = [];
 const listeners = new Set<() => void>();
 const results = new Map<string, GateResult>(); // forms this tab sent, by move id
+const turnedAway = new Set<string>(); // turn-aways this tab sent
 
 async function reload() {
   entries = await run<Entry[]>("outbox", "readonly", (t) => t.objectStore("outbox").getAll());
@@ -72,6 +78,8 @@ export function useOutbox(): Entry[] {
 
 /** The server's answer to a form this tab sent. */
 export const resultOf = (moveId: string) => results.get(moveId);
+/** Whether this tab sent the move's turn-away. */
+export const wasTurnedAway = (moveId: string) => turnedAway.has(moveId);
 
 /** Adds a saved truck's entries in one transaction (never half a truck) and starts sending. */
 export async function enqueue(list: NewEntry[]) {
@@ -96,18 +104,73 @@ export async function retry(e: Entry, change?: Partial<GateForm>) {
   void flush();
 }
 
-/** The truck was turned away: its unsent entries go. What was already sent stays on the server for the office. */
-export async function drop(moveId: string) {
+/** Takes an entry off the phone unsent (a failed turn-away the clerk gives up on). */
+export async function drop(e: Entry) {
   await run("outbox", "readwrite", (t) => {
-    const store = t.objectStore("outbox");
-    for (const e of entries) if (e.moveId === moveId && e.seq !== undefined) store.delete(e.seq);
+    t.objectStore("outbox").delete(e.seq!);
   });
   await reload();
 }
 
+/**
+ * The gate turned the truck away. Its unsent photos and form go; the move (sent, or still to send)
+ * gets a turn-away entry, sent like any other, so the office sees the truck and why.
+ */
+export async function turnAway(moveId: string, scope: string, payload: TurnAway, lane: string) {
+  const savedAt = new Date().toISOString();
+  await run("outbox", "readwrite", (t) => {
+    const store = t.objectStore("outbox");
+    const mine = entries.filter((e) => e.moveId === moveId);
+    for (const e of mine) {
+      if (e.kind === "move") store.put({ ...e, state: "pending", error: undefined });
+      else store.delete(e.seq!);
+    }
+    // A move already on the server answers its resend unchanged, so a turned-away truck never misses its move.
+    if (!mine.some((e) => e.kind === "move")) {
+      store.add({ id: ulid(), kind: "move", moveId, scope, payload: { lane }, tries: 0, state: "pending", savedAt });
+    }
+    store.add({ id: ulid(), kind: "turnaway", moveId, scope, payload, tries: 0, state: "pending", savedAt });
+  });
+  await reload();
+  failures = 0;
+  void flush();
+}
+
+// Records a send's failure on the entry, unless the entry was removed meanwhile (the clerk refused the
+// truck, or another tab sent it): a late failure must never bring an entry back.
 async function settle(e: Entry, change: Partial<Base>) {
   await run("outbox", "readwrite", (t) => {
-    t.objectStore("outbox").put({ ...e, ...change, tries: e.tries + 1 });
+    const store = t.objectStore("outbox");
+    const req = store.get(e.seq!) as IDBRequest<Entry | undefined>;
+    req.onsuccess = () => {
+      if (req.result) store.put({ ...req.result, ...change, tries: req.result.tries + 1 });
+    };
+  });
+}
+
+/** How many entries this phone has not sent yet (any scope). */
+export async function unsentCount(): Promise<number> {
+  return run<number>("outbox", "readonly", (t) => t.objectStore("outbox").count());
+}
+
+/**
+ * Sign-out on a shared phone: the cached lists go, and the photo ids no unsent form needs.
+ * The outbox stays: those trucks were real.
+ */
+export async function forgetForSignOut() {
+  await run(["outbox", "photoIds", "kv"], "readwrite", (t) => {
+    t.objectStore("kv").clear();
+    const ids = t.objectStore("photoIds");
+    const forms = t.objectStore("outbox").getAll() as IDBRequest<Entry[]>;
+    forms.onsuccess = () => {
+      const needed = new Set(
+        forms.result.flatMap((e) =>
+          e.kind === "form" ? [...(e.payload.form.damages ?? []).flatMap((d) => d.photoIds), e.payload.form.signaturePhotoId ?? ""] : [],
+        ),
+      );
+      const keys = ids.getAllKeys();
+      keys.onsuccess = () => keys.result.forEach((k) => needed.has(String(k)) || ids.delete(k));
+    };
   });
 }
 
@@ -138,6 +201,10 @@ async function send(e: Entry): Promise<Outcome> {
   try {
     if (e.kind === "move") {
       await ok(createMove({ id: e.moveId, lane: e.payload.lane }, opts(30_000)));
+      await run("outbox", "readwrite", remove);
+    } else if (e.kind === "turnaway") {
+      await turnAwayMove(e.moveId, e.payload, opts(30_000));
+      turnedAway.add(e.moveId);
       await run("outbox", "readwrite", remove);
     } else if (e.kind === "photo") {
       const p = e.payload;

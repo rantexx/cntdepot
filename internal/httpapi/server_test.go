@@ -1090,17 +1090,33 @@ func TestPublicHostsAreAllowed(t *testing.T) {
 }
 
 func TestCreateMoveWithClientID(t *testing.T) {
-	u := newEnv(t, nil).as(t, "A", "gate")
+	e := newEnv(t, nil)
+	e.exec(t, "A", `INSERT INTO depots (company_id, id, name) VALUES ('A', 'd2', 'Two')`)
+	a, b := e.as(t, "A", "owner"), e.as(t, "B", "gate")
+	aD2 := e.as(t, "A", "office")
+	if err := e.sessions.SetScope(bg, aD2.cookie, "A", "d2"); err != nil {
+		t.Fatal(err)
+	}
 	const id = "01JCLIENTOUTBOX0000000001"
-	for i := 0; i < 2; i++ { // a resend returns the stored move
-		status, body := u.call("POST", "/api/moves", `{"lane":"1","id":"`+id+`"}`)
+	body := `{"lane":"1","id":"` + id + `"}`
+	for _, c := range []struct {
+		name string
+		u    *user
+		want int
+	}{
+		{"first", a, http.StatusCreated},
+		{"resend returns the stored move", a, http.StatusCreated},
+		{"another company: its own move", b, http.StatusCreated},
+		{"another depot of the company", aD2, http.StatusNotFound},
+	} {
+		status, got := c.u.call("POST", "/api/moves", body)
 		var m struct{ ID string }
-		_ = json.Unmarshal(body, &m)
-		if status != http.StatusCreated || m.ID != id {
-			t.Fatalf("create %d = %d %s", i, status, body)
+		_ = json.Unmarshal(got, &m)
+		if status != c.want || (c.want == http.StatusCreated && m.ID != id) {
+			t.Fatalf("%s = %d %s; want %d", c.name, status, got, c.want)
 		}
 	}
-	if status, body := u.call("POST", "/api/moves", `{"id":"bad id"}`); status != http.StatusBadRequest {
+	if status, body := a.call("POST", "/api/moves", `{"id":"bad id"}`); status != http.StatusBadRequest {
 		t.Fatalf("bad id = %d %s; want 400", status, body)
 	}
 }

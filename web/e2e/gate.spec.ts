@@ -27,6 +27,42 @@ async function movesOf(api: APIRequestContext, number: string) {
   return Promise.all(moves.map(async (m) => (await (await api.get(`/api/moves/${m.id}`)).json()) as { id: string; photos: { role: string }[] | null }));
 }
 
+interface Form {
+  id: string;
+  voided: boolean;
+  voidReason: string;
+  flags: { code: string; detail: string }[];
+}
+
+async function formsOf(api: APIRequestContext, number: string): Promise<Form[]> {
+  const moves = await movesOf(api, number);
+  return Promise.all(moves.map(async (m) => (await (await api.get(`/api/moves/${m.id}/form`)).json()) as Form));
+}
+
+// A container already in the yard, with an open hold placed by the office.
+async function heldInYard(api: APIRequestContext, number: string, reason: string) {
+  const id = `E2E${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+  expect((await api.post("/api/moves", { headers: W, data: { id, lane: "1" } })).ok()).toBeTruthy();
+  const saved = await api.post(`/api/moves/${id}/gate`, { headers: W, data: { direction: "in", number, typeCode: "22G1" } });
+  expect(saved.ok()).toBeTruthy();
+  const { visitId } = (await saved.json()) as { visitId: string };
+  return () => api.post(`/api/visits/${visitId}/holds`, { headers: W, data: { reason } });
+}
+
+const outboxSize = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const r = indexedDB.open("depot-gate");
+        r.onsuccess = () => {
+          const q = r.result.transaction("outbox").objectStore("outbox").count();
+          q.onsuccess = () => resolve(q.result);
+          q.onerror = () => reject(q.error);
+        };
+        r.onerror = () => reject(r.error);
+      }),
+  );
+
 async function sign(page: Page) {
   const pad = page.getByLabel("Driver's signature");
   await pad.scrollIntoViewIfNeeded();
@@ -106,15 +142,15 @@ test("gate-out refused by hold", async ({ page }) => {
 test("a replayed form refused on the server waits for the clerk", async ({ page, context }) => {
   const number = containerNumber();
   const api = page.request;
-  const id = `E2E${Date.now()}${Math.floor(Math.random() * 1e6)}`;
-  expect((await api.post("/api/moves", { headers: W, data: { id, lane: "1" } })).ok()).toBeTruthy();
-  const saved = await api.post(`/api/moves/${id}/gate`, { headers: W, data: { direction: "in", number, typeCode: "22G1" } });
-  const { visitId } = (await saved.json()) as { visitId: string };
+  const hold = await heldInYard(api, number, "Damage survey");
+  // A release order, so the phone's lists expect the gate-out to pass.
+  const order = { kind: "release", reference: `R${number}`, items: [{ number }] };
+  expect((await api.post("/api/orders", { headers: W, data: order })).ok()).toBeTruthy();
 
   await openGate(page);
   await context.setOffline(true);
   // The phone's lists predate the hold: offline, nothing warns the clerk.
-  expect((await api.post(`/api/visits/${visitId}/holds`, { headers: W, data: { reason: "Damage survey" } })).ok()).toBeTruthy();
+  expect((await hold()).ok()).toBeTruthy();
   await page.getByRole("button", { name: "Gate out" }).click();
   await page.getByLabel("Container number").fill(number);
   await page.getByRole("button", { name: /^save$/i }).click();
@@ -129,6 +165,66 @@ test("a replayed form refused on the server waits for the clerk", async ({ page,
   await refused.getByRole("button", { name: "Refuse the truck" }).click();
   await expect(refused).toHaveCount(0);
   expect((await visitsOf(api, number))[0].status).toBe("in_yard");
+  // The office sees the turned-away truck and why.
+  await expect.poll(async () => (await formsOf(api, number)).filter((f) => f.voidReason === "turned away").length).toBe(1);
+  const turned = (await formsOf(api, number)).find((f) => f.voidReason === "turned away")!;
+  expect(turned.flags.map((f) => [f.code, f.detail])).toEqual([["turned_away", "hold_open"]]);
+  await expect.poll(() => outboxSize(page)).toBe(0);
+});
+
+test("offline, a refusal the lists predict holds the truck", async ({ page, context }) => {
+  const number = containerNumber();
+  const api = page.request;
+  expect((await (await heldInYard(api, number, "Customs seal check"))()).ok()).toBeTruthy();
+  await openGate(page); // the lists know the hold
+  await context.setOffline(true);
+  await page.getByRole("button", { name: "Gate out" }).click();
+  await page.getByLabel("Container number").fill(number);
+  await page.getByRole("button", { name: /^save$/i }).click();
+  const hold = page.getByRole("region", { name: /Hold the truck/ });
+  await expect(hold.getByText("Customs seal check")).toBeVisible();
+  await expect(page.getByText("Saved on the phone")).toHaveCount(0); // nothing looks saved
+  await hold.getByRole("button", { name: "Hold the truck" }).click();
+  await expect(page.getByText("The truck waits")).toBeVisible();
+
+  // clerk_override: a written reason lets it through, even offline.
+  await page.getByRole("region", { name: "What the lists say" }).getByLabel("Reason to let it through").fill("Seal checked at the gate");
+  await page.getByRole("button", { name: /^save$/i }).click();
+  await expect(page.getByText("Saved on the phone")).toBeVisible();
+  await context.setOffline(false);
+  await expect(page.getByRole("button", { name: "Share EIR" })).toBeVisible({ timeout: 30_000 });
+  expect((await visitsOf(api, number))[0].status).toBe("out");
+});
+
+test("a late failure never brings back an entry removed meanwhile", async ({ page }) => {
+  const number = containerNumber();
+  let release = () => {};
+  const answered = new Promise<void>((r) => (release = r));
+  // The form's send hangs, then fails; meanwhile another tab takes the entry off the phone.
+  await page.route("**/api/moves/*/gate", async (route) => {
+    await answered;
+    await route.abort("connectionreset");
+  });
+  await openGate(page);
+  await page.getByRole("button", { name: "Gate in" }).click();
+  await page.getByLabel("Container number").fill(number);
+  await page.getByRole("button", { name: /^save$/i }).click();
+  await expect.poll(() => outboxSize(page)).toBe(1); // the move is sent; the form is in flight
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const r = indexedDB.open("depot-gate");
+        r.onsuccess = () => {
+          const t = r.result.transaction("outbox", "readwrite");
+          t.objectStore("outbox").clear();
+          t.oncomplete = () => resolve();
+        };
+      }),
+  );
+  release();
+  await page.waitForTimeout(2500); // the failure is recorded and the retry timer runs
+  expect(await outboxSize(page)).toBe(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 test("replayed outbox makes no duplicates", async ({ page }) => {

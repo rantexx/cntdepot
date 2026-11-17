@@ -13,7 +13,7 @@
  * refused; 409 E4099 blocked; 409 E4100 the container is in the yard again under a newer visit;
  * 409 E4101 a correction cannot change the direction; 409 E4102 the move is void; 409 E4103 the
  * move has no saved gate form; 409 E4104 the visit the move opened is closed since; 409 E4105 the
- * order is not open; 422 E4221 a linked record (photo, order item, approval, line, customer,
+ * order is not open; 409 E4106 the move's gate form is saved; 422 E4221 a linked record (photo, order item, approval, line, customer,
  * haulier) does not exist or does not belong to this move or depot.
  *
  * OpenAPI spec version: 0.1.0
@@ -500,6 +500,20 @@ export interface HaulierList {
 export interface Reason {
   code: string;
   detail?: string;
+}
+
+export type TurnAwayReasonsItem = {
+  /** @maxLength 64 */
+  code: string;
+  /** @maxLength 500 */
+  detail?: string;
+};
+
+export interface TurnAway {
+  /** @maxLength 64 */
+  number: string;
+  /** @maxItems 20 */
+  reasons: TurnAwayReasonsItem[];
 }
 
 export interface ReasonBody {
@@ -2977,6 +2991,50 @@ export const voidMove = async (id: string,
     method: 'POST',
     headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
     body: JSON.stringify(reasonBody)
+  }
+);}
+
+
+
+export type turnAwayMoveResponse204 = {
+  data: void
+  status: 204
+}
+
+export type turnAwayMoveResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type turnAwayMoveResponseSuccess = (turnAwayMoveResponse204) & {
+  headers: Headers;
+};
+export type turnAwayMoveResponseError = (turnAwayMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type turnAwayMoveResponse = (turnAwayMoveResponseSuccess | turnAwayMoveResponseError)
+
+export const getTurnAwayMoveUrl = (id: string,) => {
+
+
+
+
+  return `/api/moves/${id}/turn-away`
+}
+
+/**
+ * Gate. The truck was turned away: the move keeps the typed number, is void ("turned away") and gets a turned_away flag with the refusal codes for the office. A repeat is a no-op. 409 E4106 when the move's gate form is saved; 409 E4102 when the office voided it.
+ */
+export const turnAwayMove = async (id: string,
+    turnAway: TurnAway, options?: Parameters<typeof http>[1]): Promise<turnAwayMoveResponse> => {
+
+  return http<turnAwayMoveResponse>(getTurnAwayMoveUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(turnAway)
   }
 );}
 

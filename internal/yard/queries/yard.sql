@@ -220,6 +220,14 @@ SELECT m.id, m.visit_id, m.order_id, m.order_item_id, m.truck_plate, m.trailer_p
 FROM gate_moves m LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
 WHERE m.company_id = @company_id AND (@depot_id::text = '' OR m.depot_id = @depot_id) AND m.id = @id;
 
+-- A truck the gate turned away: the typed number is kept, the move leaves the
+-- review queue (refused, resolved) and is void.
+-- name: TurnAwayMove :execrows
+UPDATE gate_moves SET number = CASE WHEN @number::text = '' THEN number ELSE @number::text END,
+    status = 'refused', resolved_by = CASE WHEN resolved_by = '' THEN @actor ELSE resolved_by END,
+    voided = true, void_reason = @void_reason, updated_at = @updated_at
+WHERE company_id = @company_id AND id = @id;
+
 -- name: VoidMove :execrows
 UPDATE gate_moves SET voided = true, void_reason = @void_reason, updated_at = @updated_at
 WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id;
@@ -229,7 +237,7 @@ WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id
 -- move itself is read under the scope's depot.
 
 -- name: LockMove :one
-SELECT id, depot_id, direction, number, visit_id, order_id, order_item_id, form_saved_at, voided
+SELECT id, depot_id, direction, number, visit_id, order_id, order_item_id, form_saved_at, voided, void_reason
 FROM gate_moves WHERE company_id = @company_id AND (@depot_id::text = '' OR depot_id = @depot_id) AND id = @id
 FOR UPDATE;
 

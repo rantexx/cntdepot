@@ -465,3 +465,34 @@ func TestDepotLimitedMemberSeesOnlyItsDepot(t *testing.T) {
 		t.Errorf("limited member lists d2's approval: %s", got)
 	}
 }
+
+func TestTurnAwayOverHTTP(t *testing.T) {
+	e := newYardEnv(t)
+	g := e.as(t, "A", "gate")
+	id := g.newMove()
+	reasons := `{"number":"MSCU1234565","reasons":[{"code":"hold_open","detail":"customs"}]}`
+	g.must(http.StatusNoContent, "POST", "/api/moves/"+id+"/turn-away", reasons)
+	g.must(http.StatusNoContent, "POST", "/api/moves/"+id+"/turn-away", reasons) // a resend is a no-op
+	form := decode[struct {
+		Number     string `json:"number"`
+		Voided     bool   `json:"voided"`
+		VoidReason string `json:"voidReason"`
+		Flags      []struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"flags"`
+	}](t, g.must(http.StatusOK, "GET", "/api/moves/"+id+"/form", ""))
+	if form.Number != "MSCU1234565" || !form.Voided || form.VoidReason != "turned away" ||
+		len(form.Flags) != 1 || form.Flags[0].Code != "turned_away" || form.Flags[0].Detail != "hold_open" {
+		t.Fatalf("form = %+v", form)
+	}
+	saved := g.newMove()
+	g.must(http.StatusOK, "POST", "/api/moves/"+saved+"/gate", `{"direction":"in","number":"MSCU1234565"}`)
+	if status, body := g.call("POST", "/api/moves/"+saved+"/turn-away", reasons); status != http.StatusConflict || !strings.Contains(string(body), "E4106") {
+		t.Fatalf("turn away a saved move = %d %s; want 409 E4106", status, body)
+	}
+	other := e.as(t, "B", "gate")
+	if status, body := other.call("POST", "/api/moves/"+id+"/turn-away", reasons); status != http.StatusNotFound {
+		t.Fatalf("another company = %d %s; want 404", status, body)
+	}
+}

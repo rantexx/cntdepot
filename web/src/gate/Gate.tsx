@@ -10,7 +10,7 @@ import { preparePhoto } from "../image";
 import { useMoveEvents } from "../live";
 import { useSession } from "../session";
 import { readLocal, writeLocal } from "../storage";
-import { drop, enqueue, resultOf, retry, ulid, useOutbox, type Entry, type NewEntry } from "./outbox";
+import { drop, enqueue, resultOf, retry, turnAway, ulid, useOutbox, wasTurnedAway, type Entry, type NewEntry } from "./outbox";
 import { Signature } from "./Signature";
 import { gateStatus, suggestedLine, useLists, type Lists } from "./snapshot";
 
@@ -50,16 +50,19 @@ interface Draft {
   moveQueued: boolean; // an OCR photo already put the move in the outbox
 }
 
+// The last values typed, per company and depot: a phone shared between depots keeps them apart.
 const RECENT = ["truckPlate", "trailerPlate", "driverName"] as const;
-const recent = (field: string): string[] => {
+const recent = (scope: string, field: string): string[] => {
   try {
-    return JSON.parse(readLocal(`gate-recent-${field}`) ?? "[]") as string[];
+    return JSON.parse(readLocal(`gate-recent:${scope}:${field}`) ?? "[]") as string[];
   } catch {
     return [];
   }
 };
-const remember = (field: string, value: string) => {
-  if (value) writeLocal(`gate-recent-${field}`, JSON.stringify([value, ...recent(field).filter((v) => v !== value)].slice(0, 10)));
+const remember = (scope: string, field: string, value: string) => {
+  if (value) {
+    writeLocal(`gate-recent:${scope}:${field}`, JSON.stringify([value, ...recent(scope, field).filter((v) => v !== value)].slice(0, 10)));
+  }
 };
 
 const REASONS: Record<string, Key> = {
@@ -101,8 +104,12 @@ function useOnline() {
 }
 
 const numberOf = (outbox: Entry[], moveId: string) => {
-  const form = outbox.find((e) => e.moveId === moveId && e.kind === "form");
-  return form?.kind === "form" ? form.payload.form.number : "";
+  for (const e of outbox) {
+    if (e.moveId !== moveId) continue;
+    if (e.kind === "form") return e.payload.form.number;
+    if (e.kind === "turnaway") return e.payload.number;
+  }
+  return "";
 };
 
 export function Gate() {
@@ -146,7 +153,7 @@ export function Gate() {
   }
 
   const start = (direction: "in" | "out") => {
-    const haulierId = readLocal("gate-haulier") ?? "";
+    const haulierId = readLocal(`gate-haulier:${scope}`) ?? "";
     setDraft({
       moveId: ulid(),
       direction,
@@ -247,8 +254,11 @@ function TruckForm({
   onSaved: (s: { moveId: string; number: string }) => void;
 }) {
   const { t } = useT();
+  const reason = useReason();
   const { hasModule } = useSession();
   const [error, setError] = useState("");
+  const [holdAsk, setHoldAsk] = useState(false);
+  const [held, setHeld] = useState(false);
   const [saving, setSaving] = useState(false);
   const [read, setRead] = useState<MoveDetail | null>(null);
   const set = (change: Partial<Draft>) => setDraft((x) => (x ? { ...x, ...change } : x));
@@ -367,8 +377,8 @@ function TruckForm({
       };
       list.push({ ...base, id: ulid(), kind: "form", payload: { form } });
       await enqueue(list);
-      RECENT.forEach((f) => remember(f, d[f].trim()));
-      writeLocal("gate-haulier", d.haulierId);
+      RECENT.forEach((f) => remember(scope, f, d[f].trim()));
+      writeLocal(`gate-haulier:${scope}`, d.haulierId);
       d.damages.forEach((x) => x.photos.forEach((s) => URL.revokeObjectURL(s.url)));
       onSaved({ moveId: d.moveId, number });
     } catch (e) {
@@ -380,11 +390,26 @@ function TruckForm({
 
   const ocr = hasModule("ocr");
   const refusals = status?.refusals ?? [];
+  const blocked = refusals.includes("blocked");
+  // Offline, nobody can answer a refusal the lists predict: the truck waits, unless the clerk lets it through with a reason.
+  const mustHold = !online && refusals.length > 0 && !(mode === "clerk_override" && !blocked && d.override.trim());
+  const details: Record<string, string | undefined> = { blocked: status?.block?.reason, hold_open: status?.holds[0]?.reason };
+
+  async function refuseNow() {
+    try {
+      await turnAway(d.moveId, scope, { number, reasons: refusals.map((code) => ({ code, detail: details[code] })) }, readLocal("lane") ?? "1");
+      onSaved({ moveId: d.moveId, number });
+    } catch (e) {
+      setError(`${t("gateNotSaved")}: ${String(e)}`);
+    }
+  }
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        void save();
+        if (mustHold) setHoldAsk(true);
+        else void save();
       }}
     >
       <div className="card">
@@ -598,7 +623,7 @@ function TruckForm({
               autoCapitalize={f === "driverName" ? "words" : "characters"}
             />
             <datalist id={`gate-${f}`}>
-              {recent(f).map((r) => (
+              {recent(scope, f).map((r) => (
                 <option key={r} value={r} />
               ))}
             </datalist>
@@ -611,6 +636,35 @@ function TruckForm({
         <Signature onChange={(png) => set({ signature: png })} />
       </div>
 
+      {holdAsk && mustHold && (
+        <section className="card" aria-label={t("gateHoldTitle")}>
+          <span className="sign stop">{t("gateHoldTitle")}</span>
+          <ul className="steps">
+            {refusals.map((c) => (
+              <li key={c} className="bad">
+                {reason(c)}
+                {details[c] ? `: ${details[c]}` : ""}
+              </li>
+            ))}
+          </ul>
+          {mode === "clerk_override" && !blocked && <p className="small">{t("gateHoldOrReason")}</p>}
+          <div className="row">
+            <button
+              type="button"
+              onClick={() => {
+                setHoldAsk(false);
+                setHeld(true);
+              }}
+            >
+              {t("gateHold")}
+            </button>
+            <button type="button" className="danger" onClick={() => void refuseNow()}>
+              {t("gateRefuseTruck")}
+            </button>
+          </div>
+        </section>
+      )}
+      {held && mustHold && <p className="warn">{t("gateHeldNote")}</p>}
       {!damagesOk && <p className="warn">{t("gateDamageNeeds")}</p>}
       {error && <p className="error">{error}</p>}
       <button type="submit" className="primary big" disabled={saving || !number || !damagesOk}>
@@ -648,8 +702,13 @@ function Decision({
   const { t } = useT();
   const reasonText = useReason();
   const [reason, setReason] = useState("");
+  const refusals = entry.refusal?.refusals ?? [];
   const refuse = (
-    <button type="button" className="danger" onClick={() => void drop(entry.moveId)}>
+    <button
+      type="button"
+      className="danger"
+      onClick={() => void turnAway(entry.moveId, entry.scope, { number, reasons: refusals }, readLocal("lane") ?? "1")}
+    >
       {t("gateRefuseTruck")}
     </button>
   );
@@ -658,13 +717,19 @@ function Decision({
       <section className="card" aria-label={t("gateFailed")}>
         <h3 className="cn">{number}</h3>
         <p className="error">
-          {t("gateFailed")}: {entry.error}
+          {entry.kind === "turnaway" ? t("gateTurnAwayFailed") : t("gateFailed")}: {entry.error}
         </p>
         <div className="row">
           <button type="button" onClick={() => void retry(entry)}>
             {t("retry")}
           </button>
-          {refuse}
+          {entry.kind === "turnaway" ? (
+            <button type="button" className="danger" onClick={() => void drop(entry)}>
+              {t("gateRemove")}
+            </button>
+          ) : (
+            refuse
+          )}
         </div>
       </section>
     );
@@ -679,7 +744,7 @@ function Decision({
       <h3 className="cn">{number}</h3>
       <span className="sign stop">{t("gateRefused")}</span>
       <ul className="steps">
-        {(r?.refusals ?? []).map((x) => (
+        {refusals.map((x) => (
           <li key={x.code} className="bad">
             {reasonText(x.code)}
             {x.detail ? `: ${x.detail}` : ""}
@@ -755,6 +820,7 @@ function Result({
   const [error, setError] = useState("");
   const mine = outbox.filter((e) => e.moveId === moveId);
   const stuck = mine.find((e) => e.state !== "pending");
+  const turning = mine.some((e) => e.kind === "turnaway");
   const result = resultOf(moveId);
 
   async function eir(): Promise<string> {
@@ -790,6 +856,16 @@ function Result({
   let body;
   if (stuck) {
     body = <Decision entry={stuck} number={number} mode={mode} online={online} onHold={onNext} />;
+  } else if (turning || wasTurnedAway(moveId)) {
+    body = (
+      <div className="card">
+        <div className="plate stop">
+          <span className="plate-label">{t("gateTurnedAway")}</span>
+          <span className="cn">{number}</span>
+        </div>
+        <p>{turning ? (online ? t("gateSending") : t("gateSavedOfflineHint")) : t("gateTurnedAwaySent")}</p>
+      </div>
+    );
   } else if (mine.length > 0) {
     body = (
       <div className="card">
@@ -831,7 +907,12 @@ function Result({
       </div>
     );
   } else {
-    body = <p className="card">{t("gateTurnedAway")}</p>;
+    // Sent from another tab, or this tab was reloaded: the move's own record says how it ended.
+    body = (
+      <p className="card">
+        {t("gateNothingToSend")} <a href={`#/moves/${moveId}`}>{t("openMove")}</a>
+      </p>
+    );
   }
   return (
     <>

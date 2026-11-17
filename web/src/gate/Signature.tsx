@@ -5,17 +5,19 @@ const W = 600;
 const H = 200;
 
 // Signature is the trucker's signature pad. It hands back a PNG (white ground, ink strokes)
-// after every stroke, or null when cleared.
+// after every stroke that drew a line, or null when cleared: a tap alone signs nothing.
 export function Signature({ onChange }: { onChange: (png: Blob | null) => void }) {
   const { t } = useT();
   const canvas = useRef<HTMLCanvasElement>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
+  const drew = useRef(false);
 
   const clear = () => {
     const ctx = canvas.current?.getContext("2d");
     if (!ctx) return;
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
+    drew.current = false;
     onChange(null);
   };
   useEffect(clear, []); // once, on mount: a white ground, so the JPEG copy is not black
@@ -40,11 +42,12 @@ export function Signature({ onChange }: { onChange: (png: Blob | null) => void }
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
     last.current = p;
+    drew.current = true;
   };
   const up = () => {
     if (!last.current) return;
     last.current = null;
-    canvas.current?.toBlob((png) => onChange(png), "image/png");
+    if (drew.current) canvas.current?.toBlob((png) => onChange(png), "image/png");
   };
 
   return (
