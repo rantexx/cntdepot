@@ -890,13 +890,15 @@ function Result({
       </div>
     );
   } else if (mine.length > 0) {
+    // Online with no failed send yet: still sending. Otherwise the truck is kept on the phone.
+    const sending = online && !mine.some((e) => e.tries > 0);
     body = (
       <div className="card">
         <div className="plate none">
-          <span className="plate-label">{online ? t("gateSending") : t("gateSavedOffline")}</span>
+          <span className="plate-label">{sending ? t("gateSending") : t("gateSavedOffline")}</span>
           <span className="cn">{number}</span>
         </div>
-        {!online && <p>{t("gateSavedOfflineHint")}</p>}
+        {!sending && <p>{t("gateSavedOfflineHint")}</p>}
       </div>
     );
   } else if (result) {

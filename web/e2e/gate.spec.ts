@@ -167,6 +167,32 @@ test("a form saved offline is stored with the conflict flagged, never refused", 
   await expect.poll(() => outboxSize(page)).toBe(0);
 });
 
+test("a save with no answer is kept as an offline save", async ({ page }) => {
+  const number = containerNumber();
+  const api = page.request;
+  const hold = await heldInYard(api, number, "Damage survey");
+  const order = { kind: "release", reference: `R${number}`, items: [{ number }] };
+  expect((await api.post("/api/orders", { headers: W, data: order })).ok()).toBeTruthy();
+
+  await openGate(page);
+  // The phone is online but the form's send gets no answer: the clerk sees it kept, and the truck leaves.
+  await page.route("**/api/moves/*/gate", (r) => r.abort());
+  await page.getByRole("button", { name: "Gate out" }).click();
+  await page.getByLabel("Container number").fill(number);
+  await page.getByRole("button", { name: /^save$/i }).click();
+  await expect(page.getByText("Saved on the phone")).toBeVisible({ timeout: 15_000 });
+  expect((await hold()).ok()).toBeTruthy();
+  await page.unroute("**/api/moves/*/gate");
+
+  // Stored with the conflict flagged, never refused, so "Refuse truck" can never delete it.
+  await expect(page.getByRole("button", { name: "Share EIR" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("region", { name: "Refused" })).toHaveCount(0);
+  expect((await visitsOf(api, number))[0].status).toBe("out");
+  const [form] = await formsOf(api, number).then((fs) => fs.filter((f) => !f.voided && f.flags.some((x) => x.code.startsWith("offline:"))));
+  expect(form.flags.map((f) => [f.code, f.detail])).toContainEqual(["offline:hold_open", "Damage survey"]);
+  await expect.poll(() => outboxSize(page)).toBe(0);
+});
+
 test("offline, a refusal the lists predict holds the truck", async ({ page, context }) => {
   const number = containerNumber();
   const api = page.request;

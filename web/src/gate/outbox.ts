@@ -151,6 +151,22 @@ async function settle(e: Entry, change: Partial<Base>) {
   });
 }
 
+// A send with no answer: the phone shows the truck as saved, so it leaves. From then on its form is an
+// offline save: the server stores it whatever it finds, and nobody can turn the truck away.
+async function markGone(moveId: string) {
+  await run("outbox", "readwrite", (t) => {
+    const store = t.objectStore("outbox");
+    const all = store.getAll() as IDBRequest<Entry[]>;
+    all.onsuccess = () => {
+      for (const x of all.result) {
+        if (x.moveId === moveId && x.kind === "form" && !x.payload.form.savedOffline) {
+          store.put({ ...x, payload: { form: { ...x.payload.form, savedOffline: true } } });
+        }
+      }
+    };
+  });
+}
+
 /** How many entries this phone has not sent yet (any scope). */
 export async function unsentCount(): Promise<number> {
   return run<number>("outbox", "readonly", (t) => t.objectStore("outbox").count());
@@ -237,6 +253,7 @@ async function send(e: Entry): Promise<Outcome> {
     // No answer, a server fault, a signed-out or moved session: the same entry goes again later.
     if (!(err instanceof ApiError) || err.status >= 500 || err.status === 401 || err.status === 429 || err.code === "E4097") {
       await settle(e, {});
+      await markGone(e.moveId);
       return "retry";
     }
     if (e.kind === "form" && err.status === 409 && (err.code === "E4098" || err.code === "E4099")) {

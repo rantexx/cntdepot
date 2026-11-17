@@ -12,11 +12,11 @@ const SCOPE_KEY = "scope-changed";
 // The server still checks every call; signing out or a 401 clears it.
 const SESSION_KEY = "last-session";
 // A sign-out the server has not heard of yet (no network): finished before the session is read again,
-// so a reload never brings back the person who signed out. Cleared when it reaches the server or on sign-in.
+// so a reload or a new sign-in never brings back the person who signed out. Cleared when it reaches the server.
 export const PENDING_LOGOUT = "pending-logout";
 
 // Tells the server about a pending sign-out; false while it cannot be reached.
-async function finishLogout(): Promise<boolean> {
+export async function finishLogout(): Promise<boolean> {
   if (!readLocal(PENDING_LOGOUT)) return true;
   try {
     await logout();
