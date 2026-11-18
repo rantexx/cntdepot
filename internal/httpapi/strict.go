@@ -527,7 +527,7 @@ func (s *Server) ListDepots(ctx context.Context, _ api.ListDepotsRequestObject) 
 	allowed := allowedDepots(ctx)
 	out := api.ListDepots200JSONResponse{}
 	err := s.inCompany(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, "SELECT id, name, country, timezone FROM depots ORDER BY name, id")
+		rows, err := tx.Query(ctx, "SELECT id, name, country, timezone, edi_location AS edilocation FROM depots ORDER BY name, id")
 		if err != nil {
 			return err
 		}

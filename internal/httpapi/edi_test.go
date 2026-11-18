@@ -61,6 +61,7 @@ type ediMsg struct {
 	LineID    *string `json:"lineId"`
 	DepotID   *string `json:"depotId"`
 	OrderID   *string `json:"orderId"`
+	OrderRef  *string `json:"orderRef"`
 	Via       *string `json:"via"`
 	Trusted   *bool   `json:"trusted"`
 }
@@ -176,6 +177,9 @@ func TestEDIStatusAndCompany(t *testing.T) {
 	}
 
 	m.must(204, "PUT", "/api/depots/d1/edi-location", `{"location":"trmer"}`)
+	if ds := decode[[]struct{ ID, EdiLocation string }](t, m.must(200, "GET", "/api/depots", "")); len(ds) == 0 || ds[0].ID != "d1" || ds[0].EdiLocation != "TRMER" {
+		t.Errorf("depots after the location PUT = %+v; want d1 with ediLocation TRMER", ds)
+	}
 	if status, body := m.call("PUT", "/api/depots/d1/edi-location", `{"location":"TR;MER"}`); status != 400 || errorCode(body) != "E4000" {
 		t.Errorf("bad location = %d %s; want 400 E4000", status, body)
 	}
@@ -396,6 +400,9 @@ func TestProcessChosenLineAndDepot(t *testing.T) {
 	o := decode[struct{ DepotID, Reference, Kind string }](t, lim.must(200, "GET", "/api/orders/"+*done.OrderID, ""))
 	if o.DepotID != "d2" || o.Reference != "RLS4471" || o.Kind != "release" {
 		t.Fatalf("order = %+v", o)
+	}
+	if got := decode[ediMsg](t, lim.must(200, "GET", "/api/edi/messages/"+held.ID, "")); got.OrderRef == nil || *got.OrderRef != "RLS4471" {
+		t.Errorf("orderRef of the processed message = %v; want RLS4471", got.OrderRef)
 	}
 }
 

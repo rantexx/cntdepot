@@ -766,6 +766,47 @@ func (q *Queries) MarkAnswered(ctx context.Context, arg MarkAnsweredParams) ([]s
 	return items, nil
 }
 
+const messageLabels = `-- name: MessageLabels :many
+SELECT m.id, COALESCE(o.reference, '')::text AS order_ref, COALESCE(g.number, '')::text AS container_number
+FROM edi_messages m
+LEFT JOIN edi_messages a ON a.company_id = m.company_id AND a.id = m.answer_of
+LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.order_id, a.order_id)
+LEFT JOIN gate_moves g ON g.company_id = m.company_id AND g.id = m.move_id
+WHERE m.company_id = $1 AND m.id = ANY($2::text[])
+`
+
+type MessageLabelsParams struct {
+	CompanyID string
+	Ids       []string
+}
+
+type MessageLabelsRow struct {
+	ID              string
+	OrderRef        string
+	ContainerNumber string
+}
+
+// The order reference and container number the API shows beside messages (an APERAK shows its answered file's order).
+func (q *Queries) MessageLabels(ctx context.Context, arg MessageLabelsParams) ([]MessageLabelsRow, error) {
+	rows, err := q.db.Query(ctx, messageLabels, arg.CompanyID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageLabelsRow
+	for rows.Next() {
+		var i MessageLabelsRow
+		if err := rows.Scan(&i.ID, &i.OrderRef, &i.ContainerNumber); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveDamages = `-- name: MoveDamages :many
 SELECT location, description FROM damages WHERE company_id = $1 AND move_id = $2 ORDER BY id
 `

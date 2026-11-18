@@ -1218,8 +1218,8 @@ components:
         modules: {type: array, items: {type: string}}
     Depot:
       type: object
-      required: [id, name, country, timezone]
-      properties: {id: {type: string}, name: {type: string}, country: {type: string}, timezone: {type: string}}
+      required: [id, name, country, timezone, ediLocation]
+      properties: {id: {type: string}, name: {type: string}, country: {type: string}, timezone: {type: string}, ediLocation: {type: string, description: "the depot EDI location code; empty when unset"}}
     DepotIds:
       type: array
       nullable: true
@@ -1613,7 +1613,7 @@ components:
         text: {type: string}
     EDIMessage:
       type: object
-      required: [id, direction, kind, status, lineId, depotId, moveId, orderId, answerOf, function, controlRef, messageRef, fileName, sender, problems, tries, createdAt, sentAt]
+      required: [id, direction, kind, status, lineId, depotId, moveId, orderId, orderRef, containerNumber, answerOf, function, controlRef, messageRef, fileName, sender, problems, tries, createdAt, sentAt]
       properties:
         id: {type: string}
         direction: {$ref: "#/components/schemas/EDIDirection"}
@@ -1623,6 +1623,8 @@ components:
         depotId: {type: string, nullable: true}
         moveId: {type: string, nullable: true}
         orderId: {type: string, nullable: true}
+        orderRef: {type: string, nullable: true, description: "read-only: the order reference (an APERAK shows the answered file order)"}
+        containerNumber: {type: string, nullable: true, description: "read-only: the container of the gate move"}
         answerOf: {type: string, nullable: true, description: the inbound message an APERAK answers}
         function: {type: string, description: "the message function code (9 original, 5 replacement, 1 cancellation)"}
         controlRef: {type: string, description: the UNB interchange reference}

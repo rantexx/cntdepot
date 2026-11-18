@@ -378,6 +378,8 @@ export interface Depot {
   name: string;
   country: string;
   timezone: string;
+  /** the depot EDI location code; empty when unset */
+  ediLocation: string;
 }
 
 /**
@@ -981,6 +983,16 @@ export interface EDIMessage {
   moveId: string | null;
   /** @nullable */
   orderId: string | null;
+  /**
+     * read-only: the order reference (an APERAK shows the answered file order)
+     * @nullable
+     */
+  orderRef: string | null;
+  /**
+     * read-only: the container of the gate move
+     * @nullable
+     */
+  containerNumber: string | null;
   /**
      * the inbound message an APERAK answers
      * @nullable

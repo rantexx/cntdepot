@@ -279,7 +279,7 @@ function Messages({ lines, depots }: { lines: LineEDI[]; depots: Depot[] }) {
               <td aria-label={m.direction === "in" ? t("ediDirIn") : t("ediDirOut")}>{m.direction === "in" ? "←" : "→"}</td>
               <td>{t(`ediKind_${m.kind}` as Key)}</td>
               <td>{lineCode(m.lineId)}</td>
-              <td className="mono">{m.fileName || m.messageRef || m.controlRef}</td>
+              <td className="mono">{(m.direction === "in" ? m.orderRef : m.containerNumber) || m.fileName || m.messageRef || m.controlRef}</td>
               <td>
                 <Chip status={m.status} />
               </td>

@@ -43,6 +43,11 @@ test("COPARN upload becomes an order and a gate-out sends CODECO", async ({ page
   await expect(page.getByText("COPARN:D:00B")).toBeVisible();
   await shot(page, "2-detail");
 
+  // The reference column shows the order for an in row; the depot location field shows the saved code.
+  await expect(page.locator("tbody tr", { hasText: "COPARN" }).first()).toContainText("RLS4471");
+  await page.goto("/#/settings");
+  await expect(page.getByLabel("Depot EDI location code")).toHaveValue("TRMER");
+
   // 3. The order is listed.
   await page.goto("/#/orders");
   await expect(page.getByText("RLS4471").first()).toBeVisible();
@@ -64,14 +69,17 @@ test("COPARN upload becomes an order and a gate-out sends CODECO", async ({ page
     await page.getByRole("button", { name: "Refresh" }).click();
     await expect(codeco).toContainText("Sent", { timeout: 1500 });
   }).toPass({ timeout: 15_000 });
+  await expect(codeco).toContainText(NUMBER);
 
   // 6. The .eml in mail-out carries the CODECO (BGM 111, the SMDG gate-out code) as a base64 attachment.
   const dir = process.env.EDI_E2E_MAIL!;
-  const text = fs.readdirSync(dir).filter((f) => f.endsWith(".eml")).map((f) => {
-    const raw = fs.readFileSync(path.join(dir, f), "utf8");
-    return raw + "\n" + [...raw.matchAll(/^([A-Za-z0-9+/=]{20,})$/gm)].map((m) => Buffer.from(m[1], "base64").toString("latin1")).join("");
-  });
-  expect(text.some((t) => t.includes("BGM+111"))).toBeTruthy();
+  // The file may land a moment after the row says Sent, so poll; attachment lines are base64.
+  const emls = () =>
+    fs.readdirSync(dir).filter((f) => f.endsWith(".eml")).map((f) => {
+      const raw = fs.readFileSync(path.join(dir, f), "utf8");
+      return raw + "\n" +[...raw.matchAll(/^([A-Za-z0-9+/=]{20,})\r?$/gm)].map((m) => Buffer.from(m[1], "base64").toString("latin1")).join("");
+    });
+  await expect.poll(() => emls().some((t) => t.includes("BGM+111"))).toBeTruthy();
 
   // 7. The Lines tab.
   await page.getByRole("button", { name: "Lines" }).click();

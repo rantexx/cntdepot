@@ -196,3 +196,12 @@ UPDATE company_edi SET party_id = @party_id WHERE company_id = @company_id;
 
 -- name: SetDepotLocation :execrows
 UPDATE depots SET edi_location = @edi_location WHERE company_id = @company_id AND id = @id;
+
+-- The order reference and container number the API shows beside messages (an APERAK shows its answered file's order).
+-- name: MessageLabels :many
+SELECT m.id, COALESCE(o.reference, '')::text AS order_ref, COALESCE(g.number, '')::text AS container_number
+FROM edi_messages m
+LEFT JOIN edi_messages a ON a.company_id = m.company_id AND a.id = m.answer_of
+LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.order_id, a.order_id)
+LEFT JOIN gate_moves g ON g.company_id = m.company_id AND g.id = m.move_id
+WHERE m.company_id = @company_id AND m.id = ANY(@ids::text[]);

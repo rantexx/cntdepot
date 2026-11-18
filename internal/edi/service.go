@@ -44,6 +44,7 @@ func NewService(pool *pgxpool.Pool, bl *blob.Store, y *yard.Service, m mail.Mail
 type Message struct {
 	ID, Direction, Kind, Status                string
 	LineID, DepotID, MoveID, OrderID, AnswerOf string
+	OrderRef, ContainerNumber                  string // read-only labels, "" when none
 	Function, ControlRef, MessageRef           string
 	BlobDigest, FileName, Sender, Via          string
 	Trusted                                    bool
@@ -78,10 +79,35 @@ func (s *Service) Message(ctx context.Context, id string) (m Message, err error)
 		if err != nil {
 			return notFound(err)
 		}
-		m, err = messageOf(r)
+		if m, err = messageOf(r); err != nil {
+			return err
+		}
+		ms := []Message{m}
+		err = labelMessages(ctx, q, sc.CompanyID, ms)
+		m = ms[0]
 		return err
 	})
 	return m, err
+}
+
+// labelMessages fills the order reference and container number of ms.
+func labelMessages(ctx context.Context, q *edidb.Queries, companyID string, ms []Message) error {
+	ids := make([]string, len(ms))
+	for i, m := range ms {
+		ids[i] = m.ID
+	}
+	rows, err := q.MessageLabels(ctx, edidb.MessageLabelsParams{CompanyID: companyID, Ids: ids})
+	if err != nil {
+		return err
+	}
+	by := make(map[string]edidb.MessageLabelsRow, len(rows))
+	for _, r := range rows {
+		by[r.ID] = r
+	}
+	for i := range ms {
+		ms[i].OrderRef, ms[i].ContainerNumber = by[ms[i].ID].OrderRef, by[ms[i].ID].ContainerNumber
+	}
+	return nil
 }
 
 // problemsJSON never stores null.

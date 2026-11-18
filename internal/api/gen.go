@@ -582,10 +582,13 @@ type Dashboard struct {
 
 // Depot defines model for Depot.
 type Depot struct {
-	Country  string `json:"country"`
-	Id       string `json:"id"`
-	Name     string `json:"name"`
-	Timezone string `json:"timezone"`
+	Country string `json:"country"`
+
+	// EdiLocation the depot EDI location code; empty when unset
+	EdiLocation string `json:"ediLocation"`
+	Id          string `json:"id"`
+	Name        string `json:"name"`
+	Timezone    string `json:"timezone"`
 }
 
 // DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
@@ -602,6 +605,9 @@ type EDIMessage struct {
 	// AnswerOf the inbound message an APERAK answers
 	AnswerOf *string `json:"answerOf"`
 
+	// ContainerNumber read-only: the container of the gate move
+	ContainerNumber *string `json:"containerNumber"`
+
 	// ControlRef the UNB interchange reference
 	ControlRef string       `json:"controlRef"`
 	CreatedAt  time.Time    `json:"createdAt"`
@@ -616,10 +622,13 @@ type EDIMessage struct {
 	LineId   *string `json:"lineId"`
 
 	// MessageRef the UNH message reference
-	MessageRef string       `json:"messageRef"`
-	MoveId     *string      `json:"moveId"`
-	OrderId    *string      `json:"orderId"`
-	Problems   []EDIProblem `json:"problems"`
+	MessageRef string  `json:"messageRef"`
+	MoveId     *string `json:"moveId"`
+	OrderId    *string `json:"orderId"`
+
+	// OrderRef read-only: the order reference (an APERAK shows the answered file order)
+	OrderRef *string      `json:"orderRef"`
+	Problems []EDIProblem `json:"problems"`
 
 	// Sender in: the mail sender or the uploader
 	Sender string     `json:"sender"`

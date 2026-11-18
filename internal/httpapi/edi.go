@@ -51,7 +51,7 @@ func optStr(s string) *string {
 func apiMessage(m edi.Message) api.EDIMessage {
 	out := api.EDIMessage{
 		Id: m.ID, Direction: api.EDIDirection(m.Direction), Kind: api.EDIKind(m.Kind), Status: api.EDIStatus(m.Status),
-		LineId: optStr(m.LineID), DepotId: optStr(m.DepotID), MoveId: optStr(m.MoveID), OrderId: optStr(m.OrderID), AnswerOf: optStr(m.AnswerOf),
+		LineId: optStr(m.LineID), DepotId: optStr(m.DepotID), MoveId: optStr(m.MoveID), OrderId: optStr(m.OrderID), OrderRef: optStr(m.OrderRef), ContainerNumber: optStr(m.ContainerNumber), AnswerOf: optStr(m.AnswerOf),
 		Function: m.Function, ControlRef: m.ControlRef, MessageRef: m.MessageRef, FileName: m.FileName, Sender: m.Sender,
 		Problems: make([]api.EDIProblem, len(m.Problems)), Tries: int(m.Tries), CreatedAt: m.CreatedAt, SentAt: m.SentAt,
 	}

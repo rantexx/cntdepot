@@ -65,7 +65,10 @@ func (s *Service) ListMessages(ctx context.Context, f Filter, limit, offset int)
 			out = append(out, m)
 		}
 		total = int(n)
-		return err
+		if err != nil {
+			return err
+		}
+		return labelMessages(ctx, q, sc.CompanyID, out)
 	})
 	return out, total, err
 }
