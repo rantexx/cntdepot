@@ -186,3 +186,21 @@ the gate can use it with nobody typing, and the line receives a correct gate mes
   - the APERAK error codes.
 - Table and column names, API shapes, and the screen layout follow existing patterns.
 - How the sender keeps per-container order, and backs off.
+
+## 8. Built
+
+What the build settled or changed, for a reader of this spec:
+- The EDI screens and endpoints use the existing `PermManage`, not a new `edi.manage` permission.
+- The daily list covers the previous depot-local day and is sent at the line's `ReportTime` (default 06:00) through the common sender, with retries.
+- CODECO BGM codes are 109 (gate-in) and 111 (gate-out) per the SMDG guide, not 34/36.
+- Problem codes are at most 8 characters: E-DEPOT, E-NOORD, E-NOADDR, E-TYPE, E-DATA, E-PROC, W-KEPT, W-REPREF.
+- Reports and CODECO rows are stored like other EDI messages, and each COPARN message gets its own APERAK.
+- Inbound mail stores `via` (mail or upload) and `trusted`; reprocessing uses the stored values.
+- Trusted means the first `X-Spam-Tests` has DKIM_VALID_AU, or the first Authentication-Results has an aligned `dkim=pass`, or the first Received-SPF passes for the From domain. SPF alone does not count.
+- Location rule: a company with one depot uses it even when its location code is unset; with codes set and no match the message is E-DEPOT.
+- A depot-limited member sees messages of their depots plus those with no depot. Their upload or process outside their depots is held with E-DEPOT.
+- The company EDI party id (`PUT /api/edi/company`) must be set before a line can use EDI; two lines cannot share a sender id.
+- CODECO gate time is the form's first save; offline moves carry the time the server received them.
+- A cancel repeats the facts that were sent; a number change sends a cancel and a new original.
+- A poisoned item fails alone (row to `error`) and never halts the company's other messages.
+- Migrations 005 (EDI tables) and 006 (`first_try_at`) are part of this stage.
