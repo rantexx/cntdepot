@@ -60,10 +60,30 @@ func (s *Service) reportOne(ctx context.Context, l LineEDI, d edidb.DepotZonesRo
 	if _, err := fmt.Sscanf(hh+" "+mm, "%d %d", &h, &m); !ok || err != nil {
 		h, m = 6, 0
 	}
+	last := now.Day() - 1 // the latest day due: yesterday once past the report time
 	if now.Before(time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, loc)) {
-		return nil
+		last--
 	}
-	day := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC) // a calendar date
+	// The last 3 due days, oldest first: a day missed while the worker was down
+	// goes late, once (the unique report row gates each day).
+	for back := 2; back >= 0; back-- {
+		day := time.Date(now.Year(), now.Month(), last-back, 0, 0, 0, 0, time.UTC) // a calendar date
+		if err := s.reportDay(ctx, l, d, loc, day); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// csvCell keeps a spreadsheet from reading a cell as a formula.
+func csvCell(v string) string {
+	if v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+		return "'" + v
+	}
+	return v
+}
+
+func (s *Service) reportDay(ctx context.Context, l LineEDI, d edidb.DepotZonesRow, loc *time.Location, day time.Time) error {
 	var done bool
 	if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) (err error) {
 		done, err = q.ReportDone(ctx, edidb.ReportDoneParams{CompanyID: sc.CompanyID, LineID: &l.LineID, DepotID: &d.ID, ReportDay: &day})
@@ -83,8 +103,12 @@ func (s *Service) reportOne(ctx context.Context, l LineEDI, d edidb.DepotZonesRo
 		if r.Voided || strings.ToUpper(strings.TrimSpace(r.LineCode)) != code {
 			continue
 		}
-		moves = append(moves, []string{r.At.In(loc).Format("2006-01-02 15:04"), r.Direction, r.Number, r.TypeCode, r.FullEmpty,
-			r.TruckPlate, r.HaulierCode, r.Seal, r.Condition})
+		row := []string{r.At.In(loc).Format("2006-01-02 15:04"), r.Direction, r.Number, r.TypeCode, r.FullEmpty,
+			r.TruckPlate, r.HaulierCode, r.Seal, r.Condition}
+		for i := range row {
+			row[i] = csvCell(row[i])
+		}
+		moves = append(moves, row)
 	}
 	date := day.Format("2006-01-02")
 	row := edidb.InsertReportParams{ID: newID(), Status: "ignored", LineID: &l.LineID, DepotID: &d.ID, ReportDay: &day}

@@ -323,3 +323,21 @@ func TestAPERAKRoundTrip(t *testing.T) {
 		t.Fatalf("line answer = %+v", line)
 	}
 }
+
+// BGM function 27 rejects even without ERC; its FTX texts are the problems. 29 accepts.
+func TestAPERAKFunctionDecides(t *testing.T) {
+	msg := func(fn string) Message {
+		return Message{Type: typeAPERAK, Segments: []Segment{
+			seg("BGM", el(docAPERAK), el("5"), el(fn)),
+			seg("FTX", el(ftxError), nil, nil, el("BOOKING CLOSED")),
+			seg("RFF", el(rffPrevious, "30001")),
+		}}
+	}
+	r := ReadAPERAK(msg("27"))
+	if r.Accepted || !reflect.DeepEqual(r.RefersTo, []string{"30001"}) || !reflect.DeepEqual(r.Problems, []Problem{{"", "BOOKING CLOSED"}}) {
+		t.Fatalf("27 without ERC = %+v", r)
+	}
+	if r := ReadAPERAK(msg("29")); !r.Accepted || len(r.Problems) != 0 || r.RefersTo[0] != "30001" {
+		t.Fatalf("29 = %+v", r)
+	}
+}

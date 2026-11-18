@@ -130,6 +130,19 @@ func (s *Service) SetLine(ctx context.Context, l LineEDI) (LineEDI, error) {
 		return LineEDI{}, Invalid("reportTime: use HH:MM, from 00:00 to 23:59")
 	case l.Mode == "edi" && p.RecipientID == "":
 		return LineEDI{}, Invalid("recipientId: a line on EDI needs the id we send its files to")
+	case l.Mode == "edi" && len(p.SendTo) == 0:
+		return LineEDI{}, Invalid("sendTo: a line on EDI needs an address we send its files to")
+	}
+	for _, f := range []struct {
+		name string
+		v    *string
+		max  int
+	}{{"senderId", &p.SenderID, 35}, {"recipientId", &p.RecipientID, 35}, {"senderQual", &p.SenderQual, 4}, {"recipientQual", &p.RecipientQual, 4}} {
+		v, err := unoa(f.name, *f.v, f.max) // they go into the UNB as they are
+		if err != nil {
+			return LineEDI{}, err
+		}
+		*f.v = v
 	}
 	for _, f := range []struct {
 		name string
@@ -217,8 +230,9 @@ type Status struct {
 }
 
 // Status reports the mail driver, the company's inbound address and party
-// id, and how many messages of the last 30 days need a look.
-func (s *Service) Status(ctx context.Context) (Status, error) {
+// id, and how many messages of the last 30 days need a look; depots (non-nil)
+// counts only those depots' messages and those of no depot, as the list shows.
+func (s *Service) Status(ctx context.Context, depots []string) (Status, error) {
 	ce, err := s.st.CompanyEDI(ctx)
 	if err != nil {
 		return Status{}, err
@@ -228,7 +242,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		st.InboundAddress = "edi-" + ce.InboundToken + "@" + s.cfg.InboundDomain
 	}
 	err = s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
-		n, err := q.CountProblems(ctx, edidb.CountProblemsParams{CompanyID: sc.CompanyID, Since: s.now().AddDate(0, 0, -30)})
+		n, err := q.CountProblems(ctx, edidb.CountProblemsParams{CompanyID: sc.CompanyID, Since: s.now().AddDate(0, 0, -30), Depots: depots})
 		st.Problems = int(n)
 		return err
 	})

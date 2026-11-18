@@ -563,3 +563,36 @@ func TestReplacementNeedsLineOnEDI(t *testing.T) {
 		t.Fatalf("out = %+v", o.messages("out"))
 	}
 }
+
+// A failed CODECO to the old line does not hold back the new line's original.
+func TestOldLineFailureDoesNotHoldNewLine(t *testing.T) {
+	o := newOutFx(t)
+	o.line(Profile{SenderID: "MSC", RecipientID: "MSC"}) // no address: lA's CODECOs fail
+	id := o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	o.correct(id, form(id, "in", "MSCU1234566", "E", "lX"))
+	o.tick()
+	if sent := o.sent(); len(sent) != 1 || sent[0].To[0] != otherTo || fn(t, sent[0]) != "9" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+// An empties-only line's container corrected to full no longer qualifies:
+// the line gets a cancel, not a replacement carrying a full container.
+func TestEmptiesOnlyCorrectedToFullCancels(t *testing.T) {
+	o := newOutFx(t)
+	o.line(Profile{SenderID: "MSC", RecipientID: "MSC", SendTo: []string{lineTo}, EmptiesOnly: true})
+	id := o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	o.correct(id, form(id, "in", "MSCU1234566", "F", "lA"))
+	o.tick()
+	sent := o.sent()
+	if len(sent) != 2 || fn(t, sent[1]) != "1 "+id || !slices.Equal(facts(t, sent[1]), facts(t, sent[0])) {
+		t.Fatalf("sent = %+v", sent)
+	}
+	o.correct(id, form(id, "in", "MSCU1234566", "E", "lA")) // back to empty: an original again
+	o.tick()
+	if sent := o.sent(); len(sent) != 3 || fn(t, sent[2]) != "9" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}

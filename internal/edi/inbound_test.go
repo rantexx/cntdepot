@@ -564,3 +564,25 @@ func TestLimitedMemberAppliesNothingOutsideItsDepots(t *testing.T) {
 		t.Fatalf("limited release = %+v, %v", ms, err)
 	}
 }
+
+// A refusal by the member's depot limit is ours, not the line's fault: it
+// queues no APERAK; the full manager's Process answers once (accepted).
+func TestDepotLimitRefusalSendsNoAPERAK(t *testing.T) {
+	x := newFx(t)
+	x.upload(file(t, "coparn_release.edi"))
+	before := len(x.messages("out"))
+	ms, err := x.s.Upload(ctxOf("A"), "c.edi", file(t, "coparn_cancel.edi"), "u2", []string{"d2"})
+	if err != nil || ms[0].Status != "error" {
+		t.Fatalf("limited cancel = %+v, %v", ms, err)
+	}
+	if n := len(x.messages("out")); n != before {
+		t.Fatalf("limited refusal queued %d APERAK rows", n-before)
+	}
+	if _, err := x.s.Process(ctxOf("A"), ms[0].ID, "", "", "u1", nil); err != nil {
+		t.Fatal(err)
+	}
+	out := x.messages("out")
+	if len(out) != before+1 || !x.answer(out[len(out)-1]).Accepted {
+		t.Fatalf("after Process: %d out rows", len(out)-before)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -72,19 +73,23 @@ func (p *Postmark) Send(ctx context.Context, m Outgoing) error {
 // ParsePostmarkInbound reads Postmark's inbound webhook JSON.
 func ParsePostmarkInbound(body []byte) (Inbound, error) {
 	var w struct {
-		FromFull    struct{ Email string }
-		ToFull      []struct{ Email string }
-		Subject     string
-		TextBody    string
-		Headers     []struct{ Name, Value string }
-		Attachments []struct{ Name, Content, ContentType string }
+		FromFull                struct{ Email string }
+		ToFull, CcFull, BccFull []struct{ Email string }
+		OriginalRecipient       string
+		Subject                 string
+		TextBody                string
+		Headers                 []struct{ Name, Value string }
+		Attachments             []struct{ Name, Content, ContentType string }
 	}
 	if err := json.Unmarshal(body, &w); err != nil {
 		return Inbound{}, fmt.Errorf("postmark inbound: %w", err)
 	}
 	in := Inbound{From: w.FromFull.Email, Subject: w.Subject, Text: w.TextBody}
-	for _, t := range w.ToFull {
-		in.To = append(in.To, t.Email)
+	// Our address may sit in Cc or Bcc; every recipient counts once.
+	for _, t := range append(append(append(w.ToFull, w.CcFull...), w.BccFull...), struct{ Email string }{w.OriginalRecipient}) {
+		if t.Email != "" && !slices.Contains(in.To, t.Email) {
+			in.To = append(in.To, t.Email)
+		}
 	}
 	in.Trusted = trusted(in.From, w.Headers)
 	for _, a := range w.Attachments {

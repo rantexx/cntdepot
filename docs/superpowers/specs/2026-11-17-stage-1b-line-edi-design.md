@@ -204,3 +204,10 @@ What the build settled or changed, for a reader of this spec:
 - A cancel repeats the facts that were sent; a number change sends a cancel and a new original.
 - A poisoned item fails alone (row to `error`) and never halts the company's other messages.
 - Migrations 005 (EDI tables) and 006 (`first_try_at`) are part of this stage.
+- CODECO is queued by the background worker from the gate events, not in the gate transaction (supersedes the 5.4 wording "in the same transaction"); the gate never touches EDI tables.
+- E-CLOSED: a COPARN original for an order that is cancelled. E-PROC: a stored inbound file the worker could not process (left `received` too long).
+- A cancelled EDI order cannot be reopened by a later original with the same reference (E-CLOSED); the line sends a new reference.
+- An empties-only line's container corrected to full gets a cancel of what was sent, not a replacement.
+- The order of messages per container is kept per line: a failed CODECO to the old line does not hold back the new line's after a line correction.
+- A refusal only because of a depot-limited member's depots sends the line no APERAK; the later full Process answers.
+- The daily list looks back over the last 3 depot-local days, so a day missed while the worker was down is sent late, once. Cells starting with = + - @ tab or CR get a leading '.

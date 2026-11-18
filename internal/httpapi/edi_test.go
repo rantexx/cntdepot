@@ -211,6 +211,13 @@ func TestLineSettingsValidation(t *testing.T) {
 		"no recipient":     strings.Replace(ediLine, `"recipientId":"MSC"`, `"recipientId":" "`, 1),
 		"bad mode":         strings.Replace(ediLine, `"mode":"edi"`, `"mode":"on"`, 1),
 		"sender id of lA":  strings.Replace(ediLine, `"senderId":"MSC"`, `"senderId":"msc"`, 1),
+		"edi no sendTo":    strings.Replace(ediLine, `"sendTo":["line@msc.test"]`, `"sendTo":[]`, 1),
+		"recipient id 36":  strings.Replace(ediLine, `"recipientId":"MSC"`, `"recipientId":"`+strings.Repeat("A", 36)+`"`, 1),
+		"sender id 36":     strings.Replace(ediLine, `"senderId":"MSC"`, `"senderId":"`+strings.Repeat("A", 36)+`"`, 1),
+		"recipient qual 5": strings.Replace(ediLine, `"recipientQual":""`, `"recipientQual":"ZZZZZ"`, 1),
+		"sender qual 5":    strings.Replace(ediLine, `"senderQual":""`, `"senderQual":"ZZZZZ"`, 1),
+		"recipient id '":   strings.Replace(ediLine, `"recipientId":"MSC"`, `"recipientId":"MS'C"`, 1),
+		"sender id :":      strings.Replace(ediLine, `"senderId":"MSC"`, `"senderId":"MS:C"`, 1),
 	} {
 		path := "/api/edi/lines/lA"
 		if name == "sender id of lA" {
@@ -365,6 +372,15 @@ func TestDepotLimitedManagerSeesOwnDepotsOnly(t *testing.T) {
 		}
 	}
 	lim.must(200, "GET", "/api/edi/messages/"+junk.ID, "")
+	// The problem badge counts what each one's list shows.
+	e.exec(t, "A", `UPDATE edi_messages SET status = 'error' WHERE id = '`+atD1.ID+`'`)
+	type badge struct{ Problems int }
+	if n := decode[badge](t, lim.must(200, "GET", "/api/edi/status", "")).Problems; n != 1 {
+		t.Errorf("limited problems = %d; want 1 (no depot only)", n)
+	}
+	if n := decode[badge](t, m.must(200, "GET", "/api/edi/status", "")).Problems; n != 2 {
+		t.Errorf("manager problems = %d; want 2", n)
+	}
 	lim.must(204, "PUT", "/api/depots/d2/edi-location", `{"location":"TRIST"}`)
 	if ds := decode[[]struct{ ID string }](t, lim.must(200, "GET", "/api/depots", "")); len(ds) != 1 || ds[0].ID != "d2" {
 		t.Errorf("limited depots = %+v", ds)
@@ -426,5 +442,27 @@ func TestLimitedUploadOutsideItsDepotsIsHeld(t *testing.T) {
 	done := decode[ediMsg](t, e.as(t, "A", "owner").must(200, "POST", "/api/edi/messages/"+held.ID+"/process", `{}`))
 	if done.Status != "done" || done.DepotID == nil || *done.DepotID != "d1" || done.OrderID == nil {
 		t.Fatalf("owner process = %+v", done)
+	}
+}
+
+// Our address only in Cc (or Bcc / OriginalRecipient) still reaches the company.
+func TestWebhookTokenInCc(t *testing.T) {
+	e := newEDIEnv(t, hookSecret)
+	m := e.as(t, "A", "manager")
+	onEDI(m)
+	addr := decode[struct{ InboundAddress string }](t, m.must(200, "GET", "/api/edi/status", "")).InboundAddress
+	body, err := json.Marshal(map[string]any{
+		"FromFull": map[string]string{"Email": "edi@msc.test"}, "ToFull": []map[string]string{{"Email": "ops@msc.test"}},
+		"CcFull": []map[string]string{{"Email": addr}}, "Subject": "COPARN",
+		"Attachments": []map[string]string{{"Name": "rls.edi", "ContentType": "application/EDIFACT", "Content": base64.StdEncoding.EncodeToString(ediFile(t, "coparn_release.edi"))}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := postmark(t, e, "postmark", hookSecret, body); got != 200 {
+		t.Fatalf("status %d", got)
+	}
+	if in := decode[ediList](t, m.must(200, "GET", "/api/edi/messages?direction=in", "")); in.Total != 1 {
+		t.Fatalf("token in Cc: stored %d; want 1", in.Total)
 	}
 }

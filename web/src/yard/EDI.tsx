@@ -33,6 +33,8 @@ function Chip({ status }: { status: EDIStatus }) {
   );
 }
 
+const PER_PAGE = 100;
+
 const fmt = (iso: string) => new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 
 // One message opened: problems, links, the file as readable segments and the actions that fit it.
@@ -42,9 +44,28 @@ function Detail({ m, lines, depots, done }: { m: EDIMessage; lines: LineEDI[]; d
   const [lineId, setLineId] = useState(m.lineId ?? "");
   const [depotId, setDepotId] = useState(m.depotId ?? "");
   const [msg, setMsg] = useState("");
+  const [rawErr, setRawErr] = useState("");
+  // Inbound rows always keep their file; an outbound row gets a file name only once its file is built.
+  const hasFile = m.direction === "in" || m.fileName !== "";
   useEffect(() => {
-    void fetch(`/api/edi/messages/${m.id}/raw`).then((r) => r.text()).then(setRaw, () => setRaw(""));
-  }, [m.id]);
+    setRaw("");
+    setRawErr("");
+    if (!hasFile) return;
+    void fetch(`/api/edi/messages/${m.id}/raw`).then(
+      async (r) => {
+        const body = await r.text();
+        if (r.ok) return setRaw(body);
+        let text = r.statusText;
+        try {
+          text = (JSON.parse(body) as { error?: { message?: string } }).error?.message || text;
+        } catch {
+          // not a JSON error body: keep the status text
+        }
+        setRawErr(text || t("networkError"));
+      },
+      () => setRawErr(t("networkError")),
+    );
+  }, [m.id, hasFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(p: Promise<unknown>) {
     setMsg("");
@@ -80,10 +101,12 @@ function Detail({ m, lines, depots, done }: { m: EDIMessage; lines: LineEDI[]; d
           <div className="row-actions">
             {m.orderId && <a href={`#/orders/${m.orderId}`}>{t("ediOrder")}</a>}
             {m.moveId && <a href={`#/moves/${m.moveId}`}>{t("ediMove")}</a>}
-            <a className="button" href={`/api/edi/messages/${m.id}/raw`} download={m.fileName || undefined}>
-              {t("ediDownload")}
-            </a>
-            {m.direction === "out" && (
+            {hasFile && (
+              <a className="button" href={`/api/edi/messages/${m.id}/raw`} download={m.fileName || undefined}>
+                {t("ediDownload")}
+              </a>
+            )}
+            {m.direction === "out" && hasFile && (
               <button type="button" onClick={() => void act(resendEdiMessage(m.id))}>
                 {t("ediResend")}
               </button>
@@ -123,8 +146,18 @@ function Detail({ m, lines, depots, done }: { m: EDIMessage; lines: LineEDI[]; d
               {msg}
             </p>
           )}
-          <h4>{t("ediRaw")}</h4>
-          <pre>{raw.split("'").map((s, i, a) => (i < a.length - 1 ? `${s.replace(/^\s+/, "")}'\n` : s.trim() ? s : "")).join("")}</pre>
+          {hasFile && (
+            <>
+              <h4>{t("ediRaw")}</h4>
+              {rawErr ? (
+                <p className="error small" role="alert">
+                  {rawErr}
+                </p>
+              ) : (
+                <pre>{raw.split("'").map((s, i, a) => (i < a.length - 1 ? `${s.replace(/^\s+/, "")}'\n` : s.trim() ? s : "")).join("")}</pre>
+              )}
+            </>
+          )}
         </div>
       </td>
     </tr>
@@ -139,25 +172,37 @@ function Messages({ lines, depots }: { lines: LineEDI[]; depots: Depot[] }) {
   const [files, setFiles] = useState<File[]>([]);
   const [msg, setMsg] = useState("");
   const [uploaded, setUploaded] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(() => {
-    // "to" is exclusive in the API: a picked day includes that whole day.
-    const to = f.to ? new Date(new Date(f.to).getTime() + 86_400_000).toISOString() : undefined;
+    // Picked days are local days: from 00:00 local; "to" is exclusive in the API, so the
+    // next local midnight keeps the whole picked day (through 23:59:59.999).
+    const dayStart = (d: string, plus = 0) => {
+      const x = new Date(`${d}T00:00:00`);
+      x.setDate(x.getDate() + plus);
+      return x.toISOString();
+    };
     ok(
       listEdiMessages({
         direction: (f.direction || undefined) as EDIDirection | undefined,
         kind: (f.kind || undefined) as EDIKind | undefined,
         status: (f.status || undefined) as EDIStatus | undefined,
         lineId: f.lineId || undefined,
-        from: f.from ? new Date(f.from).toISOString() : undefined,
-        to,
-        limit: 200,
+        from: f.from ? dayStart(f.from) : undefined,
+        to: f.to ? dayStart(f.to, 1) : undefined,
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE,
       }),
     ).then(
-      (r) => setRows(r.messages),
+      (r) => {
+        setRows(r.messages);
+        setTotal(r.total);
+        setMsg("");
+      },
       (e) => setMsg(errText(e, t("networkError"))),
     );
-  }, [f]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [f, page]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
 
   async function send() {
@@ -172,7 +217,10 @@ function Messages({ lines, depots }: { lines: LineEDI[]; depots: Depot[] }) {
       setMsg(errText(e, t("networkError")));
     }
   }
-  const pick = (k: keyof typeof f, v: string) => setF({ ...f, [k]: v });
+  const pick = (k: keyof typeof f, v: string) => {
+    setF({ ...f, [k]: v });
+    setPage(1);
+  };
   const lineCode = (id: string | null) => lines.find((l) => l.lineId === id)?.code ?? "";
 
   return (
@@ -279,7 +327,9 @@ function Messages({ lines, depots }: { lines: LineEDI[]; depots: Depot[] }) {
               <td aria-label={m.direction === "in" ? t("ediDirIn") : t("ediDirOut")}>{m.direction === "in" ? "←" : "→"}</td>
               <td>{t(`ediKind_${m.kind}` as Key)}</td>
               <td>{lineCode(m.lineId)}</td>
-              <td className="mono">{(m.direction === "in" ? m.orderRef : m.containerNumber) || m.fileName || m.messageRef || m.controlRef}</td>
+              <td className="mono">
+                {(m.direction === "in" || m.kind === EDIKind.aperak ? m.orderRef : m.containerNumber) || m.fileName || m.messageRef || m.controlRef}
+              </td>
               <td>
                 <Chip status={m.status} />
               </td>
@@ -289,6 +339,19 @@ function Messages({ lines, depots }: { lines: LineEDI[]; depots: Depot[] }) {
         </tbody>
       </table>
       {rows.length === 0 && <p className="muted">{t("ediNone")}</p>}
+      {total > PER_PAGE && (
+        <div className="pager">
+          <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            {t("prev")}
+          </button>
+          <span>
+            {page} / {Math.ceil(total / PER_PAGE)}
+          </span>
+          <button type="button" disabled={page * PER_PAGE >= total} onClick={() => setPage(page + 1)}>
+            {t("next")}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -302,11 +365,9 @@ export function EDI() {
   const reload = useCallback(() => {
     ok(getEdiStatus()).then(setInfo, () => undefined);
     ok(listLineEdi()).then(setLines, () => undefined);
-  }, []);
-  useEffect(() => {
-    reload();
     ok(listDepots()).then(setDepots, () => undefined);
-  }, [reload]);
+  }, []);
+  useEffect(reload, [reload]);
 
   return (
     <div className="page">
@@ -331,7 +392,7 @@ export function EDI() {
           {t("ediTabLines")}
         </button>
       </div>
-      {tab === "messages" ? <Messages lines={lines} depots={depots} /> : <EDILines info={info} lines={lines} reload={reload} />}
+      {tab === "messages" ? <Messages lines={lines} depots={depots} /> : <EDILines info={info} lines={lines} depots={depots} reload={reload} />}
     </div>
   );
 }

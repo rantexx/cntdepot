@@ -95,7 +95,8 @@ WHERE m.company_id = @company_id AND m.id = @id;
 SELECT location, description FROM damages WHERE company_id = @company_id AND move_id = @move_id ORDER BY id;
 
 -- The oldest due message to send, never ahead of an earlier unsent message
--- of the same move (spec 5.4: the order per container is kept). A report is
+-- of the same move to the same line (spec 5.4: the order per container is kept;
+-- a failure to the old line after a line correction does not hold the new line). A report is
 -- sent like the rest, to the line's ReportTo. ref is the subject's container number or reference.
 -- name: ClaimDue :one
 SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at, m.report_day,
@@ -109,7 +110,7 @@ LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.
 WHERE m.company_id = @company_id AND m.direction = 'out' AND m.status = 'pending'
   AND m.next_attempt_at <= @now
   AND NOT EXISTS (SELECT 1 FROM edi_messages e WHERE e.company_id = m.company_id AND e.move_id = m.move_id
-      AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
+      AND e.line_id IS NOT DISTINCT FROM m.line_id AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
 ORDER BY m.created_at, m.id
 LIMIT 1
 FOR UPDATE OF m SKIP LOCKED;
@@ -179,7 +180,8 @@ WHERE company_id = @company_id
 
 -- name: CountProblems :one
 SELECT count(*) FROM edi_messages
-WHERE company_id = @company_id AND status IN ('failed', 'rejected', 'unmatched', 'error') AND created_at >= @since;
+WHERE company_id = @company_id AND status IN ('failed', 'rejected', 'unmatched', 'error') AND created_at >= @since
+  AND (sqlc.narg('depots')::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY(sqlc.narg('depots')::text[]));
 
 -- Every line of the company with its EDI row; a line without one is "off".
 -- name: AllLines :many

@@ -68,15 +68,17 @@ type send struct{ line, function string }
 // plan says what an event sends (spec 5.8.3). prev is the line of the move's
 // latest CODECO, "" when there is none or it was a cancel; line is the move's
 // line now; renamed says the number differs from the one prev sent; eligible
-// says the line takes this move's CODECO. A new line or number cancels prev.
+// says the line takes this move's CODECO. A new line or number cancels prev,
+// and so does a correction after which the move no longer qualifies (an
+// empties-only line's container corrected to full).
 func plan(kind, prev, line string, renamed, eligible bool, onEDI func(string) bool) []send {
 	var out []send
 	changed := prev != line || renamed
-	if prev != "" && (kind == "move.voided" || (kind == "move.corrected" && changed)) && onEDI(prev) {
+	if prev != "" && (kind == "move.voided" || (kind == "move.corrected" && (changed || !eligible))) && onEDI(prev) {
 		out = append(out, send{prev, "1"})
 	}
 	switch {
-	case kind == "move.corrected" && prev != "" && !changed && onEDI(line): // off EDI: eligible is false too, so nothing
+	case kind == "move.corrected" && prev != "" && !changed && eligible:
 		out = append(out, send{line, "5"})
 	case kind != "move.voided" && eligible:
 		out = append(out, send{line, "9"})

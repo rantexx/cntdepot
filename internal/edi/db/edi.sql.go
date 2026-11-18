@@ -62,7 +62,7 @@ LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.
 WHERE m.company_id = $1 AND m.direction = 'out' AND m.status = 'pending'
   AND m.next_attempt_at <= $2
   AND NOT EXISTS (SELECT 1 FROM edi_messages e WHERE e.company_id = m.company_id AND e.move_id = m.move_id
-      AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
+      AND e.line_id IS NOT DISTINCT FROM m.line_id AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
 ORDER BY m.created_at, m.id
 LIMIT 1
 FOR UPDATE OF m SKIP LOCKED
@@ -87,7 +87,8 @@ type ClaimDueRow struct {
 }
 
 // The oldest due message to send, never ahead of an earlier unsent message
-// of the same move (spec 5.4: the order per container is kept). A report is
+// of the same move to the same line (spec 5.4: the order per container is kept;
+// a failure to the old line after a line correction does not hold the new line). A report is
 // sent like the rest, to the line's ReportTo. ref is the subject's container number or reference.
 func (q *Queries) ClaimDue(ctx context.Context, arg ClaimDueParams) (ClaimDueRow, error) {
 	row := q.db.QueryRow(ctx, claimDue, arg.CompanyID, arg.Now)
@@ -212,15 +213,17 @@ func (q *Queries) CountMessages(ctx context.Context, arg CountMessagesParams) (i
 const countProblems = `-- name: CountProblems :one
 SELECT count(*) FROM edi_messages
 WHERE company_id = $1 AND status IN ('failed', 'rejected', 'unmatched', 'error') AND created_at >= $2
+  AND ($3::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY($3::text[]))
 `
 
 type CountProblemsParams struct {
 	CompanyID string
 	Since     time.Time
+	Depots    []string
 }
 
 func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countProblems, arg.CompanyID, arg.Since)
+	row := q.db.QueryRow(ctx, countProblems, arg.CompanyID, arg.Since, arg.Depots)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

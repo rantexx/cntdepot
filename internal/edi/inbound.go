@@ -237,7 +237,9 @@ func (s *Service) process(ctx context.Context, m Message, data []byte, h how) (M
 		if i == 0 {
 			mine = append(slices.Clip(problems), mine...) // the file's own warnings go with the first answer
 		}
-		answers = append(answers, edifact.Answer{Accepted: !hasError(mine), RefersTo: []string{msg.Ref}, Problems: mine})
+		if !a.refused { // a later full Process answers it
+			answers = append(answers, edifact.Answer{Accepted: !hasError(mine), RefersTo: []string{msg.Ref}, Problems: mine})
+		}
 		for _, p := range a.problems {
 			if len(ic.Messages) > 1 {
 				p.Text = "message " + msg.Ref + ": " + p.Text
@@ -369,6 +371,7 @@ func (s *Service) answered(ctx context.Context, lineID string, ic edifact.Interc
 type applied struct {
 	orderID, depotID, function string
 	problems                   []edifact.Problem
+	refused                    bool // only the member's depot limit stopped it: the line gets no answer
 }
 
 // order applies one COPARN message to the line's EDI order (spec 5.3, 5.8).
@@ -428,7 +431,7 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 		if i := slices.IndexFunc(ds, func(d edidb.DepotLocationsRow) bool { return d.ID == depot }); i >= 0 {
 			name = ds[i].Name
 		}
-		a.orderID, a.depotID = "", ""
+		a.orderID, a.depotID, a.refused = "", "", true
 		add("E-DEPOT", "depot %s is outside your depots", name)
 		return true
 	}

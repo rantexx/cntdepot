@@ -43,10 +43,9 @@ test("COPARN upload becomes an order and a gate-out sends CODECO", async ({ page
   await expect(page.getByText("COPARN:D:00B")).toBeVisible();
   await shot(page, "2-detail");
 
-  // The reference column shows the order for an in row; the depot location field shows the saved code.
+  // The reference column shows the order for an in row and for our APERAK answering it.
   await expect(page.locator("tbody tr", { hasText: "COPARN" }).first()).toContainText("RLS4471");
-  await page.goto("/#/settings");
-  await expect(page.getByLabel("Depot EDI location code")).toHaveValue("TRMER");
+  await expect(page.locator("tbody tr", { hasText: "APERAK" }).first()).toContainText("RLS4471");
 
   // 3. The order is listed.
   await page.goto("/#/orders");
@@ -84,6 +83,16 @@ test("COPARN upload becomes an order and a gate-out sends CODECO", async ({ page
   // 7. The Lines tab.
   await page.getByRole("button", { name: "Lines" }).click();
   await expect(page.getByLabel("Our EDI party id")).toHaveValue("DEPOTX");
+  // The depot's EDI location is on the Lines tab: prefilled with the saved code, sent when changed.
+  const loc = page.getByLabel(/Depot EDI location code/).first();
+  await expect(loc).toHaveValue("TRMER");
+  await loc.fill("trist");
+  const locForm = page.locator("form", { has: loc });
+  await locForm.getByRole("button", { name: "Save" }).click();
+  await expect(locForm.getByRole("status")).toHaveText("Saved");
+  await expect(loc).toHaveValue("TRIST");
+  const depots = (await (await api.get("/api/depots")).json()) as { id: string; ediLocation: string }[];
+  expect(depots.find((d) => d.id === "own-depot")?.ediLocation).toBe("TRIST");
   await page.getByRole("button", { name: /E2E/ }).first().click();
   await shot(page, "3-lines");
 

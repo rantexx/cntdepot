@@ -76,7 +76,7 @@ func TestNoMovesNoMail(t *testing.T) {
 	o.at = time.Date(2026, 11, 18, 6, 1, 0, 0, time.UTC)
 	o.tick()
 	o.tick()
-	if len(o.sent()) != 0 || o.reports("ignored") != 1 {
+	if len(o.sent()) != 0 || o.reports("ignored") != 3 { // the 3 days looked back
 		t.Fatalf("sent %d, ignored rows %d", len(o.sent()), o.reports("ignored"))
 	}
 }
@@ -99,5 +99,27 @@ func TestReportSendFailureIsRetried(t *testing.T) {
 	o.tick()
 	if len(o.sent()) != 1 || o.reports("sent") != 1 || o.sent()[0].Attachments[0].Name != "MSC-d1-2026-11-17.csv" {
 		t.Fatalf("sent = %+v", o.sent())
+	}
+}
+
+// A worker down over a report time sends the missed day late, once, oldest first.
+func TestMissedReportDayIsSentLate(t *testing.T) {
+	o := reportFx(t, "UTC")
+	o.moveAt(cn("MSCU123457"), "2026-11-17T10:00:00Z")
+	o.moveAt(cn("MSCU123458"), "2026-11-18T10:00:00Z")
+	o.at = time.Date(2026, 11, 19, 7, 0, 0, 0, time.UTC) // no tick on the 18th
+	o.tick()
+	o.tick()
+	sent := o.sent()
+	if len(sent) != 2 || sent[0].Subject != "MSC gate moves D1 2026-11-17" || sent[1].Subject != "MSC gate moves D1 2026-11-18" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestCSVCellsCannotBeFormulas(t *testing.T) {
+	for in, want := range map[string]string{"=1+2": "'=1+2", "+1": "'+1", "-1": "'-1", "@SUM": "'@SUM", "\tx": "'\tx", "\rx": "'\rx", "MSCU1": "MSCU1", "": ""} {
+		if got := csvCell(in); got != want {
+			t.Errorf("csvCell(%q) = %q; want %q", in, got, want)
+		}
 	}
 }

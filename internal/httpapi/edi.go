@@ -237,7 +237,7 @@ func (s *Server) TestLineEdi(ctx context.Context, req api.TestLineEdiRequestObje
 }
 
 func (s *Server) GetEdiStatus(ctx context.Context, _ api.GetEdiStatusRequestObject) (api.GetEdiStatusResponseObject, error) {
-	st, err := s.opts.EDI.Status(ctx)
+	st, err := s.opts.EDI.Status(ctx, allowedDepots(ctx))
 	if err != nil {
 		return nil, err
 	}

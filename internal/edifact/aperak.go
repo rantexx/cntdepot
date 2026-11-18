@@ -44,23 +44,34 @@ func APERAK(ref string, a Answer) Message {
 	return Message{Ref: ref, Type: typeAPERAK, Segments: segs}
 }
 
-// ReadAPERAK reads an answer. It is a rejection when it has any ERC segment;
-// each ERC's code and the text of the FTX that follows it are a problem.
+// ReadAPERAK reads an answer. It is a rejection when BGM's function is 27 or
+// it has any ERC segment; each ERC's code and the text of the FTX that follows
+// it are a problem. A rejection without ERC takes its FTX texts as problems.
 // RefersTo holds the RFF+ACW references before the first ERC.
 func ReadAPERAK(m Message) Answer {
 	a := Answer{Accepted: true}
+	erc := false
+	var texts []Problem
 	for _, s := range m.Segments {
 		switch {
-		case s.Tag == "ERC":
+		case s.Tag == "BGM" && s.Get(2, 0) == funcReject:
 			a.Accepted = false
+		case s.Tag == "ERC":
+			a.Accepted, erc = false, true
 			a.Problems = append(a.Problems, Problem{Code: s.Get(0, 0)})
-		case s.Tag == "RFF" && a.Accepted && s.Get(0, 0) == rffPrevious:
+		case s.Tag == "RFF" && !erc && s.Get(0, 0) == rffPrevious:
 			a.RefersTo = append(a.RefersTo, s.Get(0, 1))
-		case s.Tag == "FTX" && !a.Accepted:
-			if p := &a.Problems[len(a.Problems)-1]; p.Text == "" && len(s.Elements) > 3 {
-				p.Text = strings.Join(s.Elements[3], " ") // C108: up to five lines of text
+		case s.Tag == "FTX" && len(s.Elements) > 3:
+			text := strings.Join(s.Elements[3], " ") // C108: up to five lines of text
+			if !erc {
+				texts = append(texts, Problem{Text: text})
+			} else if p := &a.Problems[len(a.Problems)-1]; p.Text == "" {
+				p.Text = text
 			}
 		}
+	}
+	if !a.Accepted && !erc {
+		a.Problems = texts
 	}
 	return a
 }

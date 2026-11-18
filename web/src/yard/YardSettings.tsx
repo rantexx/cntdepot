@@ -1,65 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { errText } from "../components";
-import { useSession } from "../session";
-import { getYardSettings, listDepots, setDepotEdiLocation, setYardSettings, YardSettingsRefusalMode, type YardSettings as Settings } from "../gen/api";
+import { getYardSettings, setYardSettings, YardSettingsRefusalMode, type YardSettings as Settings } from "../gen/api";
 import { ok } from "../hubApi";
 import { useT, type Key } from "../i18n";
-
-// The depot's EDI location code, prefilled from the depot; it is sent only when changed.
-function EdiLocation() {
-  const { t } = useT();
-  const { current } = useSession();
-  const [loc, setLoc] = useState<string | null>(null); // null until the depot is loaded
-  const [was, setWas] = useState("");
-  useEffect(() => {
-    ok(listDepots()).then(
-      (ds) => {
-        const v = ds.find((d) => d.id === current?.depotId)?.ediLocation ?? "";
-        setWas(v);
-        setLoc(v);
-      },
-      (e) => setMsg(errText(e, t("networkError"))),
-    );
-  }, [current?.depotId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [msg, setMsg] = useState("");
-  const [saved, setSaved] = useState(false);
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setMsg("");
-    setSaved(false);
-    const next = (loc ?? "").trim();
-    try {
-      if (next !== was) await ok(setDepotEdiLocation(current?.depotId ?? "", { location: next }));
-      setWas(next.toUpperCase());
-      setLoc(next.toUpperCase());
-      setSaved(true);
-    } catch (err) {
-      setMsg(errText(err, t("networkError")));
-    }
-  }
-  return (
-    <form className="card" onSubmit={(e) => void save(e)}>
-      <label>
-        {t("ediLocation")}
-        <input value={loc ?? ""} disabled={loc === null} maxLength={25} onChange={(e) => setLoc(e.target.value)} />
-      </label>
-      <p className="muted small">{t("ediLocationHint")}</p>
-      <button type="submit" className="primary">
-        {t("save")}
-      </button>
-      {saved && (
-        <p className="ok-text" role="status">
-          {t("saved")}
-        </p>
-      )}
-      {msg && (
-        <p className="error" role="alert">
-          {msg}
-        </p>
-      )}
-    </form>
-  );
-}
 
 // The owner's yard rules: what the gate does with a refused truck, walk-ins and how long an EIR link lives.
 export function YardSettings() {
@@ -129,7 +72,6 @@ export function YardSettings() {
           </p>
         )}
       </form>
-      <EdiLocation />
     </div>
   );
 }
