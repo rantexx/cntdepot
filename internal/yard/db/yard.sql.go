@@ -2290,6 +2290,25 @@ func (q *Queries) SetOrderStatus(ctx context.Context, arg SetOrderStatusParams) 
 	return result.RowsAffected(), nil
 }
 
+const setOrderValidUntil = `-- name: SetOrderValidUntil :execrows
+UPDATE release_orders SET valid_until = $1
+WHERE company_id = $2 AND id = $3
+`
+
+type SetOrderValidUntilParams struct {
+	ValidUntil *time.Time
+	CompanyID  string
+	ID         string
+}
+
+func (q *Queries) SetOrderValidUntil(ctx context.Context, arg SetOrderValidUntilParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setOrderValidUntil, arg.ValidUntil, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setVisitCloseReason = `-- name: SetVisitCloseReason :exec
 UPDATE visits SET close_reason = $1 WHERE company_id = $2 AND id = $3 AND status = 'out'
 `

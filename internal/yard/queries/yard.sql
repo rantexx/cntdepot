@@ -422,3 +422,7 @@ WHERE company_id = @company_id AND order_id = @order_id AND id = @id;
 
 -- name: DeleteOrderItem :execrows
 DELETE FROM order_items WHERE company_id = @company_id AND order_id = @order_id AND id = @id;
+
+-- name: SetOrderValidUntil :execrows
+UPDATE release_orders SET valid_until = @valid_until
+WHERE company_id = @company_id AND id = @id;

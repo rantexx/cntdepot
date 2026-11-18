@@ -7,7 +7,38 @@ package db
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 )
+
+const depotLocations = `-- name: DepotLocations :many
+SELECT id, edi_location FROM depots WHERE company_id = $1 ORDER BY id
+`
+
+type DepotLocationsRow struct {
+	ID          string
+	EdiLocation string
+}
+
+func (q *Queries) DepotLocations(ctx context.Context, companyID string) ([]DepotLocationsRow, error) {
+	rows, err := q.db.Query(ctx, depotLocations, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DepotLocationsRow
+	for rows.Next() {
+		var i DepotLocationsRow
+		if err := rows.Scan(&i.ID, &i.EdiLocation); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const eDICompanies = `-- name: EDICompanies :many
 SELECT edi_companies()::text AS company_id
@@ -50,6 +81,47 @@ func (q *Queries) GetCompanyEDI(ctx context.Context, companyID string) (CompanyE
 	return i, err
 }
 
+const getMessage = `-- name: GetMessage :one
+SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, problems, tries, next_attempt_at, report_day, created_at, sent_at FROM edi_messages WHERE company_id = $1 AND id = $2
+`
+
+type GetMessageParams struct {
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) GetMessage(ctx context.Context, arg GetMessageParams) (EdiMessage, error) {
+	row := q.db.QueryRow(ctx, getMessage, arg.CompanyID, arg.ID)
+	var i EdiMessage
+	err := row.Scan(
+		&i.CompanyID,
+		&i.ID,
+		&i.Direction,
+		&i.Kind,
+		&i.Status,
+		&i.LineID,
+		&i.DepotID,
+		&i.MoveID,
+		&i.OrderID,
+		&i.EventID,
+		&i.AnswerOf,
+		&i.Function,
+		&i.ControlRef,
+		&i.MessageRef,
+		&i.ContentHash,
+		&i.BlobDigest,
+		&i.FileName,
+		&i.Sender,
+		&i.Problems,
+		&i.Tries,
+		&i.NextAttemptAt,
+		&i.ReportDay,
+		&i.CreatedAt,
+		&i.SentAt,
+	)
+	return i, err
+}
+
 const inboundCompany = `-- name: InboundCompany :one
 SELECT COALESCE(edi_inbound_company($1::text), '')::text AS company_id
 `
@@ -73,6 +145,206 @@ type InsertCompanyEDIParams struct {
 
 func (q *Queries) InsertCompanyEDI(ctx context.Context, arg InsertCompanyEDIParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertCompanyEDI, arg.CompanyID, arg.InboundToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertMessage = `-- name: InsertMessage :exec
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, answer_of, function,
+    control_ref, message_ref, content_hash, blob_digest, file_name, sender, problems, next_attempt_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+    $10, $11, $12, $13, $14, $15, $16, $17)
+`
+
+type InsertMessageParams struct {
+	CompanyID     string
+	ID            string
+	Direction     string
+	Kind          string
+	Status        string
+	LineID        *string
+	DepotID       *string
+	AnswerOf      *string
+	Function      string
+	ControlRef    string
+	MessageRef    string
+	ContentHash   string
+	BlobDigest    string
+	FileName      string
+	Sender        string
+	Problems      json.RawMessage
+	NextAttemptAt *time.Time
+}
+
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) error {
+	_, err := q.db.Exec(ctx, insertMessage,
+		arg.CompanyID,
+		arg.ID,
+		arg.Direction,
+		arg.Kind,
+		arg.Status,
+		arg.LineID,
+		arg.DepotID,
+		arg.AnswerOf,
+		arg.Function,
+		arg.ControlRef,
+		arg.MessageRef,
+		arg.ContentHash,
+		arg.BlobDigest,
+		arg.FileName,
+		arg.Sender,
+		arg.Problems,
+		arg.NextAttemptAt,
+	)
+	return err
+}
+
+const listLineEDI = `-- name: ListLineEDI :many
+SELECT company_id, line_id, mode, profile, updated_at FROM line_edi WHERE company_id = $1 ORDER BY line_id
+`
+
+func (q *Queries) ListLineEDI(ctx context.Context, companyID string) ([]LineEdi, error) {
+	rows, err := q.db.Query(ctx, listLineEDI, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LineEdi
+	for rows.Next() {
+		var i LineEdi
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.LineID,
+			&i.Mode,
+			&i.Profile,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markAnswered = `-- name: MarkAnswered :many
+UPDATE edi_messages SET status = $1, problems = $2
+WHERE company_id = $3 AND direction = 'out' AND line_id = $4
+  AND (message_ref = ANY($5::text[]) OR control_ref = ANY($5::text[]) OR move_id = ANY($5::text[]))
+RETURNING id
+`
+
+type MarkAnsweredParams struct {
+	Status    string
+	Problems  json.RawMessage
+	CompanyID string
+	LineID    *string
+	Refs      []string
+}
+
+// An APERAK from a line answers our messages to it by message or interchange
+// reference, or by the CODECO document number (the move id).
+func (q *Queries) MarkAnswered(ctx context.Context, arg MarkAnsweredParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, markAnswered,
+		arg.Status,
+		arg.Problems,
+		arg.CompanyID,
+		arg.LineID,
+		arg.Refs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const repeatsOf = `-- name: RepeatsOf :one
+SELECT count(*) FILTER (WHERE content_hash = $1) AS same,
+       count(*) FILTER (WHERE content_hash <> $1) AS other
+FROM edi_messages
+WHERE company_id = $2 AND direction = 'in' AND line_id = $3 AND control_ref = $4
+  AND id <> $5 AND status <> 'ignored'
+`
+
+type RepeatsOfParams struct {
+	ContentHash string
+	CompanyID   string
+	LineID      *string
+	ControlRef  string
+	ID          string
+}
+
+type RepeatsOfRow struct {
+	Same  int64
+	Other int64
+}
+
+// Earlier files of a line with the same control reference: with the same
+// content (a repeat) and with other content.
+func (q *Queries) RepeatsOf(ctx context.Context, arg RepeatsOfParams) (RepeatsOfRow, error) {
+	row := q.db.QueryRow(ctx, repeatsOf,
+		arg.ContentHash,
+		arg.CompanyID,
+		arg.LineID,
+		arg.ControlRef,
+		arg.ID,
+	)
+	var i RepeatsOfRow
+	err := row.Scan(&i.Same, &i.Other)
+	return i, err
+}
+
+const setInResult = `-- name: SetInResult :execrows
+UPDATE edi_messages SET kind = $1, status = $2, line_id = $3, depot_id = $4,
+    order_id = $5, function = $6, control_ref = $7, message_ref = $8,
+    problems = $9
+WHERE company_id = $10 AND id = $11
+`
+
+type SetInResultParams struct {
+	Kind       string
+	Status     string
+	LineID     *string
+	DepotID    *string
+	OrderID    *string
+	Function   string
+	ControlRef string
+	MessageRef string
+	Problems   json.RawMessage
+	CompanyID  string
+	ID         string
+}
+
+func (q *Queries) SetInResult(ctx context.Context, arg SetInResultParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setInResult,
+		arg.Kind,
+		arg.Status,
+		arg.LineID,
+		arg.DepotID,
+		arg.OrderID,
+		arg.Function,
+		arg.ControlRef,
+		arg.MessageRef,
+		arg.Problems,
+		arg.CompanyID,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -29,7 +29,9 @@ type Order struct {
 	Items                               []Item
 }
 
-// Problem is one thing wrong with a message. Codes starting with E_ are errors.
+// Problem is one thing wrong with a message. Codes are at most 8 letters,
+// digits and hyphens (UNOA, ERC an..8); codes starting with E are errors,
+// with W warnings.
 type Problem struct{ Code, Text string }
 
 // ReadCOPARN reads one COPARN message. Problems name the segment position,
@@ -43,6 +45,7 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 		item     *Item
 		itemPos  int
 		locPos   int
+		hasBGM   bool
 	)
 	add := func(pos int, s Segment, code, format string, args ...any) {
 		problems = append(problems, Problem{code, fmt.Sprintf("segment %d (%s): ", pos, s.Tag) + fmt.Sprintf(format, args...)})
@@ -54,19 +57,20 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 		}
 	}
 	if !strings.HasPrefix(m.Type, "COPARN:") {
-		problems = append(problems, Problem{"E_TYPE", fmt.Sprintf("message type %q is not COPARN", m.Type)})
+		problems = append(problems, Problem{"E-TYPE", fmt.Sprintf("message type %q is not COPARN", m.Type)})
 	}
 	for k, s := range m.Segments {
 		pos := k + 2
 		switch s.Tag {
 		case "BGM":
+			hasBGM = true
 			doc := s.Get(0, 0)
 			if o.Kind = coparnKind[doc]; o.Kind == "" {
-				add(pos, s, "E_DOC", "document code %q is not a release or redelivery order", doc)
+				add(pos, s, "E-DOC", "document code %q is not a release or redelivery order", doc)
 			}
 			docID, o.Function = s.Get(1, 0), s.Get(2, 0)
 			if o.Function != funcOriginal && o.Function != funcReplace && o.Function != funcCancel {
-				add(pos, s, "E_FUNC", "message function %q is not 9, 5 or 1", o.Function)
+				add(pos, s, "E-FUNC", "message function %q is not 9, 5 or 1", o.Function)
 			}
 		case "RFF":
 			if item == nil && refs[s.Get(0, 0)] == "" {
@@ -78,7 +82,7 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 			}
 			t, err := readDate(s.Get(0, 1), s.Get(0, 2))
 			if err != nil {
-				add(pos, s, "E_DATE", "%v", err)
+				add(pos, s, "E-DATE", "%v", err)
 				continue
 			}
 			o.ValidUntil = &t
@@ -86,21 +90,21 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 			endItem()
 			item, itemPos = &Item{Number: s.Get(1, 0), TypeCode: s.Get(2, 0), Quantity: 1}, pos
 			if q := s.Get(0, 0); q != "CN" {
-				add(pos, s, "E_EQUIP", "equipment qualifier %q is not CN (container)", q)
+				add(pos, s, "E-EQUIP", "equipment qualifier %q is not CN (container)", q)
 			}
 			if item.Number == "" && item.TypeCode == "" {
-				add(pos, s, "E_EQUIP", "equipment has neither a container number nor a type")
+				add(pos, s, "E-EQUIP", "equipment has neither a container number nor a type")
 			}
 			if item.Number != "" {
 				if v := iso6346.Validate(item.Number); !v.Valid {
-					add(pos, s, "E_DIGIT", "container number %s fails the ISO 6346 check digit", item.Number)
+					add(pos, s, "E-DIGIT", "container number %s fails the ISO 6346 check digit", item.Number)
 				} else {
 					item.Number = v.Normalized
 				}
 			}
 			fe := s.Get(5, 0)
 			if item.FullEmpty = fullEmptyCode[fe]; item.FullEmpty == "" {
-				add(pos, s, "E_FE", "full or empty indicator %q is not 4 or 5", fe)
+				add(pos, s, "E-FE", "full or empty indicator %q is not 4 or 5", fe)
 			}
 		case "EQN":
 			if item == nil {
@@ -109,9 +113,9 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 			q, err := strconv.Atoi(s.Get(0, 0))
 			switch {
 			case err != nil || q < 1:
-				add(pos, s, "E_QTY", "quantity %q is not a positive number", s.Get(0, 0))
+				add(pos, s, "E-QTY", "quantity %q is not a positive number", s.Get(0, 0))
 			case item.Number != "" && q != 1:
-				add(pos, s, "E_QTY", "a named container (segment %d) has quantity %d", itemPos, q)
+				add(pos, s, "E-QTY", "a named container (segment %d) has quantity %d", itemPos, q)
 			default:
 				item.Quantity = q
 			}
@@ -124,13 +128,16 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 				loc += ":" + f
 			}
 			if o.Location != "" && o.Location != loc {
-				add(pos, s, "E_LOC", "location %s differs from %s in segment %d", loc, o.Location, locPos)
+				add(pos, s, "E-LOC", "location %s differs from %s in segment %d", loc, o.Location, locPos)
 				continue
 			}
 			o.Location, locPos = loc, pos
 		}
 	}
 	endItem()
+	if !hasBGM {
+		problems = append(problems, Problem{"E-BGM", "the message has no BGM segment"})
+	}
 	for _, q := range orderRefQualifiers {
 		if o.Reference = refs[q]; o.Reference != "" {
 			break
@@ -140,10 +147,10 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 		o.Reference = docID
 	}
 	if o.Reference == "" {
-		problems = append(problems, Problem{"E_REF", "the message has no order reference (RFF or BGM)"})
+		problems = append(problems, Problem{"E-REF", "the message has no order reference (RFF or BGM)"})
 	}
 	if len(o.Items) == 0 && o.Function != funcCancel {
-		problems = append(problems, Problem{"E_EQUIP", "the message has no equipment (EQD)"})
+		problems = append(problems, Problem{"E-EQUIP", "the message has no equipment (EQD)"})
 	}
 	return o, problems
 }

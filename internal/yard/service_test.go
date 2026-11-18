@@ -1036,3 +1036,97 @@ func TestCorrectionToBlockedNumberIsStoredAndFlagged(t *testing.T) {
 		t.Fatalf("open flags = %+v %v; want override:blocked", flags, err)
 	}
 }
+
+func TestFindEDIOrderAndSource(t *testing.T) {
+	x := newFixture(t)
+	if _, err := x.svc.CreateOrder(ctxA, Order{Kind: "release", Reference: "R1", LineID: ptr("lA")}, []OrderItem{{TypeCode: ptr("22G1")}}, "office"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := x.svc.FindEDIOrder(ctxA, "lA", "release", "R1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a manual order found as EDI: %v", err)
+	}
+	if err := db.InCompany(ctxA, x.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctxA, `INSERT INTO edi_messages (company_id, id, direction, kind, status) VALUES ('A', 'm1', 'in', 'coparn', 'received')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := x.svc.CreateOrder(ctxA, Order{Kind: "release", Reference: "R1", LineID: ptr("lA"), Source: "edi", EdiMessageID: ptr("m1")},
+		[]OrderItem{{Number: ptr(numA)}}, "edi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, items, err := x.svc.FindEDIOrder(ctxD2, "lA", "release", "R1") // any depot of the company
+	if err != nil || o.ID != id || o.Source != "edi" || *o.EdiMessageID != "m1" || len(items) != 1 || *items[0].Number != numA {
+		t.Fatalf("FindEDIOrder = %+v %+v %v", o, items, err)
+	}
+}
+
+// Spec 5.8 rule 2: a replacement never undoes gate history.
+func TestReplaceOrderRules(t *testing.T) {
+	x := newFixture(t)
+	id, items := x.order(ctxA, "release",
+		OrderItem{Number: ptr(numA)}, OrderItem{Number: ptr(numB)},
+		OrderItem{TypeCode: ptr("22G1"), Quantity: 3}, OrderItem{TypeCode: ptr("45G1"), Quantity: 2})
+	use := func(number, typeCode string, n int64) {
+		t.Helper()
+		for _, it := range items {
+			if deref(it.Number) == number && deref(it.TypeCode) == typeCode {
+				if err := x.st.UseItem(ctxA, it.ID, n); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatalf("no item %s%s", number, typeCode)
+	}
+	use(numA, "", 1)
+	use("", "22G1", 2)
+	until := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC) // valid_until is a date
+	// Drops used numA (kept), keeps numB, lowers 22G1 below used (kept at 2),
+	// drops unused 45G1 (deleted), adds 42G1 F x4.
+	kept, err := x.svc.ReplaceOrder(ctxA, id, Order{ValidUntil: &until}, []OrderItem{
+		{Number: ptr(numB)}, {TypeCode: ptr("22g1"), Quantity: 1}, {TypeCode: ptr("42G1"), FullEmpty: "F", Quantity: 4},
+	}, "edi")
+	if err != nil || !slices.Equal(kept, []string{numA + " already gated", "22G1 E: 2 used, kept 2"}) {
+		t.Fatalf("kept = %q, %v", kept, err)
+	}
+	o, got, err := x.st.GetOrder(ctxA, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shape []string
+	for _, it := range got {
+		shape = append(shape, fmt.Sprintf("%s%s %s %d/%d", deref(it.Number), deref(it.TypeCode), it.FullEmpty, it.Used, it.Quantity))
+	}
+	slices.Sort(shape)
+	if want := []string{"22G1 E 2/2", "42G1 F 0/4", numB + " E 0/1", numA + " E 1/1"}; !slices.Equal(shape, want) {
+		t.Fatalf("items = %q, want %q", shape, want)
+	}
+	if o.Status != "open" || o.ValidUntil == nil || !o.ValidUntil.Equal(until) {
+		t.Fatalf("order = %+v", o)
+	}
+	var payload string
+	if err := db.InCompany(ctxA, x.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctxA, `SELECT payload::text FROM events WHERE stream = $1 AND kind = 'order.replaced'`, id).Scan(&payload)
+	}); err != nil || !strings.Contains(payload, "already gated") {
+		t.Fatalf("event payload %q, %v", payload, err)
+	}
+
+	// Only used items remain: the order is done.
+	if _, err := x.svc.ReplaceOrder(ctxA, id, Order{}, []OrderItem{{Number: ptr(numA)}, {TypeCode: ptr("22G1"), Quantity: 2}}, "edi"); err != nil {
+		t.Fatal(err)
+	}
+	if o, got, _ := x.st.GetOrder(ctxA, id); o.Status != "done" || len(got) != 2 || o.ValidUntil != nil {
+		t.Fatalf("order = %+v, items %+v", o, got)
+	}
+
+	// A cancelled order is closed to replacements.
+	cancelled, _ := x.order(ctxA, "redelivery", OrderItem{TypeCode: ptr("22G1")})
+	if err := x.svc.CancelOrder(ctxA, cancelled, "office"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.svc.ReplaceOrder(ctxA, cancelled, Order{}, []OrderItem{{TypeCode: ptr("22G1")}}, "edi"); !errors.Is(err, ErrOrderClosed) {
+		t.Fatalf("replace cancelled = %v", err)
+	}
+}

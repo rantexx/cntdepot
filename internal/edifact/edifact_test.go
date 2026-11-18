@@ -169,10 +169,10 @@ func TestReadCOPARNProblems(t *testing.T) {
 	if len(problems) != 2 {
 		t.Fatalf("problems = %+v", problems)
 	}
-	if p := problems[0]; p.Code != "E_DIGIT" || !strings.Contains(p.Text, "segment 4") || !strings.Contains(p.Text, "MSCU1234565") {
+	if p := problems[0]; p.Code != "E-DIGIT" || !strings.Contains(p.Text, "segment 4") || !strings.Contains(p.Text, "MSCU1234565") {
 		t.Errorf("check digit problem = %+v", p)
 	}
-	if p := problems[1]; p.Code != "E_EQUIP" || !strings.Contains(p.Text, "segment 5") {
+	if p := problems[1]; p.Code != "E-EQUIP" || !strings.Contains(p.Text, "segment 5") {
 		t.Errorf("equipment problem = %+v", p)
 	}
 }
@@ -183,7 +183,18 @@ func TestReadCOPARNUnknownDocument(t *testing.T) {
 		{Tag: "EQD", Elements: [][]string{{"CN"}, {"MSCU1234566"}, nil, nil, nil, {"4"}}},
 	}}
 	_, problems := ReadCOPARN(m)
-	if len(problems) != 1 || problems[0].Code != "E_DOC" {
+	if len(problems) != 1 || problems[0].Code != "E-DOC" {
+		t.Fatalf("problems = %+v", problems)
+	}
+}
+
+func TestReadCOPARNWithoutBGM(t *testing.T) {
+	m := Message{Type: "COPARN:D:00B:UN:SMDG21", Segments: []Segment{
+		{Tag: "RFF", Elements: [][]string{{"ATY", "R1"}}},
+		{Tag: "EQD", Elements: [][]string{{"CN"}, {"MSCU1234566"}, nil, nil, nil, {"4"}}},
+	}}
+	_, problems := ReadCOPARN(m)
+	if len(problems) != 1 || problems[0].Code != "E-BGM" {
 		t.Fatalf("problems = %+v", problems)
 	}
 }
@@ -248,8 +259,8 @@ func TestCODECOTransliteratesAndEscapes(t *testing.T) {
 func TestAPERAKRoundTrip(t *testing.T) {
 	fixNow(t, time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC))
 	a := Answer{RefersTo: []string{"20001"}, Problems: []Problem{
-		{Code: "E_DIGIT", Text: "segment 4 (EQD): bad check digit"},
-		{Code: "E_DEPOT", Text: "no depot for location TRMER"},
+		{Code: "E-DIGIT", Text: "segment 4 (EQD): bad check digit"},
+		{Code: "E-DEPOT", Text: "no depot for location TRMER"},
 	}}
 	i := Interchange{Sender: "DEPOTX", Recipient: "MSC", ControlRef: "9", Messages: []Message{APERAK("9", a)}}
 	got, err := Parse(i.Encode())
@@ -267,7 +278,7 @@ func TestAPERAKRoundTrip(t *testing.T) {
 		t.Fatalf("problems = %+v", r.Problems)
 	}
 
-	ok := ReadAPERAK(APERAK("10", Answer{Accepted: true, RefersTo: []string{"20002"}, Problems: []Problem{{Code: "W_KEPT", Text: "kept"}}}))
+	ok := ReadAPERAK(APERAK("10", Answer{Accepted: true, RefersTo: []string{"20002"}, Problems: []Problem{{Code: "W-KEPT", Text: "kept"}}}))
 	if !ok.Accepted || len(ok.Problems) != 0 || ok.RefersTo[0] != "20002" {
 		t.Fatalf("accepted answer = %+v", ok)
 	}
