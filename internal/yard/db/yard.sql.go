@@ -260,6 +260,24 @@ func (q *Queries) DeleteDamages(ctx context.Context, arg DeleteDamagesParams) er
 	return err
 }
 
+const deleteOrderItem = `-- name: DeleteOrderItem :execrows
+DELETE FROM order_items WHERE company_id = $1 AND order_id = $2 AND id = $3
+`
+
+type DeleteOrderItemParams struct {
+	CompanyID string
+	OrderID   string
+	ID        string
+}
+
+func (q *Queries) DeleteOrderItem(ctx context.Context, arg DeleteOrderItemParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrderItem, arg.CompanyID, arg.OrderID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const depotTimezone = `-- name: DepotTimezone :one
 SELECT timezone FROM depots WHERE company_id = $1 AND id = $2
 `
@@ -347,6 +365,46 @@ func (q *Queries) EIRLookup(ctx context.Context, tokenHash string) (EIRLookupRow
 	row := q.db.QueryRow(ctx, eIRLookup, tokenHash)
 	var i EIRLookupRow
 	err := row.Scan(&i.CompanyID, &i.MoveID)
+	return i, err
+}
+
+const findEDIOrder = `-- name: FindEDIOrder :one
+SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at, source, edi_message_id FROM release_orders
+WHERE company_id = $1 AND line_id = $2 AND kind = $3 AND reference = $4 AND source = 'edi'
+`
+
+type FindEDIOrderParams struct {
+	CompanyID string
+	LineID    *string
+	Kind      string
+	Reference string
+}
+
+// EDI helpers: the edi-origin order of a line, and its in-place changes.
+func (q *Queries) FindEDIOrder(ctx context.Context, arg FindEDIOrderParams) (ReleaseOrder, error) {
+	row := q.db.QueryRow(ctx, findEDIOrder,
+		arg.CompanyID,
+		arg.LineID,
+		arg.Kind,
+		arg.Reference,
+	)
+	var i ReleaseOrder
+	err := row.Scan(
+		&i.CompanyID,
+		&i.ID,
+		&i.DepotID,
+		&i.Kind,
+		&i.Reference,
+		&i.LineID,
+		&i.CustomerID,
+		&i.ValidUntil,
+		&i.Note,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Source,
+		&i.EdiMessageID,
+	)
 	return i, err
 }
 
@@ -718,7 +776,7 @@ func (q *Queries) GetMoveForm(ctx context.Context, arg GetMoveFormParams) (GetMo
 }
 
 const getOrder = `-- name: GetOrder :one
-SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at FROM release_orders
+SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at, source, edi_message_id FROM release_orders
 WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2) AND id = $3
 `
 
@@ -744,6 +802,8 @@ func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (ReleaseOrde
 		&i.Status,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.Source,
+		&i.EdiMessageID,
 	)
 	return i, err
 }
@@ -1492,7 +1552,7 @@ func (q *Queries) ListOrderItems(ctx context.Context, arg ListOrderItemsParams) 
 }
 
 const listOrders = `-- name: ListOrders :many
-SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at FROM release_orders
+SELECT company_id, id, depot_id, kind, reference, line_id, customer_id, valid_until, note, status, created_by, created_at, source, edi_message_id FROM release_orders
 WHERE company_id = $1 AND ($2::text = '' OR depot_id = $2)
   AND ($3::text = '' OR kind = $3) AND ($4::text = '' OR status = $4)
   AND strpos(lower(reference), lower($5::text)) > 0
@@ -1535,6 +1595,8 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Relea
 			&i.Status,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.Source,
+			&i.EdiMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -2069,6 +2131,31 @@ func (q *Queries) SetBlockActive(ctx context.Context, arg SetBlockActiveParams) 
 	return result.RowsAffected(), nil
 }
 
+const setItemQuantity = `-- name: SetItemQuantity :execrows
+UPDATE order_items SET quantity = $1
+WHERE company_id = $2 AND order_id = $3 AND id = $4
+`
+
+type SetItemQuantityParams struct {
+	Quantity  int64
+	CompanyID string
+	OrderID   string
+	ID        string
+}
+
+func (q *Queries) SetItemQuantity(ctx context.Context, arg SetItemQuantityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setItemQuantity,
+		arg.Quantity,
+		arg.CompanyID,
+		arg.OrderID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setMoveForm = `-- name: SetMoveForm :execrows
 UPDATE gate_moves SET visit_id = $1, order_id = $2, order_item_id = $3,
     truck_plate = $4, trailer_plate = $5, driver_name = $6,
@@ -2153,6 +2240,31 @@ func (q *Queries) SetMoveIdentity(ctx context.Context, arg SetMoveIdentityParams
 	return result.RowsAffected(), nil
 }
 
+const setOrderSource = `-- name: SetOrderSource :execrows
+UPDATE release_orders SET source = $1, edi_message_id = $2
+WHERE company_id = $3 AND id = $4
+`
+
+type SetOrderSourceParams struct {
+	Source       string
+	EdiMessageID *string
+	CompanyID    string
+	ID           string
+}
+
+func (q *Queries) SetOrderSource(ctx context.Context, arg SetOrderSourceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setOrderSource,
+		arg.Source,
+		arg.EdiMessageID,
+		arg.CompanyID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setOrderStatus = `-- name: SetOrderStatus :execrows
 UPDATE release_orders SET status = $1
 WHERE company_id = $2 AND ($3::text = '' OR depot_id = $3) AND id = $4
@@ -2172,6 +2284,25 @@ func (q *Queries) SetOrderStatus(ctx context.Context, arg SetOrderStatusParams) 
 		arg.DepotID,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setOrderValidUntil = `-- name: SetOrderValidUntil :execrows
+UPDATE release_orders SET valid_until = $1
+WHERE company_id = $2 AND id = $3
+`
+
+type SetOrderValidUntilParams struct {
+	ValidUntil *time.Time
+	CompanyID  string
+	ID         string
+}
+
+func (q *Queries) SetOrderValidUntil(ctx context.Context, arg SetOrderValidUntilParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setOrderValidUntil, arg.ValidUntil, arg.CompanyID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

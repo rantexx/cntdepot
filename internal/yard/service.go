@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -787,6 +788,116 @@ func (s *Service) CancelOrder(ctx context.Context, id, actor string) error {
 		}
 		return s.event(ctx, q, sc, id, "order.cancelled", actor, map[string]any{})
 	})
+}
+
+// FindEDIOrder returns the EDI-origin order of a line, kind and reference in
+// any depot of the company, or ErrNotFound.
+func (s *Service) FindEDIOrder(ctx context.Context, lineID, kind, reference string) (o Order, items []OrderItem, err error) {
+	err = s.st.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
+		if o, err = q.FindEDIOrder(ctx, sqlcdb.FindEDIOrderParams{CompanyID: sc.CompanyID, LineID: &lineID, Kind: kind, Reference: reference}); err != nil {
+			return notFound(err)
+		}
+		items, err = q.ListOrderItems(ctx, sqlcdb.ListOrderItemsParams{CompanyID: sc.CompanyID, OrderID: o.ID})
+		return err
+	})
+	return o, items, err
+}
+
+// ReplaceOrder replaces an order's items and validity (spec 5.8 rule 2).
+// Named items match by number, quantity items by type and full/empty. What
+// would undo gate history is kept and listed in kept: a used item missing from
+// items, and a quantity below what was used. Unused missing items are deleted
+// and new ones added. The order is done when every item is used up, else open;
+// a cancelled order is ErrOrderClosed. An o.EdiMessageID relinks the order.
+func (s *Service) ReplaceOrder(ctx context.Context, id string, o Order, items []OrderItem, actor string) (kept []string, err error) {
+	err = s.tx(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope, _ *[]note) error {
+		cur, err := q.GetOrder(ctx, sqlcdb.GetOrderParams{CompanyID: sc.CompanyID, DepotID: sc.DepotID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		if cur.Status == "cancelled" {
+			return ErrOrderClosed
+		}
+		old, err := q.ListOrderItems(ctx, sqlcdb.ListOrderItemsParams{CompanyID: sc.CompanyID, OrderID: id})
+		if err != nil {
+			return err
+		}
+		for i := range items {
+			items[i] = normItem(items[i])
+		}
+		taken := make([]bool, len(items))
+		done := true
+		keep := func(it OrderItem) {
+			if it.Number != nil {
+				kept = append(kept, *it.Number+" already gated")
+			} else {
+				kept = append(kept, fmt.Sprintf("%s %s: %d used, kept %d", *it.TypeCode, it.FullEmpty, it.Used, it.Used))
+			}
+		}
+		for _, it := range old {
+			j := -1
+			for k, n := range items {
+				if !taken[k] && sameItem(it, n) {
+					j = k
+					break
+				}
+			}
+			qty := it.Used // missing: kept at what was used, or deleted when unused
+			if j >= 0 {
+				taken[j], qty = true, items[j].Quantity
+			}
+			if qty == 0 {
+				if err := one(q.DeleteOrderItem(ctx, sqlcdb.DeleteOrderItemParams{CompanyID: sc.CompanyID, OrderID: id, ID: it.ID})); err != nil {
+					return err
+				}
+				continue
+			}
+			if j < 0 || qty < it.Used {
+				keep(it)
+				qty = it.Used
+			}
+			if qty != it.Quantity {
+				if err := one(q.SetItemQuantity(ctx, sqlcdb.SetItemQuantityParams{CompanyID: sc.CompanyID, OrderID: id, ID: it.ID, Quantity: qty})); err != nil {
+					return err
+				}
+			}
+			done = done && it.Used == qty
+		}
+		for j, it := range items {
+			if !taken[j] {
+				if err := insertItem(ctx, q, sc.CompanyID, id, it); err != nil {
+					return err
+				}
+				done = false
+			}
+		}
+		if err := one(q.SetOrderValidUntil(ctx, sqlcdb.SetOrderValidUntilParams{CompanyID: sc.CompanyID, ID: id, ValidUntil: o.ValidUntil})); err != nil {
+			return err
+		}
+		status := "open"
+		if done {
+			status = "done"
+		}
+		if err := one(q.SetOrderStatus(ctx, sqlcdb.SetOrderStatusParams{CompanyID: sc.CompanyID, ID: id, Status: status})); err != nil {
+			return err
+		}
+		if o.EdiMessageID != nil {
+			if err := one(q.SetOrderSource(ctx, sqlcdb.SetOrderSourceParams{CompanyID: sc.CompanyID, ID: id, Source: cur.Source, EdiMessageID: o.EdiMessageID})); err != nil {
+				return err
+			}
+		}
+		return s.event(ctx, q, sc, id, "order.replaced", actor, map[string]any{"kept": kept})
+	})
+	return kept, err
+}
+
+// sameItem says whether replacement item n is order item it: the same number
+// (an unused one must keep its full/empty too), or the same type and full/empty.
+func sameItem(it, n OrderItem) bool {
+	if it.Number != nil {
+		return n.Number != nil && *n.Number == *it.Number && (n.FullEmpty == it.FullEmpty || it.Used > 0)
+	}
+	return n.Number == nil && *n.TypeCode == *it.TypeCode && n.FullEmpty == it.FullEmpty
 }
 
 // SnapshotOrder is an open order with its items.

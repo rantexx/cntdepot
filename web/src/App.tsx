@@ -8,6 +8,7 @@ import { Members } from "./admin/Members";
 import { Approvals } from "./yard/Approvals";
 import { Blocks } from "./yard/Blocks";
 import { GateIssues } from "./yard/GateIssues";
+import { EDI } from "./yard/EDI";
 import { Import } from "./yard/Import";
 import { OrderDetail } from "./yard/OrderDetail";
 import { Orders } from "./yard/Orders";
@@ -15,7 +16,7 @@ import { Reports } from "./yard/Reports";
 import { VisitDetail } from "./yard/VisitDetail";
 import { Yard } from "./yard/Yard";
 import { YardSettings } from "./yard/YardSettings";
-import { getHealth, listMoves } from "./gen/api";
+import { getEdiStatus, getHealth, listMoves } from "./gen/api";
 import { Gate as GateFlow } from "./gate/Gate";
 import { startOutbox } from "./gate/outbox";
 import { camera as cameraApi, ok, type CameraState } from "./hubApi";
@@ -106,6 +107,7 @@ const YARD: NavItem[] = [
   { route: "reports", href: "#/reports", label: "navReports", perm: "office" },
   { route: "blocks", href: "#/blocks", label: "navBlocks", perm: "office" },
   { route: "import", href: "#/import", label: "navImport", perm: "office" },
+  { route: "edi", href: "#/edi", label: "navEdi", perm: "manage" },
   { route: "settings", href: "#/settings", label: "navYardSettings", perm: "owner" },
 ];
 
@@ -144,6 +146,16 @@ function Shell() {
   const ocr = hasModule("ocr");
   const visible = (n: NavItem) => can(n.perm) && (!n.ocr || ocr);
   const { waiting, camera, demo, engineUp } = useGateStatus(!!current && ocr && can("office"), can("manage"));
+  // The EDI badge: messages that failed, were rejected, unmatched or errored in the last 30 days.
+  const [ediProblems, setEdiProblems] = useState(0);
+  const manage = !!current && can("manage");
+  useEffect(() => {
+    if (!manage) return;
+    const load = () => void getEdiStatus().then((r) => setEdiProblems(r.status === 200 ? r.data.problems : 0), () => undefined);
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => window.clearInterval(timer);
+  }, [manage]);
   // The gate outbox sends from any page; the shell remounts per scope, so it restarts in the new one.
   useEffect(() => (current?.depotId ? startOutbox() : undefined), [current?.depotId]);
   // Day or night is the person's choice on a shared depot PC; unset follows the computer.
@@ -178,6 +190,7 @@ function Shell() {
   else if (route === "reports" && open(route)) page = <Reports />;
   else if (route === "blocks" && open(route)) page = <Blocks />;
   else if (route === "import" && open(route)) page = <Import />;
+  else if (route === "edi" && open(route)) page = <EDI />;
   else if (route === "settings" && open(route)) page = <YardSettings />;
   else if (route === "capture") page = <Capture />;
   else if (route === "gate" && open(route)) page = <GateFlow />;
@@ -199,6 +212,7 @@ function Shell() {
     <a key={n.route} href={n.href} aria-current={active === n.route ? "page" : undefined}>
       {t(n.label)}
       {n.route === "queue" && waiting > 0 && <span className="count">{waiting}</span>}
+      {n.route === "edi" && ediProblems > 0 && <span className="count">{ediProblems}</span>}
     </a>
   );
   const yard = current ? YARD.filter(visible) : [];

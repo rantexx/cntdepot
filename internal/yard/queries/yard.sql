@@ -406,3 +406,23 @@ ORDER BY i.id;
 
 -- name: InYardAmong :many
 SELECT number FROM visits WHERE company_id = @company_id AND status = 'in_yard' AND number = ANY(@numbers::text[]);
+
+-- EDI helpers: the edi-origin order of a line, and its in-place changes.
+-- name: FindEDIOrder :one
+SELECT * FROM release_orders
+WHERE company_id = @company_id AND line_id = @line_id AND kind = @kind AND reference = @reference AND source = 'edi';
+
+-- name: SetOrderSource :execrows
+UPDATE release_orders SET source = @source, edi_message_id = @edi_message_id
+WHERE company_id = @company_id AND id = @id;
+
+-- name: SetItemQuantity :execrows
+UPDATE order_items SET quantity = @quantity
+WHERE company_id = @company_id AND order_id = @order_id AND id = @id;
+
+-- name: DeleteOrderItem :execrows
+DELETE FROM order_items WHERE company_id = @company_id AND order_id = @order_id AND id = @id;
+
+-- name: SetOrderValidUntil :execrows
+UPDATE release_orders SET valid_until = @valid_until
+WHERE company_id = @company_id AND id = @id;

@@ -94,7 +94,7 @@ test("office walk-through", async ({ page: phone, browser }) => {
   // 5. Switch to manager approval, retry, and approve from the Approvals screen.
   await desk.goto("/#/settings");
   await desk.getByLabel(/Manager approval/).check();
-  await desk.getByRole("button", { name: "Save", exact: true }).click();
+  await desk.locator("form").first().getByRole("button", { name: "Save", exact: true }).click();
   await expect(desk.getByText("Saved", { exact: true })).toBeVisible();
   await shot(desk, "5-settings");
   await desk.goto("/#/approvals");

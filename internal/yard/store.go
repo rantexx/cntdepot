@@ -111,7 +111,8 @@ func orDefault(v, def string) string {
 	return v
 }
 
-// CreateOrder stores an open order with its items in the scope's depot and returns its id.
+// CreateOrder stores an open order with its items in the scope's depot and
+// returns its id. Source "" is "manual"; an "edi" order links its message.
 func (s *Store) CreateOrder(ctx context.Context, o Order, items []OrderItem, by string) (string, error) {
 	id := newID()
 	return id, s.run(ctx, func(q *sqlcdb.Queries, sc tenancy.Scope) error {
@@ -122,26 +123,39 @@ func (s *Store) CreateOrder(ctx context.Context, o Order, items []OrderItem, by 
 			CompanyID: sc.CompanyID, ID: id, DepotID: sc.DepotID, Kind: o.Kind, Reference: o.Reference,
 			LineID: o.LineID, CustomerID: o.CustomerID, ValidUntil: o.ValidUntil, Note: o.Note, CreatedBy: by,
 		})
+		if err == nil && o.Source != "" {
+			err = one(q.SetOrderSource(ctx, sqlcdb.SetOrderSourceParams{CompanyID: sc.CompanyID, ID: id, Source: o.Source, EdiMessageID: o.EdiMessageID}))
+		}
 		for _, it := range items {
 			if err != nil {
 				return err
 			}
-			if it.Quantity == 0 {
-				it.Quantity = 1
-			}
-			// Stored as the gate compares them.
-			if it.Number != nil {
-				it.Number = ptrTo(iso6346.Normalize(*it.Number))
-			}
-			if it.TypeCode != nil {
-				it.TypeCode = ptrTo(iso6346.Normalize(*it.TypeCode))
-			}
-			err = q.InsertOrderItem(ctx, sqlcdb.InsertOrderItemParams{
-				CompanyID: sc.CompanyID, ID: newID(), OrderID: id, Number: it.Number, TypeCode: it.TypeCode,
-				FullEmpty: orDefault(it.FullEmpty, "E"), Quantity: it.Quantity, Used: it.Used,
-			})
+			err = insertItem(ctx, q, sc.CompanyID, id, it)
 		}
 		return err
+	})
+}
+
+// normItem fills an item's defaults and normalizes it as the gate compares.
+func normItem(it OrderItem) OrderItem {
+	if it.Quantity == 0 {
+		it.Quantity = 1
+	}
+	if it.Number != nil {
+		it.Number = ptrTo(iso6346.Normalize(*it.Number))
+	}
+	if it.TypeCode != nil {
+		it.TypeCode = ptrTo(iso6346.Normalize(*it.TypeCode))
+	}
+	it.FullEmpty = orDefault(it.FullEmpty, "E")
+	return it
+}
+
+func insertItem(ctx context.Context, q *sqlcdb.Queries, companyID, orderID string, it OrderItem) error {
+	it = normItem(it)
+	return q.InsertOrderItem(ctx, sqlcdb.InsertOrderItemParams{
+		CompanyID: companyID, ID: newID(), OrderID: orderID, Number: it.Number, TypeCode: it.TypeCode,
+		FullEmpty: it.FullEmpty, Quantity: it.Quantity, Used: it.Used,
 	})
 }
 

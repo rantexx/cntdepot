@@ -43,6 +43,14 @@ type Company struct {
 	CreatedAt time.Time
 }
 
+type CompanyEdi struct {
+	CompanyID       string
+	InboundToken    string
+	PartyID         string
+	NextRef         int64
+	EventsScannedAt time.Time
+}
+
 type CompanySetting struct {
 	CompanyID      string
 	RefusalMode    string
@@ -70,11 +78,42 @@ type Damage struct {
 }
 
 type Depot struct {
-	CompanyID string
-	ID        string
-	Name      string
-	Country   string
-	Timezone  string
+	CompanyID   string
+	ID          string
+	Name        string
+	Country     string
+	Timezone    string
+	EdiLocation string
+}
+
+type EdiMessage struct {
+	CompanyID     string
+	ID            string
+	Direction     string
+	Kind          string
+	Status        string
+	LineID        *string
+	DepotID       *string
+	MoveID        *string
+	OrderID       *string
+	EventID       *string
+	AnswerOf      *string
+	Function      string
+	ControlRef    string
+	MessageRef    string
+	ContentHash   string
+	BlobDigest    string
+	FileName      string
+	Sender        string
+	Via           string
+	Trusted       bool
+	Problems      json.RawMessage
+	Tries         int64
+	NextAttemptAt *time.Time
+	ReportDay     *time.Time
+	CreatedAt     time.Time
+	SentAt        *time.Time
+	FirstTryAt    *time.Time
 }
 
 type EirToken struct {
@@ -179,6 +218,14 @@ type Invitation struct {
 	UsedAt    *time.Time
 }
 
+type LineEdi struct {
+	CompanyID string
+	LineID    string
+	Mode      string
+	Profile   json.RawMessage
+	UpdatedAt time.Time
+}
+
 type LinePrefix struct {
 	CompanyID string
 	Prefix    string
@@ -261,18 +308,20 @@ type RefVersion struct {
 }
 
 type ReleaseOrder struct {
-	CompanyID  string
-	ID         string
-	DepotID    string
-	Kind       string
-	Reference  string
-	LineID     *string
-	CustomerID *string
-	ValidUntil *time.Time
-	Note       string
-	Status     string
-	CreatedBy  string
-	CreatedAt  time.Time
+	CompanyID    string
+	ID           string
+	DepotID      string
+	Kind         string
+	Reference    string
+	LineID       *string
+	CustomerID   *string
+	ValidUntil   *time.Time
+	Note         string
+	Status       string
+	CreatedBy    string
+	CreatedAt    time.Time
+	Source       string
+	EdiMessageID *string
 }
 
 type Session struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -26,10 +27,12 @@ import (
 	"depot/internal/camera"
 	"depot/internal/dataset"
 	"depot/internal/db"
+	"depot/internal/edi"
 	"depot/internal/gate"
 	"depot/internal/gatecam"
 	"depot/internal/httpapi"
 	"depot/internal/live"
+	"depot/internal/mail"
 	"depot/internal/recognition"
 	"depot/internal/store"
 	"depot/internal/tenancy"
@@ -149,6 +152,47 @@ func (e *engineFlags) build() (recognition.Recognizer, error) {
 	}
 }
 
+// mailFlags configure EDI mail; each falls back to its environment variable.
+// Secrets (the Postmark token and webhook secret) are environment only.
+type mailFlags struct{ driver, dir, from, tick string }
+
+func (m *mailFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&m.driver, "mail", "", "EDI mail driver: file | postmark (env MAIL_DRIVER, default file; postmark needs env POSTMARK_SERVER_TOKEN)")
+	fs.StringVar(&m.dir, "mail-dir", "", "folder the file driver writes .eml files to (env MAIL_DIR)")
+	fs.StringVar(&m.from, "mail-from", "", "address EDI mail is sent from (env MAIL_FROM, default depot@localhost)")
+	fs.StringVar(&m.tick, "edi-tick", "", "how often the EDI worker runs (env EDI_TICK, default 30s)")
+}
+
+// build makes the EDI mailer and config. defaultDir is the file driver's
+// folder when none is given; "" makes one required.
+func (m *mailFlags) build(defaultDir string) (mail.Mailer, edi.Config, error) {
+	envFallback(&m.driver, "MAIL_DRIVER")
+	envFallback(&m.dir, "MAIL_DIR")
+	envFallback(&m.from, "MAIL_FROM")
+	envFallback(&m.tick, "EDI_TICK")
+	cfg := edi.Config{From: cmp.Or(m.from, "depot@localhost"), InboundDomain: os.Getenv("EDI_INBOUND_DOMAIN")}
+	tick, err := time.ParseDuration(cmp.Or(m.tick, "30s"))
+	if err != nil || tick <= 0 {
+		return nil, cfg, fmt.Errorf("-edi-tick (EDI_TICK) must be a positive duration such as 30s, not %q", m.tick)
+	}
+	cfg.Tick = tick
+	switch cmp.Or(m.driver, "file") {
+	case "file":
+		dir := cmp.Or(m.dir, defaultDir)
+		if dir == "" {
+			return nil, cfg, errors.New("the file mail driver needs -mail-dir (MAIL_DIR), the folder .eml files are written to")
+		}
+		return mail.NewFile(dir, cfg.From), cfg, nil
+	case "postmark":
+		token := os.Getenv("POSTMARK_SERVER_TOKEN")
+		if token == "" {
+			return nil, cfg, errors.New("the postmark mail driver needs POSTMARK_SERVER_TOKEN set in the environment")
+		}
+		return mail.NewPostmark(token, cfg.From, ""), cfg, nil
+	}
+	return nil, cfg, fmt.Errorf("-mail (MAIL_DRIVER) must be file or postmark, not %q", m.driver)
+}
+
 func runMigrate(args []string) error {
 	fs := newFlags("migrate")
 	owner := fs.String("db-owner", "", "owner database URL (env DATABASE_OWNER_URL)")
@@ -179,9 +223,10 @@ type app struct {
 	broker *httpapi.Broker
 	sess   *auth.Sessions
 	yard   *yard.Service
+	edi    *edi.Service
 }
 
-func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg gate.Config, secure bool) (*app, error) {
+func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg gate.Config, secure bool, m mail.Mailer, ec edi.Config) (*app, error) {
 	bl, err := blob.Open(blobs)
 	if err != nil {
 		return nil, err
@@ -190,9 +235,10 @@ func newApp(pool *pgxpool.Pool, blobs string, rec recognition.Recognizer, cfg ga
 	broker := httpapi.NewBroker()
 	sess := auth.NewSessions(pool, 0)
 	sess.SetSecureCookies(secure)
-	return &app{pool: pool, st: st, bl: bl, broker: broker, sess: sess,
-		svc:  gate.New(st, bl, rec, cfg, broker.Publish),
-		yard: yard.NewService(yard.NewStore(pool), st, broker.Notify)}, nil
+	y := yard.NewService(yard.NewStore(pool), st, broker.Notify)
+	return &app{pool: pool, st: st, bl: bl, broker: broker, sess: sess, yard: y,
+		svc: gate.New(st, bl, rec, cfg, broker.Publish),
+		edi: edi.NewService(pool, bl, y, m, ec)}, nil
 }
 
 func runAPI(args []string) error {
@@ -207,6 +253,8 @@ func runAPI(args []string) error {
 	public := fs.String("public-host", "", "comma-separated domain names the API answers to, e.g. app.example.com (env PUBLIC_HOST)")
 	var eng engineFlags
 	eng.register(fs)
+	var mf mailFlags
+	mf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -229,6 +277,10 @@ func runAPI(args []string) error {
 	if *dbURL == "" {
 		return errors.New("api needs -db (DATABASE_URL), the depot_app database URL")
 	}
+	mailer, ediCfg, err := mf.build("")
+	if err != nil {
+		return err
+	}
 	rec, err := eng.build()
 	if err != nil {
 		return err
@@ -241,14 +293,15 @@ func runAPI(args []string) error {
 	}
 	defer pool.Close()
 	// Secure cookies are set (inside newApp) before anything is served.
-	a, err := newApp(pool, *blobs, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, production)
+	a, err := newApp(pool, *blobs, rec, gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, production, mailer, ediCfg)
 	if err != nil {
 		return err
 	}
 	if !*devLogin {
 		return errors.New("no identity provider is configured yet: only dev login exists")
 	}
-	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), PublicHosts: strings.Split(*public, ",")}, nil)
+	return a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), PublicHosts: strings.Split(*public, ","),
+		InboundSecret: os.Getenv("POSTMARK_INBOUND_SECRET")}, nil)
 }
 
 // apiAddr is the api's listen address: loopback while dev login (which signs
@@ -279,6 +332,7 @@ func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, backgro
 	if err := a.svc.Start(ctx); err != nil {
 		return err
 	}
+	background = append(background, a.edi.Run)
 	var bg sync.WaitGroup
 	for _, f := range background {
 		bg.Add(1)
@@ -289,7 +343,7 @@ func (a *app) serve(ctx context.Context, addr string, o httpapi.Options, backgro
 		log.Print("web app not built yet: run `npm --prefix web run build`, then rebuild depotd")
 	}
 	o.Service, o.Store, o.Blobs, o.Static, o.Version, o.Sessions, o.Pool = a.svc, a.st, a.bl, static, Version, a.sess, a.pool
-	o.Yard = a.yard
+	o.Yard, o.EDI = a.yard, a.edi
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           httpapi.New(o, a.broker).Handler(),
@@ -338,6 +392,8 @@ func runHub(args []string) error {
 	devEmail := fs.String("dev-email", "owner@local", "email of the owner that dev login signs in")
 	var eng engineFlags
 	eng.register(fs)
+	var mf mailFlags
+	mf.register(fs)
 	addr := fs.String("addr", hubDefaultAddr, "listen address (a LAN address lets anyone on the network sign in as owner)")
 	autoAccept := fs.Bool("auto-accept", false, "accept confident, check-digit-valid reads without a person")
 	threshold := fs.Float64("threshold", 0.85, "confidence needed for auto-accept")
@@ -349,6 +405,10 @@ func runHub(args []string) error {
 	}
 	if *fakePhotos != "" {
 		*fakeCamera = true
+	}
+	mailer, ediCfg, err := mf.build(filepath.Join(*dir, "mail-out"))
+	if err != nil {
+		return err
 	}
 	rec, err := eng.build()
 	if err != nil {
@@ -384,7 +444,7 @@ func runHub(args []string) error {
 	}
 	defer pool.Close()
 	a, err := newApp(pool, filepath.Join(*dir, "blobs"), rec,
-		gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, false)
+		gate.Config{AutoAcceptEnabled: *autoAccept, AutoAcceptThreshold: *threshold}, false, mailer, ediCfg)
 	if err != nil {
 		return err
 	}
@@ -411,7 +471,8 @@ func runHub(args []string) error {
 		log.Print("camera: not set up; open the Camera page")
 	}
 	log.Printf("dev login signs in %s · data %s", *devEmail, *dir)
-	err = a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), Camera: cams, Live: liveVideo, Hub: true},
+	err = a.serve(ctx, *addr, httpapi.Options{Provider: auth.NewDevProvider(), Camera: cams, Live: liveVideo, Hub: true,
+		InboundSecret: os.Getenv("POSTMARK_INBOUND_SECRET")},
 		[]func(context.Context){
 			// The watcher takes its company and depot from ctx.
 			func(c context.Context) { watcher.Run(tenancy.With(c, cams.Scope())) },

@@ -80,11 +80,13 @@ func TestSeedHubIsRepeatableAndDevLoginFindsTheOwner(t *testing.T) {
 }
 
 func TestHelpAndFlagErrorsNeverPrintSecrets(t *testing.T) {
-	secrets := []string{"postgres://u:s3cretpw@h/d", "owner-url-s3cret", "app-pw-s3cret", "gemini-s3cret"}
+	secrets := []string{"postgres://u:s3cretpw@h/d", "owner-url-s3cret", "app-pw-s3cret", "gemini-s3cret", "postmark-s3cret", "hook-s3cret"}
 	t.Setenv("DATABASE_URL", secrets[0])
 	t.Setenv("DATABASE_OWNER_URL", secrets[1])
 	t.Setenv("DATABASE_APP_PASSWORD", secrets[2])
 	t.Setenv("GEMINI_API_KEY", secrets[3])
+	t.Setenv("POSTMARK_SERVER_TOKEN", secrets[4])
+	t.Setenv("POSTMARK_INBOUND_SECRET", secrets[5])
 	var buf bytes.Buffer
 	old := flagOutput
 	flagOutput = &buf
@@ -137,5 +139,35 @@ func TestApiListensOnLoopbackWhileDevLoginIsOn(t *testing.T) {
 		if got := apiAddr(c.addr, c.devLogin); got != c.want {
 			t.Errorf("apiAddr(%q, %v) = %q; want %q", c.addr, c.devLogin, got, c.want)
 		}
+	}
+}
+
+func TestMailFlags(t *testing.T) {
+	for _, k := range []string{"MAIL_DRIVER", "MAIL_DIR", "MAIL_FROM", "EDI_TICK", "POSTMARK_SERVER_TOKEN", "EDI_INBOUND_DOMAIN"} {
+		t.Setenv(k, "")
+	}
+	// The hub defaults to the file driver in its data folder; api needs a folder.
+	m, cfg, err := (&mailFlags{}).build(filepath.Join("data", "mail-out"))
+	if err != nil || m.Name() != "file" || cfg.From != "depot@localhost" || cfg.Tick.String() != "30s" {
+		t.Fatalf("hub default = %v %+v %v", m, cfg, err)
+	}
+	if _, _, err := (&mailFlags{}).build(""); err == nil || !strings.Contains(err.Error(), "-mail-dir") {
+		t.Errorf("api without a mail dir: err = %v", err)
+	}
+	if _, _, err := (&mailFlags{driver: "postmark"}).build(""); err == nil || !strings.Contains(err.Error(), "POSTMARK_SERVER_TOKEN") {
+		t.Errorf("postmark without a token: err = %v", err)
+	}
+	for _, f := range []mailFlags{{driver: "smtp", dir: "x"}, {dir: "x", tick: "0s"}, {dir: "x", tick: "soon"}} {
+		if _, _, err := f.build(""); err == nil {
+			t.Errorf("%+v: no error", f)
+		}
+	}
+	t.Setenv("MAIL_DRIVER", "postmark")
+	t.Setenv("POSTMARK_SERVER_TOKEN", "pm-token")
+	t.Setenv("EDI_TICK", "1s")
+	t.Setenv("EDI_INBOUND_DOMAIN", "in.example.com")
+	m, cfg, err = (&mailFlags{from: "edi@example.com"}).build("")
+	if err != nil || m.Name() != "postmark" || cfg.Tick.String() != "1s" || cfg.From != "edi@example.com" || cfg.InboundDomain != "in.example.com" {
+		t.Fatalf("from env = %v %+v %v", m, cfg, err)
 	}
 }

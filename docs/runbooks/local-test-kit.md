@@ -68,7 +68,7 @@ export DATABASE_OWNER_URL=postgres://owner:...@host/depot
 export DATABASE_APP_PASSWORD=...        # chosen password for the depot_app role
 bin/depotd.exe migrate -platform-admin you@example.com
 export DATABASE_URL=postgres://depot_app:...@host/depot
-bin/depotd.exe api -addr :8080 -blobs depot-data/blobs -engine fake
+bin/depotd.exe api -addr :8080 -blobs depot-data/blobs -mail-dir depot-data/mail-out -engine fake
 ```
 
 `api -env production` refuses `-dev-login` and sets secure cookies; until a real identity provider
@@ -239,3 +239,33 @@ Fill it in Excel and save as **CSV** or **CSV UTF-8**. Separator `,` or `;` both
 - `full_empty` is `F` or `E`.
 - It is all or nothing: if any row is wrong, the page lists each bad row and column and nothing
   is imported. Fix the file and upload it again.
+
+## Trying shipping-line EDI locally
+
+Run the hub as usual. It writes mail to files, so nothing leaves the PC: every message the app
+"sends" lands as an `.eml` in `depot-data/mail-out` (change with `-mail-dir`).
+
+1. Open **EDI** (needs the manage permission). Set the company EDI party id (our UNB id, for example `DEPOTX`).
+   An EDI line cannot be switched on before this is set.
+2. Pick a line, set its mode to **EDI** and fill the profile: sender id `MSC` (what the file's UNB says),
+   recipient id, and where to send (any address, it is only a file).
+3. Upload `internal/edifact/testdata/coparn_release.edi` on the EDI screen (the line's sender id must match
+   the file's UNB sender). The release order appears under **Orders**; an APERAK `.eml` lands in `mail-out`.
+   Problems show on the message row.
+4. Gate a container of that order out on a phone. After the next worker tick (`-edi-tick`, default 30s)
+   a CODECO `.eml` (`BGM+111`) appears in `mail-out`. Open it in any text editor; the EDIFACT is the attachment.
+
+Flags (each has an environment fallback):
+
+| Flag | Env | Meaning |
+|---|---|---|
+| `-mail` | `MAIL_DRIVER` | `file` (default) or `postmark` |
+| `-mail-dir` | `MAIL_DIR` | folder for the file driver (hub default `<data>/mail-out`) |
+| `-mail-from` | `MAIL_FROM` | from address, default `depot@localhost` |
+| `-edi-tick` | `EDI_TICK` | worker interval, default `30s` |
+| | `POSTMARK_SERVER_TOKEN` | needed by `-mail postmark` |
+| | `POSTMARK_INBOUND_SECRET` | password of the inbound webhook |
+| | `EDI_INBOUND_DOMAIN` | the domain lines mail files to |
+
+Real mail (later, no Postmark account yet): the owner sets Postmark's inbound webhook to
+`https://postmark:<secret>@<host>/hooks/postmark/inbound`, where `<secret>` is `POSTMARK_INBOUND_SECRET`.

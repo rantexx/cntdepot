@@ -17,6 +17,7 @@ import (
 	"depot/internal/api"
 	"depot/internal/auth"
 	"depot/internal/blob"
+	"depot/internal/edi"
 	"depot/internal/gate"
 	"depot/internal/gatecam"
 	"depot/internal/live"
@@ -40,7 +41,11 @@ type Options struct {
 	Provider auth.Provider
 	Pool     *pgxpool.Pool
 	Yard     *yard.Service // nil: no public EIR page, and the gate and yard operations must not be called
-	Hub      bool          // the on-site box: camera routes are mounted only here
+	EDI      *edi.Service  // nil: the EDI operations must not be called
+	// InboundSecret is the Postmark inbound webhook's basic-auth password;
+	// "" leaves POST /hooks/postmark/inbound unmounted.
+	InboundSecret string
+	Hub           bool // the on-site box: camera routes are mounted only here
 	// PublicHosts are the domain names the cloud server is reached by (for
 	// example app.example.com); the API also answers to them.
 	PublicHosts []string
@@ -135,6 +140,13 @@ func (s *Server) routes() {
 	if s.opts.Yard != nil { // public: the link token is the only credential, so no session and no API guard
 		s.mux.HandleFunc("GET /eir/{token}", s.eirPage)
 		s.mux.HandleFunc("GET /eir/{token}/photo/{photoId}", s.eirPhoto)
+	}
+	// Webhooks: no session; the secret is the credential. Unmounted ones are 404, not the app shell.
+	s.mux.HandleFunc("/hooks/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "E4040", "no such hook")
+	})
+	if s.opts.InboundSecret != "" && s.opts.EDI != nil {
+		s.mux.HandleFunc("POST /hooks/postmark/inbound", s.postmarkInbound)
 	}
 	s.mux.Handle("/", s.static())
 }
@@ -298,6 +310,9 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "E4090", err.Error())
 	case errors.Is(err, gate.ErrBadAction), errors.Is(err, gate.ErrNumberRequired), errors.Is(err, gate.ErrBadPhoto), errors.Is(err, gate.ErrBadID):
 		writeError(w, http.StatusBadRequest, "E4000", err.Error())
+	case ediError(err) != nil:
+		ae = ediError(err)
+		writeError(w, ae.status, ae.code, ae.message)
 	case yardError(err) != nil:
 		ae = yardError(err)
 		writeError(w, ae.status, ae.code, ae.message)

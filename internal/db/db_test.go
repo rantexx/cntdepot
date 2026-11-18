@@ -217,7 +217,7 @@ func TestSecurityInvariants(t *testing.T) {
 		t.Fatal(strings.Join(bad, "\n"))
 	}
 	var n int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 4 {
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace").Scan(&n); err != nil || n != 6 {
 		t.Fatalf("security definer functions %d, err %v", n, err)
 	}
 }
