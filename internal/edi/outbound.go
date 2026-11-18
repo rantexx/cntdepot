@@ -76,7 +76,7 @@ func plan(kind, prev, line string, renamed, eligible bool, onEDI func(string) bo
 		out = append(out, send{prev, "1"})
 	}
 	switch {
-	case kind == "move.corrected" && prev != "" && !changed:
+	case kind == "move.corrected" && prev != "" && !changed && onEDI(line): // off EDI: eligible is false too, so nothing
 		out = append(out, send{line, "5"})
 	case kind != "move.voided" && eligible:
 		out = append(out, send{line, "9"})
@@ -90,17 +90,25 @@ func (s *Service) queueEvent(ctx context.Context, ev edidb.GateEventsRow, lines 
 		if done, err := q.EventQueued(ctx, edidb.EventQueuedParams{CompanyID: sc.CompanyID, EventID: &ev.ID}); err != nil || done {
 			return err
 		}
+		// An event that can never become a CODECO is an error row: the rescan
+		// skips it and the company's later events still go.
+		bad := edidb.InsertMessageParams{CompanyID: sc.CompanyID, ID: newID(), Direction: "out", Kind: "codeco", EventID: &ev.ID, Via: "upload"}
 		mv, err := q.CodecoMove(ctx, edidb.CodecoMoveParams{CompanyID: sc.CompanyID, ID: ev.Stream})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dataError(ctx, q, bad, fmt.Sprintf("event %s names no move %s", ev.ID, ev.Stream))
+		}
 		if err != nil {
 			return err
 		}
+		bad.MoveID, bad.DepotID = &mv.ID, &mv.DepotID
 		prev, sent := "", edifact.Message{} // prev's line and the CODECO it sent
 		last, err := q.LastCodeco(ctx, edidb.LastCodecoParams{CompanyID: sc.CompanyID, MoveID: &mv.ID})
 		switch {
 		case err == nil && last.Function != "1":
 			prev = str(last.LineID)
 			if sent, err = s.sentCODECO(last.BlobDigest); err != nil {
-				return err
+				bad.LineID = last.LineID
+				return dataError(ctx, q, bad, "the CODECO sent before cannot be read: "+err.Error())
 			}
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return err
@@ -121,16 +129,16 @@ func (s *Service) queueEvent(ctx context.Context, ev edidb.GateEventsRow, lines 
 		for _, d := range ds {
 			dmg = append(dmg, edifact.Damage{Location: d.Location, Description: d.Description})
 		}
-		for _, sd := range sends {
+		for _, sd := range sends { // plan puts a cancel first: its ULID, made first, sends it first
 			l := lines[sd.line]
 			row := edidb.InsertMessageParams{CompanyID: sc.CompanyID, ID: newID(), Direction: "out", Kind: "codeco",
 				LineID: &l.LineID, DepotID: &mv.DepotID, MoveID: &mv.ID, EventID: &ev.ID, Function: sd.function, Via: "upload"}
 			if sd.function == "1" { // a cancel repeats the facts it cancels, not today's
-				err = s.queue(ctx, q, row, l.Profile, party, false, func(ref string) edifact.Message { return edifact.CancelCODECO(ref, sent) })
+				err = s.queue(ctx, q, row, l.Profile, party, l.Profile.Test, func(ref string) edifact.Message { return edifact.CancelCODECO(ref, sent) })
 			} else if g, gerr := gateMove(mv, l, sd.function, dmg); gerr != nil {
 				err = dataError(ctx, q, row, gerr.Error())
 			} else {
-				err = s.queue(ctx, q, row, l.Profile, party, false, func(ref string) edifact.Message { return edifact.CODECO(ref, g) })
+				err = s.queue(ctx, q, row, l.Profile, party, l.Profile.Test, func(ref string) edifact.Message { return edifact.CODECO(ref, g) })
 			}
 			if err != nil {
 				return err

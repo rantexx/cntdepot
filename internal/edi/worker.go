@@ -69,7 +69,8 @@ func (s *Service) company(ctx context.Context) (err error) {
 	return errors.Join(s.retryStuck(ctx), s.queueGateEvents(ctx), s.sendDue(ctx))
 }
 
-// retryStuck processes inbound files left "received" for over a minute.
+// retryStuck processes inbound files left "received" for over a minute,
+// once: a file that fails again becomes an error for the office to process.
 func (s *Service) retryStuck(ctx context.Context) error {
 	var ids []string
 	if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) (err error) {
@@ -80,7 +81,14 @@ func (s *Service) retryStuck(ctx context.Context) error {
 	}
 	var errs []error
 	for _, id := range ids {
-		if _, err := s.processStored(ctx, id); err != nil {
+		_, perr := s.processStored(ctx, id)
+		if perr == nil {
+			continue
+		}
+		problems := problemsJSON([]edifact.Problem{{Code: "E-PROC", Text: "the file could not be processed: " + perr.Error()}})
+		if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
+			return q.FailStuck(ctx, edidb.FailStuckParams{CompanyID: sc.CompanyID, ID: id, Problems: problems})
+		}); err != nil {
 			errs = append(errs, fmt.Errorf("message %s left received: %w", id, err))
 		}
 	}
@@ -131,7 +139,8 @@ func retryAfter(n int64) time.Duration {
 }
 
 // sendOne mails one claimed message to the line. A failed try is retried
-// later; a day after the first try, or with no address, the message fails.
+// later; a day after the first try, with no address or with its file lost,
+// the message fails.
 func (s *Service) sendOne(ctx context.Context, q *edidb.Queries, company string, r edidb.ClaimDueRow, p Profile) error {
 	now := s.now()
 	first := now
@@ -144,8 +153,9 @@ func (s *Service) sendOne(ctx context.Context, q *edidb.Queries, company string,
 		return q.SetTried(ctx, tried)
 	}
 	data, err := s.blob.Get(r.BlobDigest)
-	if err != nil {
-		return err
+	if err != nil { // a lost file fails its row only: the queue moves on
+		tried.Status, tried.Problems = "failed", problemsJSON([]edifact.Problem{{Code: "E-SEND", Text: "file missing: " + err.Error()}})
+		return q.SetTried(ctx, tried)
 	}
 	subject := strings.Join(strings.Fields(strings.ToUpper(r.Kind)+" "+r.DepotName+" "+r.Ref), " ")
 	err = s.mail.Send(ctx, mail.Outgoing{To: p.SendTo, Subject: subject, Text: subject,

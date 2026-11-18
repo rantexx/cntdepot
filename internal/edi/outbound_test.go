@@ -465,3 +465,101 @@ func TestRunReturnsWhenContextEnds(t *testing.T) {
 		t.Fatal("Run did not return")
 	}
 }
+
+func TestTestProfileSetsTestFlag(t *testing.T) {
+	o := newOutFx(t)
+	o.line(Profile{SenderID: "MSC", RecipientID: "MSC", SendTo: []string{lineTo}, Test: true})
+	o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	sent := o.sent()
+	if len(sent) != 1 {
+		t.Fatalf("sent = %+v", sent)
+	}
+	if ic, _ := codeco(t, sent[0]); !ic.Test {
+		t.Fatalf("a line in test gets a live CODECO: %+v", ic)
+	}
+}
+
+// lostFile is a digest whose file is not in the blob store.
+const lostFile = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// An event that cannot become a CODECO is an error row; other moves still send.
+func TestBadEventDoesNotBlockOthers(t *testing.T) {
+	o := newOutFx(t)
+	o.exec(`INSERT INTO events (id, company_id, stream, kind, actor, payload, occurred_at)
+		VALUES ('ev-ghost', 'A', 'no-such-move', 'move.gate_saved', 'clerk', '{}', now())`)
+	bad := o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	o.exec(`UPDATE edi_messages SET blob_digest = $1 WHERE move_id = $2`, lostFile, bad) // the file it sent is lost
+	f := form(bad, "in", "MSCU1234566", "E", "lA")
+	f.Seal = "S9"
+	o.correct(bad, f)
+	good := o.gateIn(cn("MSCU765432"), "E", "lA")
+	o.tick()
+	o.tick() // a rescan adds nothing
+	var errs []Message
+	for _, m := range o.messages("out") {
+		if m.Status == "error" {
+			errs = append(errs, m)
+		}
+	}
+	if len(errs) != 2 || !slices.Equal(append(codes(errs[0].Problems), codes(errs[1].Problems)...), []string{"E-DATA", "E-DATA"}) {
+		t.Fatalf("error rows = %+v", errs)
+	}
+	sent := o.sent()
+	if len(sent) != 2 || !strings.HasSuffix(sent[1].Subject, cn("MSCU765432")) {
+		t.Fatalf("sent = %+v", sent)
+	}
+	if out := o.messages("out"); out[len(out)-1].MoveID != good || out[len(out)-1].Status != "sent" {
+		t.Fatalf("out = %+v", out)
+	}
+}
+
+// A due message whose file is missing fails; the company's other messages still go.
+func TestMissingBlobFailsRowNotCompany(t *testing.T) {
+	o := newOutFx(t)
+	m, err := o.s.SendTest(ctxOf("A"), "lA", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.exec(`UPDATE edi_messages SET blob_digest = $1 WHERE id = $2`, lostFile, m.ID)
+	o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	if got, _ := o.s.Message(ctxOf("A"), m.ID); got.Status != "failed" || !slices.Equal(codes(got.Problems), []string{"E-SEND"}) ||
+		!strings.Contains(got.Problems[0].Text, "file missing") {
+		t.Fatalf("test message = %+v", got)
+	}
+	if sent := o.sent(); len(sent) != 1 || !strings.HasPrefix(sent[0].Subject, "CODECO ") {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+// A stored inbound file that still cannot be processed becomes an error, not a retry forever.
+func TestStuckInboundThatFailsBecomesError(t *testing.T) {
+	o := newOutFx(t)
+	m, err := o.s.store(ctxOf("A"), "f.edi", file(t, "coparn_release.edi"), "u1", "upload", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.exec(`UPDATE edi_messages SET blob_digest = $1 WHERE id = $2`, lostFile, m.ID)
+	o.at = o.at.Add(2 * time.Minute)
+	o.tick()
+	if got, _ := o.s.Message(ctxOf("A"), m.ID); got.Status != "error" || len(got.Problems) != 1 || got.Problems[0].Text == "" {
+		t.Fatalf("message = %+v", got)
+	}
+}
+
+// A replacement goes only to a line still on EDI.
+func TestReplacementNeedsLineOnEDI(t *testing.T) {
+	o := newOutFx(t)
+	id := o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	o.exec(`UPDATE line_edi SET mode = 'off' WHERE line_id = 'lA'`)
+	f := form(id, "in", "MSCU1234566", "E", "lA")
+	f.Seal = "S1"
+	o.correct(id, f)
+	o.tick()
+	if len(o.sent()) != 1 || len(o.messages("out")) != 1 {
+		t.Fatalf("out = %+v", o.messages("out"))
+	}
+}

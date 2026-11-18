@@ -199,6 +199,22 @@ func (q *Queries) EventQueued(ctx context.Context, arg EventQueuedParams) (bool,
 	return queued, err
 }
 
+const failStuck = `-- name: FailStuck :exec
+UPDATE edi_messages SET status = 'error', problems = $1
+WHERE company_id = $2 AND id = $3 AND direction = 'in' AND status = 'received'
+`
+
+type FailStuckParams struct {
+	Problems  json.RawMessage
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) FailStuck(ctx context.Context, arg FailStuckParams) error {
+	_, err := q.db.Exec(ctx, failStuck, arg.Problems, arg.CompanyID, arg.ID)
+	return err
+}
+
 const gateEvents = `-- name: GateEvents :many
 SELECT id, stream, kind FROM events
 WHERE company_id = $1 AND kind IN ('move.gate_saved', 'move.corrected', 'move.voided') AND occurred_at >= $2

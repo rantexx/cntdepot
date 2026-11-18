@@ -132,3 +132,7 @@ WHERE company_id = @company_id AND id = @id AND direction = 'out' AND blob_diges
 SELECT id FROM edi_messages
 WHERE company_id = @company_id AND direction = 'in' AND status = 'received' AND created_at < @before
 ORDER BY created_at, id;
+
+-- name: FailStuck :exec
+UPDATE edi_messages SET status = 'error', problems = @problems
+WHERE company_id = @company_id AND id = @id AND direction = 'in' AND status = 'received';
