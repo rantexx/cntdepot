@@ -43,6 +43,14 @@ type Company struct {
 	CreatedAt time.Time
 }
 
+type CompanyEdi struct {
+	CompanyID       string
+	InboundToken    string
+	PartyID         string
+	NextRef         int64
+	EventsScannedAt time.Time
+}
+
 type CompanySetting struct {
 	CompanyID      string
 	RefusalMode    string
@@ -70,11 +78,39 @@ type Damage struct {
 }
 
 type Depot struct {
-	CompanyID string
-	ID        string
-	Name      string
-	Country   string
-	Timezone  string
+	CompanyID   string
+	ID          string
+	Name        string
+	Country     string
+	Timezone    string
+	EdiLocation string
+}
+
+type EdiMessage struct {
+	CompanyID     string
+	ID            string
+	Direction     string
+	Kind          string
+	Status        string
+	LineID        pgtype.Text
+	DepotID       pgtype.Text
+	MoveID        pgtype.Text
+	OrderID       pgtype.Text
+	EventID       pgtype.Text
+	AnswerOf      pgtype.Text
+	Function      string
+	ControlRef    string
+	MessageRef    string
+	ContentHash   string
+	BlobDigest    string
+	FileName      string
+	Sender        string
+	Problems      json.RawMessage
+	Tries         int64
+	NextAttemptAt pgtype.Timestamptz
+	ReportDay     pgtype.Date
+	CreatedAt     time.Time
+	SentAt        pgtype.Timestamptz
 }
 
 type EirToken struct {
@@ -179,6 +215,14 @@ type Invitation struct {
 	UsedAt    pgtype.Timestamptz
 }
 
+type LineEdi struct {
+	CompanyID string
+	LineID    string
+	Mode      string
+	Profile   json.RawMessage
+	UpdatedAt time.Time
+}
+
 type LinePrefix struct {
 	CompanyID string
 	Prefix    string
@@ -261,18 +305,20 @@ type RefVersion struct {
 }
 
 type ReleaseOrder struct {
-	CompanyID  string
-	ID         string
-	DepotID    string
-	Kind       string
-	Reference  string
-	LineID     pgtype.Text
-	CustomerID pgtype.Text
-	ValidUntil pgtype.Date
-	Note       string
-	Status     string
-	CreatedBy  string
-	CreatedAt  time.Time
+	CompanyID    string
+	ID           string
+	DepotID      string
+	Kind         string
+	Reference    string
+	LineID       pgtype.Text
+	CustomerID   pgtype.Text
+	ValidUntil   pgtype.Date
+	Note         string
+	Status       string
+	CreatedBy    string
+	CreatedAt    time.Time
+	Source       string
+	EdiMessageID pgtype.Text
 }
 
 type Session struct {
