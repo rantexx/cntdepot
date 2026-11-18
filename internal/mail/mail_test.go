@@ -142,12 +142,16 @@ func TestParseInboundTrust(t *testing.T) {
 		h    string
 		want bool
 	}{
-		{`{"Name":"Received-SPF","Value":"Pass (sender SPF authorized)"}`, true},
+		{`{"Name":"Received-SPF","Value":"Pass (ok) receiver=mx; envelope-from=bounce@carrier.com; client-ip=1.2.3.4"}`, true},
+		{`{"Name":"Received-SPF","Value":"Pass (ok) smtp.mailfrom=attacker.com"}`, false},
+		{`{"Name":"Received-SPF","Value":"Fail"},{"Name":"Received-SPF","Value":"Pass envelope-from=a@carrier.com"}`, false},
 		{`{"Name":"Authentication-Results","Value":"mx; spf=none; dkim=pass header.d=carrier.com"}`, true},
-		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,SPF_PASS"}`, true},
+		{`{"Name":"Authentication-Results","Value":"mx; dkim=pass header.d=other.com"}`, false},
+		{`{"Name":"Authentication-Results","Value":"mx; dkim=pass header.d=mail.carrier.com"}`, false},
 		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,DKIM_VALID_AU"}`, true},
+		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,SPF_PASS"}`, false},
 		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,DKIM_VALID"}`, false},
-		{`{"Name":"Received-SPF","Value":"Fail"},{"Name":"X-Other","Value":"dkim=pass"}`, false},
+		{`{"Name":"X-Spam-Tests","Value":"SPF_PASS"},{"Name":"X-Spam-Tests","Value":"DKIM_VALID_AU"}`, false},
 	}
 	for i, c := range cases {
 		in, err := ParsePostmarkInbound(mk(c.h))
@@ -166,5 +170,48 @@ func TestParseInboundTrust(t *testing.T) {
 	}
 	if _, err := ParsePostmarkInbound([]byte("nope")); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestFileMailerNoHeaderInjection(t *testing.T) {
+	dir := t.TempDir()
+	err := NewFile(dir, "d@x.com").Send(context.Background(), Outgoing{
+		To:          []string{"a@x.com\r\nBcc: evil@x.com"},
+		Subject:     "hi\r\nBcc: evil2@x.com",
+		Text:        "t",
+		Attachments: []Attachment{{Name: "a\r\nX-Evil: 1.edi", ContentType: "text/plain\r\nX-Evil2: 1", Data: []byte("z")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.eml"))
+	raw, _ := os.ReadFile(files[0])
+	for _, line := range strings.Split(string(raw), "\n") {
+		l := strings.ToLower(strings.TrimRight(line, "\r"))
+		for _, bad := range []string{"bcc:", "x-evil:", "x-evil2:", "x-evil"} {
+			if strings.HasPrefix(l, bad) {
+				t.Fatalf("injected header line %q", line)
+			}
+		}
+	}
+	msg, err := netmail.ReadMessage(strings.NewReader(string(raw)))
+	if err != nil || msg.Header.Get("Bcc") != "" {
+		t.Fatal("bcc", err)
+	}
+}
+
+func TestPostmarkSubjectCRLFStripped(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"ErrorCode":0}`))
+	}))
+	defer srv.Close()
+	err := NewPostmark("t", "f@x.com", srv.URL).Send(context.Background(), Outgoing{To: []string{"a@x.com"}, Subject: "hi\r\nBcc: evil@x.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := got["Subject"].(string); strings.ContainsAny(s, "\r\n") {
+		t.Fatalf("subject %q", s)
 	}
 }

@@ -47,13 +47,13 @@ func (f *File) Send(ctx context.Context, m Outgoing) error {
 	}
 	tp.Write([]byte(m.Text))
 	for _, a := range m.Attachments {
-		ct := a.ContentType
+		ct := hdr(a.ContentType)
 		if ct == "" {
 			ct = "application/octet-stream"
 		}
 		ap, err := mw.CreatePart(textproto.MIMEHeader{
-			"Content-Type":              {mime.FormatMediaType(ct, map[string]string{"name": a.Name})},
-			"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": a.Name})},
+			"Content-Type":              {mime.FormatMediaType(ct, map[string]string{"name": hdr(a.Name)})},
+			"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": hdr(a.Name)})},
 			"Content-Transfer-Encoding": {"base64"},
 		})
 		if err != nil {
