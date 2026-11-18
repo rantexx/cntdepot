@@ -11,6 +11,123 @@ import (
 	"time"
 )
 
+const claimDue = `-- name: ClaimDue :one
+SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at,
+    COALESCE(d.name, '')::text AS depot_name,
+    COALESCE(NULLIF(g.number, ''), o.reference, m.control_ref)::text AS ref
+FROM edi_messages m
+LEFT JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN gate_moves g ON g.company_id = m.company_id AND g.id = m.move_id
+LEFT JOIN edi_messages a ON a.company_id = m.company_id AND a.id = m.answer_of
+LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.order_id, a.order_id)
+WHERE m.company_id = $1 AND m.direction = 'out' AND m.status = 'pending' AND m.kind <> 'report'
+  AND m.next_attempt_at <= $2
+  AND NOT EXISTS (SELECT 1 FROM edi_messages e WHERE e.company_id = m.company_id AND e.move_id = m.move_id
+      AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
+ORDER BY m.created_at, m.id
+LIMIT 1
+FOR UPDATE OF m SKIP LOCKED
+`
+
+type ClaimDueParams struct {
+	CompanyID string
+	Now       *time.Time
+}
+
+type ClaimDueRow struct {
+	ID         string
+	Kind       string
+	LineID     *string
+	BlobDigest string
+	FileName   string
+	Tries      int64
+	FirstTryAt *time.Time
+	DepotName  string
+	Ref        string
+}
+
+// The oldest due message to send, never ahead of an earlier unsent message
+// of the same move (spec 5.4: the order per container is kept). Reports are
+// sent by their own job. ref is the subject's container number or reference.
+func (q *Queries) ClaimDue(ctx context.Context, arg ClaimDueParams) (ClaimDueRow, error) {
+	row := q.db.QueryRow(ctx, claimDue, arg.CompanyID, arg.Now)
+	var i ClaimDueRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.LineID,
+		&i.BlobDigest,
+		&i.FileName,
+		&i.Tries,
+		&i.FirstTryAt,
+		&i.DepotName,
+		&i.Ref,
+	)
+	return i, err
+}
+
+const codecoMove = `-- name: CodecoMove :one
+SELECT m.id, m.depot_id, m.direction, m.number, m.type_code, m.full_empty, m.seal, m.truck_plate, m.condition,
+    m.created_at, m.is_test, v.line_id, COALESCE(h.code, '')::text AS haulier_code,
+    COALESCE(o.reference, '')::text AS order_ref, d.timezone, d.edi_location
+FROM gate_moves m
+JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
+LEFT JOIN visits v ON v.company_id = m.company_id AND v.id = m.visit_id
+LEFT JOIN hauliers h ON h.company_id = m.company_id AND h.id = m.haulier_id
+LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = m.order_id
+WHERE m.company_id = $1 AND m.id = $2
+`
+
+type CodecoMoveParams struct {
+	CompanyID string
+	ID        string
+}
+
+type CodecoMoveRow struct {
+	ID          string
+	DepotID     string
+	Direction   string
+	Number      string
+	TypeCode    string
+	FullEmpty   string
+	Seal        string
+	TruckPlate  string
+	Condition   string
+	CreatedAt   time.Time
+	IsTest      bool
+	LineID      *string
+	HaulierCode string
+	OrderRef    string
+	Timezone    string
+	EdiLocation string
+}
+
+// A move as its CODECO reports it, with its line (the visit's), haulier,
+// order and depot. The gate time is when the move was made.
+func (q *Queries) CodecoMove(ctx context.Context, arg CodecoMoveParams) (CodecoMoveRow, error) {
+	row := q.db.QueryRow(ctx, codecoMove, arg.CompanyID, arg.ID)
+	var i CodecoMoveRow
+	err := row.Scan(
+		&i.ID,
+		&i.DepotID,
+		&i.Direction,
+		&i.Number,
+		&i.TypeCode,
+		&i.FullEmpty,
+		&i.Seal,
+		&i.TruckPlate,
+		&i.Condition,
+		&i.CreatedAt,
+		&i.IsTest,
+		&i.LineID,
+		&i.HaulierCode,
+		&i.OrderRef,
+		&i.Timezone,
+		&i.EdiLocation,
+	)
+	return i, err
+}
+
 const depotLocations = `-- name: DepotLocations :many
 SELECT id, name, edi_location FROM depots WHERE company_id = $1 ORDER BY id
 `
@@ -65,6 +182,60 @@ func (q *Queries) EDICompanies(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const eventQueued = `-- name: EventQueued :one
+SELECT EXISTS (SELECT 1 FROM edi_messages WHERE company_id = $1 AND event_id = $2)::bool AS queued
+`
+
+type EventQueuedParams struct {
+	CompanyID string
+	EventID   *string
+}
+
+func (q *Queries) EventQueued(ctx context.Context, arg EventQueuedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, eventQueued, arg.CompanyID, arg.EventID)
+	var queued bool
+	err := row.Scan(&queued)
+	return queued, err
+}
+
+const gateEvents = `-- name: GateEvents :many
+SELECT id, stream, kind FROM events
+WHERE company_id = $1 AND kind IN ('move.gate_saved', 'move.corrected', 'move.voided') AND occurred_at >= $2
+ORDER BY seq
+`
+
+type GateEventsParams struct {
+	CompanyID string
+	Since     time.Time
+}
+
+type GateEventsRow struct {
+	ID     string
+	Stream string
+	Kind   string
+}
+
+// The gate events that queue CODECO (spec 5.4), in the order they happened.
+func (q *Queries) GateEvents(ctx context.Context, arg GateEventsParams) ([]GateEventsRow, error) {
+	rows, err := q.db.Query(ctx, gateEvents, arg.CompanyID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GateEventsRow
+	for rows.Next() {
+		var i GateEventsRow
+		if err := rows.Scan(&i.ID, &i.Stream, &i.Kind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCompanyEDI = `-- name: GetCompanyEDI :one
 SELECT company_id, inbound_token, party_id, next_ref, events_scanned_at FROM company_edi WHERE company_id = $1
 `
@@ -83,7 +254,7 @@ func (q *Queries) GetCompanyEDI(ctx context.Context, companyID string) (CompanyE
 }
 
 const getMessage = `-- name: GetMessage :one
-SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, tries, next_attempt_at, report_day, created_at, sent_at FROM edi_messages WHERE company_id = $1 AND id = $2
+SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, tries, next_attempt_at, report_day, created_at, sent_at, first_try_at FROM edi_messages WHERE company_id = $1 AND id = $2
 `
 
 type GetMessageParams struct {
@@ -121,6 +292,7 @@ func (q *Queries) GetMessage(ctx context.Context, arg GetMessageParams) (EdiMess
 		&i.ReportDay,
 		&i.CreatedAt,
 		&i.SentAt,
+		&i.FirstTryAt,
 	)
 	return i, err
 }
@@ -154,11 +326,12 @@ func (q *Queries) InsertCompanyEDI(ctx context.Context, arg InsertCompanyEDIPara
 	return result.RowsAffected(), nil
 }
 
-const insertMessage = `-- name: InsertMessage :exec
-INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, answer_of, function,
+const insertMessage = `-- name: InsertMessage :execrows
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, move_id, event_id, answer_of, function,
     control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, next_attempt_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-    $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+    $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+ON CONFLICT DO NOTHING
 `
 
 type InsertMessageParams struct {
@@ -169,6 +342,8 @@ type InsertMessageParams struct {
 	Status        string
 	LineID        *string
 	DepotID       *string
+	MoveID        *string
+	EventID       *string
 	AnswerOf      *string
 	Function      string
 	ControlRef    string
@@ -183,8 +358,9 @@ type InsertMessageParams struct {
 	NextAttemptAt *time.Time
 }
 
-func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) error {
-	_, err := q.db.Exec(ctx, insertMessage,
+// A CODECO already queued for its event and line inserts nothing.
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertMessage,
 		arg.CompanyID,
 		arg.ID,
 		arg.Direction,
@@ -192,6 +368,8 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 		arg.Status,
 		arg.LineID,
 		arg.DepotID,
+		arg.MoveID,
+		arg.EventID,
 		arg.AnswerOf,
 		arg.Function,
 		arg.ControlRef,
@@ -205,28 +383,63 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 		arg.Problems,
 		arg.NextAttemptAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const lastCodeco = `-- name: LastCodeco :one
+SELECT line_id, function FROM edi_messages
+WHERE company_id = $1 AND move_id = $2 AND direction = 'out' AND kind = 'codeco' AND status <> 'error'
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type LastCodecoParams struct {
+	CompanyID string
+	MoveID    *string
+}
+
+type LastCodecoRow struct {
+	LineID   *string
+	Function string
+}
+
+// The move's latest CODECO. A row in error was never built, so it does not count.
+func (q *Queries) LastCodeco(ctx context.Context, arg LastCodecoParams) (LastCodecoRow, error) {
+	row := q.db.QueryRow(ctx, lastCodeco, arg.CompanyID, arg.MoveID)
+	var i LastCodecoRow
+	err := row.Scan(&i.LineID, &i.Function)
+	return i, err
 }
 
 const listLineEDI = `-- name: ListLineEDI :many
-SELECT company_id, line_id, mode, profile, updated_at FROM line_edi WHERE company_id = $1 ORDER BY line_id
+SELECT l.line_id, l.mode, l.profile, s.code
+FROM line_edi l JOIN shipping_lines s ON s.company_id = l.company_id AND s.id = l.line_id
+WHERE l.company_id = $1 ORDER BY l.line_id
 `
 
-func (q *Queries) ListLineEDI(ctx context.Context, companyID string) ([]LineEdi, error) {
+type ListLineEDIRow struct {
+	LineID  string
+	Mode    string
+	Profile json.RawMessage
+	Code    string
+}
+
+func (q *Queries) ListLineEDI(ctx context.Context, companyID string) ([]ListLineEDIRow, error) {
 	rows, err := q.db.Query(ctx, listLineEDI, companyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LineEdi
+	var items []ListLineEDIRow
 	for rows.Next() {
-		var i LineEdi
+		var i ListLineEDIRow
 		if err := rows.Scan(
-			&i.CompanyID,
 			&i.LineID,
 			&i.Mode,
 			&i.Profile,
-			&i.UpdatedAt,
+			&i.Code,
 		); err != nil {
 			return nil, err
 		}
@@ -283,6 +496,40 @@ func (q *Queries) MarkAnswered(ctx context.Context, arg MarkAnsweredParams) ([]s
 	return items, nil
 }
 
+const moveDamages = `-- name: MoveDamages :many
+SELECT location, description FROM damages WHERE company_id = $1 AND move_id = $2 ORDER BY id
+`
+
+type MoveDamagesParams struct {
+	CompanyID string
+	MoveID    string
+}
+
+type MoveDamagesRow struct {
+	Location    string
+	Description string
+}
+
+func (q *Queries) MoveDamages(ctx context.Context, arg MoveDamagesParams) ([]MoveDamagesRow, error) {
+	rows, err := q.db.Query(ctx, moveDamages, arg.CompanyID, arg.MoveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MoveDamagesRow
+	for rows.Next() {
+		var i MoveDamagesRow
+		if err := rows.Scan(&i.Location, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const repeatsOf = `-- name: RepeatsOf :one
 SELECT count(*) FILTER (WHERE content_hash = $1) AS same,
        count(*) FILTER (WHERE content_hash <> $1) AS other
@@ -317,6 +564,39 @@ func (q *Queries) RepeatsOf(ctx context.Context, arg RepeatsOfParams) (RepeatsOf
 	var i RepeatsOfRow
 	err := row.Scan(&i.Same, &i.Other)
 	return i, err
+}
+
+const resend = `-- name: Resend :execrows
+UPDATE edi_messages SET status = 'pending', tries = 0, first_try_at = NULL, next_attempt_at = $1
+WHERE company_id = $2 AND id = $3 AND direction = 'out' AND blob_digest <> ''
+`
+
+type ResendParams struct {
+	Now       *time.Time
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) Resend(ctx context.Context, arg ResendParams) (int64, error) {
+	result, err := q.db.Exec(ctx, resend, arg.Now, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setEventsScanned = `-- name: SetEventsScanned :exec
+UPDATE company_edi SET events_scanned_at = $1 WHERE company_id = $2
+`
+
+type SetEventsScannedParams struct {
+	At        time.Time
+	CompanyID string
+}
+
+func (q *Queries) SetEventsScanned(ctx context.Context, arg SetEventsScannedParams) error {
+	_, err := q.db.Exec(ctx, setEventsScanned, arg.At, arg.CompanyID)
+	return err
 }
 
 const setInResult = `-- name: SetInResult :execrows
@@ -358,6 +638,81 @@ func (q *Queries) SetInResult(ctx context.Context, arg SetInResultParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setSent = `-- name: SetSent :exec
+UPDATE edi_messages SET status = 'sent', sent_at = $1, next_attempt_at = NULL, problems = '[]'
+WHERE company_id = $2 AND id = $3
+`
+
+type SetSentParams struct {
+	SentAt    *time.Time
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) SetSent(ctx context.Context, arg SetSentParams) error {
+	_, err := q.db.Exec(ctx, setSent, arg.SentAt, arg.CompanyID, arg.ID)
+	return err
+}
+
+const setTried = `-- name: SetTried :exec
+UPDATE edi_messages SET status = $1, tries = tries + 1, first_try_at = $2,
+    next_attempt_at = $3, problems = $4
+WHERE company_id = $5 AND id = $6
+`
+
+type SetTriedParams struct {
+	Status        string
+	FirstTryAt    *time.Time
+	NextAttemptAt *time.Time
+	Problems      json.RawMessage
+	CompanyID     string
+	ID            string
+}
+
+func (q *Queries) SetTried(ctx context.Context, arg SetTriedParams) error {
+	_, err := q.db.Exec(ctx, setTried,
+		arg.Status,
+		arg.FirstTryAt,
+		arg.NextAttemptAt,
+		arg.Problems,
+		arg.CompanyID,
+		arg.ID,
+	)
+	return err
+}
+
+const stuckInbound = `-- name: StuckInbound :many
+SELECT id FROM edi_messages
+WHERE company_id = $1 AND direction = 'in' AND status = 'received' AND created_at < $2
+ORDER BY created_at, id
+`
+
+type StuckInboundParams struct {
+	CompanyID string
+	Before    time.Time
+}
+
+// Inbound files stored but never processed (the process failed or stopped).
+func (q *Queries) StuckInbound(ctx context.Context, arg StuckInboundParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, stuckInbound, arg.CompanyID, arg.Before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const takeNextRef = `-- name: TakeNextRef :one

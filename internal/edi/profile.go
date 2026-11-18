@@ -25,10 +25,10 @@ type Profile struct {
 	ReportTime                                                 string
 }
 
-// LineEDI is one line's EDI row. Mode is "edi", "report" or "off".
+// LineEDI is one line's EDI row. Mode is "edi", "report" or "off"; Code is the line's own code.
 type LineEDI struct {
-	LineID, Mode string
-	Profile      Profile
+	LineID, Mode, Code string
+	Profile            Profile
 }
 
 // ours maps the line's type code to ours.
@@ -41,12 +41,22 @@ func (p Profile) ours(code string) string {
 	return code
 }
 
+// theirs maps our type code to the line's (spec 5.8.8: the map works both ways).
+func (p Profile) theirs(code string) string {
+	for _, m := range p.TypeMap {
+		if strings.EqualFold(m[0], code) {
+			return m[1]
+		}
+	}
+	return code
+}
+
 // lines returns the company's line EDI rows.
 func (s *Store) lines(ctx context.Context) (out []LineEDI, err error) {
 	err = s.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		rows, err := q.ListLineEDI(ctx, sc.CompanyID)
 		for _, r := range rows {
-			l := LineEDI{LineID: r.LineID, Mode: r.Mode}
+			l := LineEDI{LineID: r.LineID, Mode: r.Mode, Code: r.Code}
 			if err := json.Unmarshal(r.Profile, &l.Profile); err != nil {
 				return err
 			}

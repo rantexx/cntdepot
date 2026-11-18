@@ -113,6 +113,7 @@ type EdiMessage struct {
 	ReportDay     *time.Time
 	CreatedAt     time.Time
 	SentAt        *time.Time
+	FirstTryAt    *time.Time
 }
 
 type EirToken struct {

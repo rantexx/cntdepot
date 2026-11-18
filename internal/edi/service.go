@@ -33,10 +33,11 @@ type Service struct {
 	yard *yard.Service
 	mail mail.Mailer
 	cfg  Config
+	now  func() time.Time // the worker's clock; tests replace it
 }
 
 func NewService(pool *pgxpool.Pool, bl *blob.Store, y *yard.Service, m mail.Mailer, cfg Config) *Service {
-	return &Service{st: NewStore(pool), blob: bl, yard: y, mail: m, cfg: cfg}
+	return &Service{st: NewStore(pool), blob: bl, yard: y, mail: m, cfg: cfg, now: time.Now}
 }
 
 // Message is the API view of an edi_messages row; "" stands for a NULL link.

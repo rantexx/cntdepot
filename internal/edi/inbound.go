@@ -142,10 +142,10 @@ func (s *Service) store(ctx context.Context, name string, data []byte, sender, v
 	m := Message{ID: newID(), Direction: "in", Kind: "unknown", Status: "received", BlobDigest: digest,
 		FileName: name, Sender: sender, Via: via, Trusted: trusted}
 	return m, s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
-		return q.InsertMessage(ctx, edidb.InsertMessageParams{
+		return one(q.InsertMessage(ctx, edidb.InsertMessageParams{
 			CompanyID: sc.CompanyID, ID: m.ID, Direction: m.Direction, Kind: m.Kind, Status: m.Status,
 			ContentHash: digest, BlobDigest: digest, FileName: name, Sender: sender, Via: via, Trusted: trusted, Problems: problemsJSON(nil),
-		})
+		}))
 	})
 }
 
@@ -287,11 +287,11 @@ func (s *Service) finish(ctx context.Context, r edidb.SetInResultParams, problem
 		if err != nil {
 			return err
 		}
-		return q.InsertMessage(ctx, edidb.InsertMessageParams{
+		return one(q.InsertMessage(ctx, edidb.InsertMessageParams{
 			CompanyID: sc.CompanyID, ID: newID(), Direction: "out", Kind: "aperak", Status: "pending",
 			LineID: r.LineID, DepotID: r.DepotID, AnswerOf: &r.ID, ControlRef: ref, MessageRef: ref, Via: "upload", // the column default: via means nothing out
 			ContentHash: digest, BlobDigest: digest, FileName: "aperak-" + ref + ".edi", Problems: problemsJSON(nil), NextAttemptAt: &now,
-		})
+		}))
 	})
 	if err != nil {
 		return Message{}, err

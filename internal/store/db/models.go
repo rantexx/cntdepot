@@ -113,6 +113,7 @@ type EdiMessage struct {
 	ReportDay     pgtype.Date
 	CreatedAt     time.Time
 	SentAt        pgtype.Timestamptz
+	FirstTryAt    pgtype.Timestamptz
 }
 
 type EirToken struct {
