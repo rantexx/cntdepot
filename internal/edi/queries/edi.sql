@@ -73,15 +73,16 @@ SELECT EXISTS (SELECT 1 FROM edi_messages WHERE company_id = @company_id AND eve
 
 -- The move's latest CODECO. A row in error was never built, so it does not count.
 -- name: LastCodeco :one
-SELECT line_id, function FROM edi_messages
+SELECT line_id, function, blob_digest FROM edi_messages
 WHERE company_id = @company_id AND move_id = @move_id AND direction = 'out' AND kind = 'codeco' AND status <> 'error'
 ORDER BY created_at DESC, id DESC LIMIT 1;
 
 -- A move as its CODECO reports it, with its line (the visit's), haulier,
--- order and depot. The gate time is when the move was made.
+-- order and depot. The gate time is the form's first save, as the EIR shows it;
+-- an offline move carries the time the server received it.
 -- name: CodecoMove :one
 SELECT m.id, m.depot_id, m.direction, m.number, m.type_code, m.full_empty, m.seal, m.truck_plate, m.condition,
-    m.created_at, m.is_test, v.line_id, COALESCE(h.code, '')::text AS haulier_code,
+    COALESCE(m.form_saved_at, m.created_at)::timestamptz AS gate_at, m.is_test, v.line_id, COALESCE(h.code, '')::text AS haulier_code,
     COALESCE(o.reference, '')::text AS order_ref, d.timezone, d.edi_location
 FROM gate_moves m
 JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id

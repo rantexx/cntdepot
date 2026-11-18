@@ -141,9 +141,37 @@ func fn(t *testing.T, m mail.Outgoing) string {
 	return f
 }
 
+// gateTime is a CODECO's DTM+7.
+func gateTime(t *testing.T, m edifact.Message) string {
+	t.Helper()
+	for _, s := range m.Segments {
+		if s.Tag == "DTM" && s.Get(0, 0) == "7" {
+			return s.Get(0, 1)
+		}
+	}
+	t.Fatalf("no DTM+7 in %+v", m.Segments)
+	return ""
+}
+
+// facts are what a cancel must repeat from the message it cancels.
+func facts(t *testing.T, m mail.Outgoing) []string {
+	t.Helper()
+	_, msg := codeco(t, m)
+	return []string{segment(t, msg, "BGM").Get(0, 0), segment(t, msg, "BGM").Get(1, 0), segment(t, msg, "EQD").Get(1, 0),
+		segment(t, msg, "NAD").Get(1, 0), segment(t, msg, "TDT").Get(7, 0), gateTime(t, msg)}
+}
+
 func TestGateSavedQueuesAndSendsCODECO(t *testing.T) {
 	o := newOutFx(t)
 	id := o.gateIn("MSCU1234566", "E", "lA")
+	// The gate time is the form's save time in the depot's zone, not when the move was made.
+	o.exec(`UPDATE gate_moves SET created_at = created_at - interval '2 hours'`)
+	o.exec(`UPDATE depots SET timezone = 'Europe/Istanbul'`)
+	rec, err := o.y.GateRecord(o.gate, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ist, _ := time.LoadLocation("Europe/Istanbul")
 	o.tick()
 	sent := o.sent()
 	if len(sent) != 1 || !slices.Equal(sent[0].To, []string{lineTo}) || sent[0].Subject != "CODECO D1 MSCU1234566" ||
@@ -167,6 +195,9 @@ func TestGateSavedQueuesAndSendsCODECO(t *testing.T) {
 	}
 	if p := segment(t, msg, "TDT").Get(7, 0); p != "34ABC1234" {
 		t.Fatalf("plate = %q", p)
+	}
+	if at := gateTime(t, msg); at != rec.FormSavedAt.In(ist).Format("200601021504") {
+		t.Fatalf("gate time = %s, form saved %v", at, rec.FormSavedAt)
 	}
 	out := o.messages("out")
 	if len(out) != 1 || out[0].Kind != "codeco" || out[0].Status != "sent" || out[0].SentAt == nil || out[0].MoveID != id ||
@@ -227,18 +258,57 @@ func TestCorrectionToOtherLineCancelsAndSends(t *testing.T) {
 	if _, msg := codeco(t, sent[2]); segment(t, msg, "NAD").Get(1, 0) != "MAE" {
 		t.Fatalf("new line's CODECO = %+v", msg)
 	}
+	if _, msg := codeco(t, sent[1]); segment(t, msg, "NAD").Get(1, 0) != "MSC" {
+		t.Fatalf("the cancel lacks the old line's code: %+v", msg)
+	}
+}
+
+// spec 5.8.3: a new number on the same line cancels the old one and sends the new one.
+func TestCorrectionChangesNumberCancelsAndSends(t *testing.T) {
+	o := newOutFx(t)
+	id := o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	o.correct(id, form(id, "in", cn("MSCU765432"), "E", "lA"))
+	o.tick()
+	sent := o.sent()
+	if len(sent) != 3 || fn(t, sent[1]) != "1 "+id || fn(t, sent[2]) != "9" || sent[1].To[0] != lineTo || sent[2].To[0] != lineTo {
+		t.Fatalf("sent = %+v", sent)
+	}
+	if !slices.Equal(facts(t, sent[1]), facts(t, sent[0])) {
+		t.Fatalf("cancel %v, original %v", facts(t, sent[1]), facts(t, sent[0]))
+	}
+	if _, msg := codeco(t, sent[2]); segment(t, msg, "EQD").Get(1, 0) != cn("MSCU765432") {
+		t.Fatalf("the original lacks the new number: %+v", msg)
+	}
 }
 
 func TestVoidSendsCancel(t *testing.T) {
 	o := newOutFx(t)
 	id := o.gateIn("MSCU1234566", "E", "lA")
 	o.tick()
+	o.exec(`UPDATE shipping_lines SET code = 'MSX' WHERE id = 'lA'`) // the cancel repeats what was sent, not today's data
 	if err := o.y.VoidGateMove(o.gate, id, "wrong truck", "office"); err != nil {
 		t.Fatal(err)
 	}
 	o.tick()
-	if sent := o.sent(); len(sent) != 2 || fn(t, sent[1]) != "1 "+id {
+	sent := o.sent()
+	if len(sent) != 2 || fn(t, sent[1]) != "1 "+id {
 		t.Fatalf("sent = %+v", sent)
+	}
+	if !slices.Equal(facts(t, sent[1]), facts(t, sent[0])) {
+		t.Fatalf("cancel %v, original %v", facts(t, sent[1]), facts(t, sent[0]))
+	}
+}
+
+func TestNoPartyIDIsDataError(t *testing.T) {
+	o := newOutFx(t)
+	o.exec(`UPDATE company_edi SET party_id = ''`)
+	o.gateIn("MSCU1234566", "E", "lA")
+	o.tick()
+	out := o.messages("out")
+	if len(out) != 1 || out[0].Status != "error" || !slices.Equal(codes(out[0].Problems), []string{"E-DATA"}) ||
+		out[0].Problems[0].Text != "our EDI party id is not set" || len(o.sent()) != 0 {
+		t.Fatalf("out = %+v", out)
 	}
 }
 

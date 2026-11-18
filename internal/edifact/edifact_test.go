@@ -246,6 +246,26 @@ func TestCODECOGateOutReplace(t *testing.T) {
 	}
 }
 
+// A cancel of a sent original or replacement, read back from its file, is
+// the message CODECO builds with function 1 from the same facts.
+func TestCancelCODECOKeepsSentFacts(t *testing.T) {
+	fixNow(t, time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC))
+	cancel := goldenMove()
+	cancel.Function = "1"
+	want := Interchange{ControlRef: "2", Messages: []Message{CODECO("2", cancel)}}.Encode()
+	for _, fn := range []string{"9", "5"} {
+		g := goldenMove()
+		g.Function = fn
+		sent, err := Parse(Interchange{ControlRef: "1", Messages: []Message{CODECO("1", g)}}.Encode())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := (Interchange{ControlRef: "2", Messages: []Message{CancelCODECO("2", sent.Messages[0])}}.Encode()); !bytes.Equal(got, want) {
+			t.Errorf("cancel of %s\n got %s\nwant %s", fn, got, want)
+		}
+	}
+}
+
 func TestCODECOTransliteratesAndEscapes(t *testing.T) {
 	if got := Text("ŞÜKRÜ ÇİFTÇİ"); got != "SUKRU CIFTCI" {
 		t.Fatalf("Text = %q", got)

@@ -79,3 +79,26 @@ func cut(s string, n int) string {
 	}
 	return s
 }
+
+// CancelCODECO builds the cancellation (function 1) of CODECO message prev
+// with message reference ref: prev's facts as sent, prepared now, naming
+// prev's document number in RFF+ACW (CODECO p.14, p.17).
+func CancelCODECO(ref string, prev Message) Message {
+	var segs []Segment
+	doc := ""
+	for _, s := range prev.Segments {
+		switch {
+		case s.Tag == "BGM":
+			doc = s.Get(1, 0)
+			s = seg("BGM", el(s.Get(0, 0)), el(doc), el(funcCancel))
+		case s.Tag == "DTM" && s.Get(0, 0) == dtmPrepared:
+			s = seg("DTM", el(dtmPrepared, now().Format("200601021504"), fmtDateTime))
+		case s.Tag == "RFF" && s.Get(0, 0) == rffPrevious:
+			continue // a replacement's own ACW: added again below
+		case s.Tag != "DTM" && s.Tag != "RFF" && doc != "": // the header ends: ACW goes last in it, as CODECO writes it
+			segs, doc = append(segs, seg("RFF", el(rffPrevious, doc))), ""
+		}
+		segs = append(segs, s)
+	}
+	return Message{Ref: ref, Type: prev.Type, Segments: segs}
+}

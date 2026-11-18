@@ -67,14 +67,16 @@ type send struct{ line, function string }
 
 // plan says what an event sends (spec 5.8.3). prev is the line of the move's
 // latest CODECO, "" when there is none or it was a cancel; line is the move's
-// line now; eligible says that line takes this move's CODECO.
-func plan(kind, prev, line string, eligible bool, onEDI func(string) bool) []send {
+// line now; renamed says the number differs from the one prev sent; eligible
+// says the line takes this move's CODECO. A new line or number cancels prev.
+func plan(kind, prev, line string, renamed, eligible bool, onEDI func(string) bool) []send {
 	var out []send
-	if prev != "" && (kind == "move.voided" || (kind == "move.corrected" && prev != line)) && onEDI(prev) {
+	changed := prev != line || renamed
+	if prev != "" && (kind == "move.voided" || (kind == "move.corrected" && changed)) && onEDI(prev) {
 		out = append(out, send{prev, "1"})
 	}
 	switch {
-	case kind == "move.corrected" && prev != "" && prev == line:
+	case kind == "move.corrected" && prev != "" && !changed:
 		out = append(out, send{line, "5"})
 	case kind != "move.voided" && eligible:
 		out = append(out, send{line, "9"})
@@ -92,18 +94,22 @@ func (s *Service) queueEvent(ctx context.Context, ev edidb.GateEventsRow, lines 
 		if err != nil {
 			return err
 		}
-		prev := ""
+		prev, sent := "", edifact.Message{} // prev's line and the CODECO it sent
 		last, err := q.LastCodeco(ctx, edidb.LastCodecoParams{CompanyID: sc.CompanyID, MoveID: &mv.ID})
 		switch {
 		case err == nil && last.Function != "1":
 			prev = str(last.LineID)
+			if sent, err = s.sentCODECO(last.BlobDigest); err != nil {
+				return err
+			}
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return err
 		}
 		line := str(mv.LineID)
 		l, ok := lines[line]
 		eligible := ok && l.Mode == "edi" && !mv.IsTest && (!l.Profile.EmptiesOnly || mv.FullEmpty == "E")
-		sends := plan(ev.Kind, prev, line, eligible, func(id string) bool { return lines[id].Mode == "edi" })
+		renamed := prev != "" && segmentOf(sent, "EQD").Get(1, 0) != edifact.Text(mv.Number)
+		sends := plan(ev.Kind, prev, line, renamed, eligible, func(id string) bool { return lines[id].Mode == "edi" })
 		if len(sends) == 0 {
 			return nil
 		}
@@ -119,10 +125,10 @@ func (s *Service) queueEvent(ctx context.Context, ev edidb.GateEventsRow, lines 
 			l := lines[sd.line]
 			row := edidb.InsertMessageParams{CompanyID: sc.CompanyID, ID: newID(), Direction: "out", Kind: "codeco",
 				LineID: &l.LineID, DepotID: &mv.DepotID, MoveID: &mv.ID, EventID: &ev.ID, Function: sd.function, Via: "upload"}
-			g, err := gateMove(mv, l, sd.function, dmg)
-			if err != nil { // stored for the screen, never sent
-				row.Status, row.Problems = "error", problemsJSON([]edifact.Problem{{Code: "E-DATA", Text: err.Error()}})
-				err = inserted(q.InsertMessage(ctx, row))
+			if sd.function == "1" { // a cancel repeats the facts it cancels, not today's
+				err = s.queue(ctx, q, row, l.Profile, party, false, func(ref string) edifact.Message { return edifact.CancelCODECO(ref, sent) })
+			} else if g, gerr := gateMove(mv, l, sd.function, dmg); gerr != nil {
+				err = dataError(ctx, q, row, gerr.Error())
 			} else {
 				err = s.queue(ctx, q, row, l.Profile, party, false, func(ref string) edifact.Message { return edifact.CODECO(ref, g) })
 			}
@@ -134,6 +140,37 @@ func (s *Service) queueEvent(ctx context.Context, ev edidb.GateEventsRow, lines 
 	})
 }
 
+// sentCODECO reads the CODECO a message sent from its stored file.
+func (s *Service) sentCODECO(digest string) (edifact.Message, error) {
+	data, err := s.blob.Get(digest)
+	if err != nil {
+		return edifact.Message{}, err
+	}
+	ic, err := edifact.Parse(data)
+	if err == nil && len(ic.Messages) != 1 {
+		err = fmt.Errorf("stored CODECO %s holds %d messages", digest, len(ic.Messages))
+	}
+	if err != nil {
+		return edifact.Message{}, err
+	}
+	return ic.Messages[0], nil
+}
+
+func segmentOf(m edifact.Message, tag string) edifact.Segment {
+	for _, s := range m.Segments {
+		if s.Tag == tag {
+			return s
+		}
+	}
+	return edifact.Segment{}
+}
+
+// dataError stores row as an error for the screen: it is never sent.
+func dataError(ctx context.Context, q *edidb.Queries, row edidb.InsertMessageParams, text string) error {
+	row.Status, row.Problems = "error", problemsJSON([]edifact.Problem{{Code: "E-DATA", Text: text}})
+	return inserted(q.InsertMessage(ctx, row))
+}
+
 func inserted(n int64, err error) error {
 	if err == nil && n == 0 {
 		return errQueued
@@ -142,8 +179,12 @@ func inserted(n int64, err error) error {
 }
 
 // queue builds the interchange of one message from the company's party id
-// to the line, stores it and inserts row as pending, due now.
+// to the line, stores it and inserts row as pending, due now. Without our
+// party id no valid interchange can be built: the row is an error.
 func (s *Service) queue(ctx context.Context, q *edidb.Queries, row edidb.InsertMessageParams, p Profile, party string, test bool, build func(ref string) edifact.Message) error {
+	if strings.TrimSpace(party) == "" {
+		return dataError(ctx, q, row, "our EDI party id is not set")
+	}
 	ref, err := s.st.NextRef(ctx, q)
 	if err != nil {
 		return err
@@ -183,7 +224,7 @@ func gateMove(mv edidb.CodecoMoveRow, l LineEDI, function string, dmg []edifact.
 		TypeCode: l.Profile.theirs(mv.TypeCode), FullEmpty: mv.FullEmpty, Seal: mv.Seal,
 		TruckPlate:  cut(strings.ReplaceAll(edifact.Text(mv.TruckPlate), " ", ""), 9),
 		HaulierCode: cut(edifact.Text(mv.HaulierCode), 17), Condition: mv.Condition, OrderRef: mv.OrderRef, LineCode: code,
-		Location: cut(edifact.Text(mv.EdiLocation), 25), At: mv.CreatedAt.In(loc), Damages: dmg,
+		Location: cut(edifact.Text(mv.EdiLocation), 25), At: mv.GateAt.In(loc), Damages: dmg,
 	}, nil
 }
 
@@ -230,7 +271,7 @@ func (s *Service) SendTest(ctx context.Context, lineID, actor string) (Message, 
 	}
 	l, id := ls[i], newID()
 	g, err := gateMove(edidb.CodecoMoveRow{ID: id, Direction: "in", Number: testNumber, TypeCode: "22G1", FullEmpty: "E",
-		Condition: "sound", CreatedAt: s.now(), Timezone: "UTC"}, l, "9", nil)
+		Condition: "sound", GateAt: s.now(), Timezone: "UTC"}, l, "9", nil)
 	if err != nil {
 		return Message{}, err
 	}
