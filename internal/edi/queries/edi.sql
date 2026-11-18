@@ -136,3 +136,20 @@ ORDER BY created_at, id;
 -- name: FailStuck :exec
 UPDATE edi_messages SET status = 'error', problems = @problems
 WHERE company_id = @company_id AND id = @id AND direction = 'in' AND status = 'received';
+
+-- name: DepotZones :many
+SELECT id, name, timezone FROM depots WHERE company_id = @company_id ORDER BY id;
+
+-- name: ReportDone :one
+SELECT EXISTS (SELECT 1 FROM edi_messages WHERE company_id = @company_id AND kind = 'report'
+    AND line_id = @line_id AND depot_id = @depot_id AND report_day = @report_day)::bool AS done;
+
+-- A daily report row: a second instance or a re-run inserts nothing.
+-- name: InsertReport :execrows
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems)
+VALUES (@company_id, @id, 'out', 'report', @status, @line_id, @depot_id, @report_day, @blob_digest, @file_name, @blob_digest, '[]')
+ON CONFLICT DO NOTHING;
+
+-- name: SetReportResult :exec
+UPDATE edi_messages SET status = @status, sent_at = @sent_at, problems = @problems, tries = tries + 1
+WHERE company_id = @company_id AND id = @id;

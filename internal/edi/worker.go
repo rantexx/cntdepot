@@ -66,7 +66,8 @@ func (s *Service) company(ctx context.Context) (err error) {
 			err = fmt.Errorf("panic: %v", r)
 		}
 	}()
-	return errors.Join(s.retryStuck(ctx), s.queueGateEvents(ctx), s.sendDue(ctx))
+	sc, _ := tenancy.From(ctx)
+	return errors.Join(s.retryStuck(ctx), s.queueGateEvents(ctx), s.sendDue(ctx), s.reports(ctx, sc))
 }
 
 // retryStuck processes inbound files left "received" for over a minute,

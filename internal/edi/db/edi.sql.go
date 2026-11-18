@@ -159,6 +159,36 @@ func (q *Queries) DepotLocations(ctx context.Context, companyID string) ([]Depot
 	return items, nil
 }
 
+const depotZones = `-- name: DepotZones :many
+SELECT id, name, timezone FROM depots WHERE company_id = $1 ORDER BY id
+`
+
+type DepotZonesRow struct {
+	ID       string
+	Name     string
+	Timezone string
+}
+
+func (q *Queries) DepotZones(ctx context.Context, companyID string) ([]DepotZonesRow, error) {
+	rows, err := q.db.Query(ctx, depotZones, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DepotZonesRow
+	for rows.Next() {
+		var i DepotZonesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Timezone); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eDICompanies = `-- name: EDICompanies :many
 SELECT edi_companies()::text AS company_id
 `
@@ -406,6 +436,41 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 	return result.RowsAffected(), nil
 }
 
+const insertReport = `-- name: InsertReport :execrows
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems)
+VALUES ($1, $2, 'out', 'report', $3, $4, $5, $6, $7, $8, $7, '[]')
+ON CONFLICT DO NOTHING
+`
+
+type InsertReportParams struct {
+	CompanyID  string
+	ID         string
+	Status     string
+	LineID     *string
+	DepotID    *string
+	ReportDay  *time.Time
+	BlobDigest string
+	FileName   string
+}
+
+// A daily report row: a second instance or a re-run inserts nothing.
+func (q *Queries) InsertReport(ctx context.Context, arg InsertReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertReport,
+		arg.CompanyID,
+		arg.ID,
+		arg.Status,
+		arg.LineID,
+		arg.DepotID,
+		arg.ReportDay,
+		arg.BlobDigest,
+		arg.FileName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lastCodeco = `-- name: LastCodeco :one
 SELECT line_id, function, blob_digest FROM edi_messages
 WHERE company_id = $1 AND move_id = $2 AND direction = 'out' AND kind = 'codeco' AND status <> 'error'
@@ -584,6 +649,30 @@ func (q *Queries) RepeatsOf(ctx context.Context, arg RepeatsOfParams) (RepeatsOf
 	return i, err
 }
 
+const reportDone = `-- name: ReportDone :one
+SELECT EXISTS (SELECT 1 FROM edi_messages WHERE company_id = $1 AND kind = 'report'
+    AND line_id = $2 AND depot_id = $3 AND report_day = $4)::bool AS done
+`
+
+type ReportDoneParams struct {
+	CompanyID string
+	LineID    *string
+	DepotID   *string
+	ReportDay *time.Time
+}
+
+func (q *Queries) ReportDone(ctx context.Context, arg ReportDoneParams) (bool, error) {
+	row := q.db.QueryRow(ctx, reportDone,
+		arg.CompanyID,
+		arg.LineID,
+		arg.DepotID,
+		arg.ReportDay,
+	)
+	var done bool
+	err := row.Scan(&done)
+	return done, err
+}
+
 const resend = `-- name: Resend :execrows
 UPDATE edi_messages SET status = 'pending', tries = 0, first_try_at = NULL, next_attempt_at = $1
 WHERE company_id = $2 AND id = $3 AND direction = 'out' AND blob_digest <> ''
@@ -656,6 +745,30 @@ func (q *Queries) SetInResult(ctx context.Context, arg SetInResultParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setReportResult = `-- name: SetReportResult :exec
+UPDATE edi_messages SET status = $1, sent_at = $2, problems = $3, tries = tries + 1
+WHERE company_id = $4 AND id = $5
+`
+
+type SetReportResultParams struct {
+	Status    string
+	SentAt    *time.Time
+	Problems  json.RawMessage
+	CompanyID string
+	ID        string
+}
+
+func (q *Queries) SetReportResult(ctx context.Context, arg SetReportResultParams) error {
+	_, err := q.db.Exec(ctx, setReportResult,
+		arg.Status,
+		arg.SentAt,
+		arg.Problems,
+		arg.CompanyID,
+		arg.ID,
+	)
+	return err
 }
 
 const setSent = `-- name: SetSent :exec
