@@ -96,6 +96,12 @@ func ParsePostmarkInbound(body []byte) (Inbound, error) {
 			if strings.Contains(v, "dkim=pass") {
 				in.Trusted = true
 			}
+		case "x-spam-tests":
+			for _, tok := range strings.Split(v, ",") {
+				if tok = strings.TrimSpace(tok); tok == "spf_pass" || tok == "dkim_valid_au" {
+					in.Trusted = true
+				}
+			}
 		}
 	}
 	for _, a := range w.Attachments {

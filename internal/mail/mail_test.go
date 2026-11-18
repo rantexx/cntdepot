@@ -144,6 +144,9 @@ func TestParseInboundTrust(t *testing.T) {
 	}{
 		{`{"Name":"Received-SPF","Value":"Pass (sender SPF authorized)"}`, true},
 		{`{"Name":"Authentication-Results","Value":"mx; spf=none; dkim=pass header.d=carrier.com"}`, true},
+		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,SPF_PASS"}`, true},
+		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,DKIM_VALID_AU"}`, true},
+		{`{"Name":"X-Spam-Tests","Value":"DKIM_SIGNED,DKIM_VALID"}`, false},
 		{`{"Name":"Received-SPF","Value":"Fail"},{"Name":"X-Other","Value":"dkim=pass"}`, false},
 	}
 	for i, c := range cases {
