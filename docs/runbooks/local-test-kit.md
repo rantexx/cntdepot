@@ -68,7 +68,7 @@ export DATABASE_OWNER_URL=postgres://owner:...@host/depot
 export DATABASE_APP_PASSWORD=...        # chosen password for the depot_app role
 bin/depotd.exe migrate -platform-admin you@example.com
 export DATABASE_URL=postgres://depot_app:...@host/depot
-bin/depotd.exe api -addr :8080 -blobs depot-data/blobs -engine fake
+bin/depotd.exe api -addr :8080 -blobs depot-data/blobs -mail-dir depot-data/mail-out -engine fake
 ```
 
 `api -env production` refuses `-dev-login` and sets secure cookies; until a real identity provider

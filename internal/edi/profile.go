@@ -56,16 +56,25 @@ func (s *Store) lines(ctx context.Context) (out []LineEDI, err error) {
 	err = s.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		rows, err := q.ListLineEDI(ctx, sc.CompanyID)
 		for _, r := range rows {
-			l := LineEDI{LineID: r.LineID, Mode: r.Mode, Code: r.Code}
-			if err := json.Unmarshal(r.Profile, &l.Profile); err != nil {
+			l, err := lineOf(r.LineID, r.Mode, r.Code, r.Profile)
+			if err != nil {
 				return err
-			}
-			if l.Profile.ReportTime == "" {
-				l.Profile.ReportTime = "06:00"
 			}
 			out = append(out, l)
 		}
 		return err
 	})
 	return out, err
+}
+
+// lineOf reads a line_edi row; the report time defaults to 06:00.
+func lineOf(lineID, mode, code string, profile []byte) (LineEDI, error) {
+	l := LineEDI{LineID: lineID, Mode: mode, Code: code}
+	if err := json.Unmarshal(profile, &l.Profile); err != nil {
+		return LineEDI{}, err
+	}
+	if l.Profile.ReportTime == "" {
+		l.Profile.ReportTime = "06:00"
+	}
+	return l, nil
 }

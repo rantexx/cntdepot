@@ -150,3 +150,46 @@ INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depo
 VALUES (@company_id, @id, 'out', 'report', @status, @line_id, @depot_id, @report_day, @blob_digest, @file_name, @blob_digest, '[]', @next_attempt_at)
 ON CONFLICT DO NOTHING;
 
+
+-- The API's message list, newest first; a NULL filter matches every row.
+-- name: ListMessages :many
+SELECT * FROM edi_messages
+WHERE company_id = @company_id
+  AND (sqlc.narg('direction')::text IS NULL OR direction = sqlc.narg('direction'))
+  AND (sqlc.narg('kind')::text IS NULL OR kind = sqlc.narg('kind'))
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('line_id')::text IS NULL OR line_id = sqlc.narg('line_id'))
+  AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
+  AND (sqlc.narg('until')::timestamptz IS NULL OR created_at < sqlc.narg('until'))
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
+
+-- name: CountMessages :one
+SELECT count(*) FROM edi_messages
+WHERE company_id = @company_id
+  AND (sqlc.narg('direction')::text IS NULL OR direction = sqlc.narg('direction'))
+  AND (sqlc.narg('kind')::text IS NULL OR kind = sqlc.narg('kind'))
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('line_id')::text IS NULL OR line_id = sqlc.narg('line_id'))
+  AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
+  AND (sqlc.narg('until')::timestamptz IS NULL OR created_at < sqlc.narg('until'));
+
+-- name: CountProblems :one
+SELECT count(*) FROM edi_messages
+WHERE company_id = @company_id AND status IN ('failed', 'rejected', 'unmatched', 'error') AND created_at >= @since;
+
+-- Every line of the company with its EDI row; a line without one is "off".
+-- name: AllLines :many
+SELECT s.id AS line_id, s.code, COALESCE(l.mode, 'off')::text AS mode, COALESCE(l.profile, '{}')::jsonb AS profile
+FROM shipping_lines s LEFT JOIN line_edi l ON l.company_id = s.company_id AND l.line_id = s.id
+WHERE s.company_id = @company_id ORDER BY s.code, s.id;
+
+-- name: UpsertLineEDI :exec
+INSERT INTO line_edi (company_id, line_id, mode, profile) VALUES (@company_id, @line_id, @mode, @profile)
+ON CONFLICT (company_id, line_id) DO UPDATE SET mode = EXCLUDED.mode, profile = EXCLUDED.profile, updated_at = now();
+
+-- name: SetPartyID :execrows
+UPDATE company_edi SET party_id = @party_id WHERE company_id = @company_id;
+
+-- name: SetDepotLocation :execrows
+UPDATE depots SET edi_location = @edi_location WHERE company_id = @company_id AND id = @id;

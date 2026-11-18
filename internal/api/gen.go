@@ -38,6 +38,132 @@ func (e BlockKind) Valid() bool {
 	}
 }
 
+// Defines values for EDIDirection.
+const (
+	EDIDirectionIn  EDIDirection = "in"
+	EDIDirectionOut EDIDirection = "out"
+)
+
+// Valid indicates whether the value is a known member of the EDIDirection enum.
+func (e EDIDirection) Valid() bool {
+	switch e {
+	case EDIDirectionIn:
+		return true
+	case EDIDirectionOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EDIKind.
+const (
+	EDIKindAperak  EDIKind = "aperak"
+	EDIKindCodeco  EDIKind = "codeco"
+	EDIKindCoparn  EDIKind = "coparn"
+	EDIKindReport  EDIKind = "report"
+	EDIKindTest    EDIKind = "test"
+	EDIKindUnknown EDIKind = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the EDIKind enum.
+func (e EDIKind) Valid() bool {
+	switch e {
+	case EDIKindAperak:
+		return true
+	case EDIKindCodeco:
+		return true
+	case EDIKindCoparn:
+		return true
+	case EDIKindReport:
+		return true
+	case EDIKindTest:
+		return true
+	case EDIKindUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EDIMessageVia.
+const (
+	Mail   EDIMessageVia = "mail"
+	Upload EDIMessageVia = "upload"
+)
+
+// Valid indicates whether the value is a known member of the EDIMessageVia enum.
+func (e EDIMessageVia) Valid() bool {
+	switch e {
+	case Mail:
+		return true
+	case Upload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EDIStatus.
+const (
+	EDIStatusAccepted  EDIStatus = "accepted"
+	EDIStatusDone      EDIStatus = "done"
+	EDIStatusError     EDIStatus = "error"
+	EDIStatusFailed    EDIStatus = "failed"
+	EDIStatusIgnored   EDIStatus = "ignored"
+	EDIStatusPending   EDIStatus = "pending"
+	EDIStatusReceived  EDIStatus = "received"
+	EDIStatusRejected  EDIStatus = "rejected"
+	EDIStatusSent      EDIStatus = "sent"
+	EDIStatusUnmatched EDIStatus = "unmatched"
+)
+
+// Valid indicates whether the value is a known member of the EDIStatus enum.
+func (e EDIStatus) Valid() bool {
+	switch e {
+	case EDIStatusAccepted:
+		return true
+	case EDIStatusDone:
+		return true
+	case EDIStatusError:
+		return true
+	case EDIStatusFailed:
+		return true
+	case EDIStatusIgnored:
+		return true
+	case EDIStatusPending:
+		return true
+	case EDIStatusReceived:
+		return true
+	case EDIStatusRejected:
+		return true
+	case EDIStatusSent:
+		return true
+	case EDIStatusUnmatched:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EDIStatusInfoMail.
+const (
+	File     EDIStatusInfoMail = "file"
+	Postmark EDIStatusInfoMail = "postmark"
+)
+
+// Valid indicates whether the value is a known member of the EDIStatusInfoMail enum.
+func (e EDIStatusInfoMail) Valid() bool {
+	switch e {
+	case File:
+		return true
+	case Postmark:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GateFormDirection.
 const (
 	GateFormDirectionIn  GateFormDirection = "in"
@@ -50,6 +176,48 @@ func (e GateFormDirection) Valid() bool {
 	case GateFormDirectionIn:
 		return true
 	case GateFormDirectionOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LineEDIMode.
+const (
+	LineEDIModeEdi    LineEDIMode = "edi"
+	LineEDIModeOff    LineEDIMode = "off"
+	LineEDIModeReport LineEDIMode = "report"
+)
+
+// Valid indicates whether the value is a known member of the LineEDIMode enum.
+func (e LineEDIMode) Valid() bool {
+	switch e {
+	case LineEDIModeEdi:
+		return true
+	case LineEDIModeOff:
+		return true
+	case LineEDIModeReport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LineEDISettingsMode.
+const (
+	LineEDISettingsModeEdi    LineEDISettingsMode = "edi"
+	LineEDISettingsModeOff    LineEDISettingsMode = "off"
+	LineEDISettingsModeReport LineEDISettingsMode = "report"
+)
+
+// Valid indicates whether the value is a known member of the LineEDISettingsMode enum.
+func (e LineEDISettingsMode) Valid() bool {
+	switch e {
+	case LineEDISettingsModeEdi:
+		return true
+	case LineEDISettingsModeOff:
+		return true
+	case LineEDISettingsModeReport:
 		return true
 	default:
 		return false
@@ -112,19 +280,19 @@ func (e OrderKind) Valid() bool {
 
 // Defines values for OrderStatus.
 const (
-	Cancelled OrderStatus = "cancelled"
-	Done      OrderStatus = "done"
-	Open      OrderStatus = "open"
+	OrderStatusCancelled OrderStatus = "cancelled"
+	OrderStatusDone      OrderStatus = "done"
+	OrderStatusOpen      OrderStatus = "open"
 )
 
 // Valid indicates whether the value is a known member of the OrderStatus enum.
 func (e OrderStatus) Valid() bool {
 	switch e {
-	case Cancelled:
+	case OrderStatusCancelled:
 		return true
-	case Done:
+	case OrderStatusDone:
 		return true
-	case Open:
+	case OrderStatusOpen:
 		return true
 	default:
 		return false
@@ -247,19 +415,19 @@ func (e YardSettingsRefusalMode) Valid() bool {
 
 // Defines values for ListApprovalsParamsStatus.
 const (
-	Approved ListApprovalsParamsStatus = "approved"
-	Denied   ListApprovalsParamsStatus = "denied"
-	Pending  ListApprovalsParamsStatus = "pending"
+	ListApprovalsParamsStatusApproved ListApprovalsParamsStatus = "approved"
+	ListApprovalsParamsStatusDenied   ListApprovalsParamsStatus = "denied"
+	ListApprovalsParamsStatusPending  ListApprovalsParamsStatus = "pending"
 )
 
 // Valid indicates whether the value is a known member of the ListApprovalsParamsStatus enum.
 func (e ListApprovalsParamsStatus) Valid() bool {
 	switch e {
-	case Approved:
+	case ListApprovalsParamsStatusApproved:
 		return true
-	case Denied:
+	case ListApprovalsParamsStatusDenied:
 		return true
-	case Pending:
+	case ListApprovalsParamsStatusPending:
 		return true
 	default:
 		return false
@@ -422,6 +590,80 @@ type Depot struct {
 
 // DepotIds Depots the member or invitee may use. null means all depots; when set, at least one id.
 type DepotIds = []string
+
+// EDIDirection defines model for EDIDirection.
+type EDIDirection string
+
+// EDIKind defines model for EDIKind.
+type EDIKind string
+
+// EDIMessage defines model for EDIMessage.
+type EDIMessage struct {
+	// AnswerOf the inbound message an APERAK answers
+	AnswerOf *string `json:"answerOf"`
+
+	// ControlRef the UNB interchange reference
+	ControlRef string       `json:"controlRef"`
+	CreatedAt  time.Time    `json:"createdAt"`
+	DepotId    *string      `json:"depotId"`
+	Direction  EDIDirection `json:"direction"`
+	FileName   string       `json:"fileName"`
+
+	// Function the message function code (9 original, 5 replacement, 1 cancellation)
+	Function string  `json:"function"`
+	Id       string  `json:"id"`
+	Kind     EDIKind `json:"kind"`
+	LineId   *string `json:"lineId"`
+
+	// MessageRef the UNH message reference
+	MessageRef string       `json:"messageRef"`
+	MoveId     *string      `json:"moveId"`
+	OrderId    *string      `json:"orderId"`
+	Problems   []EDIProblem `json:"problems"`
+
+	// Sender in: the mail sender or the uploader
+	Sender string     `json:"sender"`
+	SentAt *time.Time `json:"sentAt"`
+	Status EDIStatus  `json:"status"`
+	Tries  int        `json:"tries"`
+
+	// Trusted inbound mail only: SPF or DKIM passed
+	Trusted *bool `json:"trusted,omitempty"`
+
+	// Via inbound only
+	Via *EDIMessageVia `json:"via,omitempty"`
+}
+
+// EDIMessageVia inbound only
+type EDIMessageVia string
+
+// EDIProblem defines model for EDIProblem.
+type EDIProblem struct {
+	// Code E... is an error, W... a warning
+	Code string `json:"code"`
+	Text string `json:"text"`
+}
+
+// EDIStatus defines model for EDIStatus.
+type EDIStatus string
+
+// EDIStatusInfo defines model for EDIStatusInfo.
+type EDIStatusInfo struct {
+	// InboundAddress edi-<token>@<domain>, or empty with no inbound domain
+	InboundAddress string `json:"inboundAddress"`
+
+	// Mail file means mail is saved, not sent
+	Mail EDIStatusInfoMail `json:"mail"`
+
+	// PartyId our EDI party id; empty until set
+	PartyId string `json:"partyId"`
+
+	// Problems failed, rejected, unmatched or error messages of the last 30 days
+	Problems int `json:"problems"`
+}
+
+// EDIStatusInfoMail file means mail is saved, not sent
+type EDIStatusInfoMail string
 
 // EirLink defines model for EirLink.
 type EirLink struct {
@@ -676,6 +918,59 @@ type LineCreate struct {
 	Contact *string `json:"contact,omitempty"`
 	Name    string  `json:"name"`
 }
+
+// LineEDI defines model for LineEDI.
+type LineEDI struct {
+	// Code the line's own code
+	Code    string         `json:"code"`
+	LineId  string         `json:"lineId"`
+	Mode    LineEDIMode    `json:"mode"`
+	Profile LineEDIProfile `json:"profile"`
+}
+
+// LineEDIMode defines model for LineEDI.Mode.
+type LineEDIMode string
+
+// LineEDIProfile defines model for LineEDIProfile.
+type LineEDIProfile struct {
+	// AllowedFrom who may mail us files
+	AllowedFrom []string `json:"allowedFrom"`
+	EmptiesOnly bool     `json:"emptiesOnly"`
+
+	// LineCode the line's code in messages; empty is the line's own code
+	LineCode string `json:"lineCode"`
+
+	// RecipientId the line's UNB id on the files we send it
+	RecipientId   string `json:"recipientId"`
+	RecipientQual string `json:"recipientQual"`
+
+	// ReportTime HH:MM depot-local; empty is 06:00
+	ReportTime string `json:"reportTime"`
+
+	// ReportTo the daily report's recipients (mode report)
+	ReportTo   []string `json:"reportTo"`
+	SendAperak bool     `json:"sendAperak"`
+
+	// SendTo where CODECO and APERAK go
+	SendTo []string `json:"sendTo"`
+
+	// SenderId the line's UNB id on the files it sends us
+	SenderId   string `json:"senderId"`
+	SenderQual string `json:"senderQual"`
+
+	// Test the UNB test flag
+	Test    bool       `json:"test"`
+	TypeMap []TypePair `json:"typeMap"`
+}
+
+// LineEDISettings defines model for LineEDISettings.
+type LineEDISettings struct {
+	Mode    LineEDISettingsMode `json:"mode"`
+	Profile LineEDIProfile      `json:"profile"`
+}
+
+// LineEDISettingsMode defines model for LineEDISettings.Mode.
+type LineEDISettingsMode string
 
 // LineList defines model for LineList.
 type LineList struct {
@@ -1042,6 +1337,12 @@ type TurnAway struct {
 	SavedBy *string `json:"savedBy,omitempty"`
 }
 
+// TypePair defines model for TypePair.
+type TypePair struct {
+	Ours   string `json:"ours"`
+	Theirs string `json:"theirs"`
+}
+
 // Validation defines model for Validation.
 type Validation struct {
 	CheckDigitValid    bool    `json:"check_digit_valid"`
@@ -1208,6 +1509,41 @@ type CreateDepotJSONBody struct {
 	Country  string `json:"country"`
 	Name     string `json:"name"`
 	Timezone string `json:"timezone"`
+}
+
+// SetDepotEdiLocationJSONBody defines parameters for SetDepotEdiLocation.
+type SetDepotEdiLocationJSONBody struct {
+	Location string `json:"location"`
+}
+
+// SetEdiCompanyJSONBody defines parameters for SetEdiCompany.
+type SetEdiCompanyJSONBody struct {
+	PartyId string `json:"partyId"`
+}
+
+// ListEdiMessagesParams defines parameters for ListEdiMessages.
+type ListEdiMessagesParams struct {
+	Direction *EDIDirection `form:"direction,omitempty" json:"direction,omitempty"`
+	Kind      *EDIKind      `form:"kind,omitempty" json:"kind,omitempty"`
+	Status    *EDIStatus    `form:"status,omitempty" json:"status,omitempty"`
+	LineId    *string       `form:"lineId,omitempty" json:"lineId,omitempty"`
+	From      *time.Time    `form:"from,omitempty" json:"from,omitempty"`
+	To        *time.Time    `form:"to,omitempty" json:"to,omitempty"`
+
+	// Limit default 50, at most 500
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ProcessEdiMessageJSONBody defines parameters for ProcessEdiMessage.
+type ProcessEdiMessageJSONBody struct {
+	DepotId *string `json:"depotId,omitempty"`
+	LineId  *string `json:"lineId,omitempty"`
+}
+
+// UploadEdiMultipartBody defines parameters for UploadEdi.
+type UploadEdiMultipartBody struct {
+	File []openapi_types.File `json:"file"`
 }
 
 // ListGateFlagsParams defines parameters for ListGateFlags.
@@ -1386,6 +1722,21 @@ type UpdateCustomerJSONRequestBody = CustomerPatch
 // CreateDepotJSONRequestBody defines body for CreateDepot for application/json ContentType.
 type CreateDepotJSONRequestBody CreateDepotJSONBody
 
+// SetDepotEdiLocationJSONRequestBody defines body for SetDepotEdiLocation for application/json ContentType.
+type SetDepotEdiLocationJSONRequestBody SetDepotEdiLocationJSONBody
+
+// SetEdiCompanyJSONRequestBody defines body for SetEdiCompany for application/json ContentType.
+type SetEdiCompanyJSONRequestBody SetEdiCompanyJSONBody
+
+// SetLineEdiJSONRequestBody defines body for SetLineEdi for application/json ContentType.
+type SetLineEdiJSONRequestBody = LineEDISettings
+
+// ProcessEdiMessageJSONRequestBody defines body for ProcessEdiMessage for application/json ContentType.
+type ProcessEdiMessageJSONRequestBody ProcessEdiMessageJSONBody
+
+// UploadEdiMultipartRequestBody defines body for UploadEdi for multipart/form-data ContentType.
+type UploadEdiMultipartRequestBody UploadEdiMultipartBody
+
 // ResolveGateFlagJSONRequestBody defines body for ResolveGateFlag for application/json ContentType.
 type ResolveGateFlagJSONRequestBody ResolveGateFlagJSONBody
 
@@ -1502,6 +1853,42 @@ type ServerInterface interface {
 
 	// (POST /api/depots)
 	CreateDepot(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /api/depots/{id}/edi-location)
+	SetDepotEdiLocation(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PUT /api/edi/company)
+	SetEdiCompany(w http.ResponseWriter, r *http.Request)
+
+	// (GET /api/edi/lines)
+	ListLineEdi(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /api/edi/lines/{lineId})
+	SetLineEdi(w http.ResponseWriter, r *http.Request, lineId string)
+
+	// (POST /api/edi/lines/{lineId}/test)
+	TestLineEdi(w http.ResponseWriter, r *http.Request, lineId string)
+
+	// (GET /api/edi/messages)
+	ListEdiMessages(w http.ResponseWriter, r *http.Request, params ListEdiMessagesParams)
+
+	// (GET /api/edi/messages/{id})
+	GetEdiMessage(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/edi/messages/{id}/process)
+	ProcessEdiMessage(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/edi/messages/{id}/raw)
+	GetEdiMessageRaw(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /api/edi/messages/{id}/resend)
+	ResendEdiMessage(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /api/edi/status)
+	GetEdiStatus(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/edi/upload)
+	UploadEdi(w http.ResponseWriter, r *http.Request)
 
 	// (GET /api/gate-flags)
 	ListGateFlags(w http.ResponseWriter, r *http.Request, params ListGateFlagsParams)
@@ -1972,6 +2359,368 @@ func (siw *ServerInterfaceWrapper) CreateDepot(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateDepot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetDepotEdiLocation operation middleware
+func (siw *ServerInterfaceWrapper) SetDepotEdiLocation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetDepotEdiLocation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetEdiCompany operation middleware
+func (siw *ServerInterfaceWrapper) SetEdiCompany(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetEdiCompany(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLineEdi operation middleware
+func (siw *ServerInterfaceWrapper) ListLineEdi(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLineEdi(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetLineEdi operation middleware
+func (siw *ServerInterfaceWrapper) SetLineEdi(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "lineId" -------------
+	var lineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "lineId", r.PathValue("lineId"), &lineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lineId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetLineEdi(w, r, lineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestLineEdi operation middleware
+func (siw *ServerInterfaceWrapper) TestLineEdi(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "lineId" -------------
+	var lineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "lineId", r.PathValue("lineId"), &lineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lineId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestLineEdi(w, r, lineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListEdiMessages operation middleware
+func (siw *ServerInterfaceWrapper) ListEdiMessages(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListEdiMessagesParams
+
+	// ------------- Optional query parameter "direction" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "direction", r.URL.Query(), &params.Direction, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "direction"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "direction", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lineId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lineId", r.URL.Query(), &params.LineId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lineId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lineId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEdiMessages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEdiMessage operation middleware
+func (siw *ServerInterfaceWrapper) GetEdiMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEdiMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ProcessEdiMessage operation middleware
+func (siw *ServerInterfaceWrapper) ProcessEdiMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProcessEdiMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEdiMessageRaw operation middleware
+func (siw *ServerInterfaceWrapper) GetEdiMessageRaw(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEdiMessageRaw(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResendEdiMessage operation middleware
+func (siw *ServerInterfaceWrapper) ResendEdiMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResendEdiMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEdiStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetEdiStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEdiStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadEdi operation middleware
+func (siw *ServerInterfaceWrapper) UploadEdi(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadEdi(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3751,6 +4500,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/import/stock", wrapper.ImportStock)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/import/orders", wrapper.ImportOrders)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/import/templates/{name}", wrapper.ImportTemplate)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/depots/{id}/edi-location", wrapper.SetDepotEdiLocation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/edi/messages", wrapper.ListEdiMessages)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/edi/messages/{id}", wrapper.GetEdiMessage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/edi/messages/{id}/raw", wrapper.GetEdiMessageRaw)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/edi/messages/{id}/resend", wrapper.ResendEdiMessage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/edi/messages/{id}/process", wrapper.ProcessEdiMessage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/edi/upload", wrapper.UploadEdi)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/edi/lines", wrapper.ListLineEdi)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/edi/lines/{lineId}", wrapper.SetLineEdi)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/edi/lines/{lineId}/test", wrapper.TestLineEdi)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/edi/status", wrapper.GetEdiStatus)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/edi/company", wrapper.SetEdiCompany)
 
 	return m
 }
@@ -4241,6 +5002,476 @@ type CreateDepotdefaultJSONResponse struct {
 }
 
 func (response CreateDepotdefaultJSONResponse) VisitCreateDepotResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetDepotEdiLocationRequestObject struct {
+	Id   Id `json:"id"`
+	Body *SetDepotEdiLocationJSONRequestBody
+}
+
+type SetDepotEdiLocationResponseObject interface {
+	VisitSetDepotEdiLocationResponse(w http.ResponseWriter) error
+}
+
+type SetDepotEdiLocation204Response struct {
+}
+
+func (response SetDepotEdiLocation204Response) VisitSetDepotEdiLocationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetDepotEdiLocationdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetDepotEdiLocationdefaultJSONResponse) VisitSetDepotEdiLocationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetEdiCompanyRequestObject struct {
+	Body *SetEdiCompanyJSONRequestBody
+}
+
+type SetEdiCompanyResponseObject interface {
+	VisitSetEdiCompanyResponse(w http.ResponseWriter) error
+}
+
+type SetEdiCompany204Response struct {
+}
+
+func (response SetEdiCompany204Response) VisitSetEdiCompanyResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetEdiCompanydefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetEdiCompanydefaultJSONResponse) VisitSetEdiCompanyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListLineEdiRequestObject struct {
+}
+
+type ListLineEdiResponseObject interface {
+	VisitListLineEdiResponse(w http.ResponseWriter) error
+}
+
+type ListLineEdi200JSONResponse []LineEDI
+
+func (response ListLineEdi200JSONResponse) VisitListLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListLineEdidefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListLineEdidefaultJSONResponse) VisitListLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetLineEdiRequestObject struct {
+	LineId string `json:"lineId"`
+	Body   *SetLineEdiJSONRequestBody
+}
+
+type SetLineEdiResponseObject interface {
+	VisitSetLineEdiResponse(w http.ResponseWriter) error
+}
+
+type SetLineEdi200JSONResponse LineEDI
+
+func (response SetLineEdi200JSONResponse) VisitSetLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetLineEdidefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response SetLineEdidefaultJSONResponse) VisitSetLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestLineEdiRequestObject struct {
+	LineId string `json:"lineId"`
+}
+
+type TestLineEdiResponseObject interface {
+	VisitTestLineEdiResponse(w http.ResponseWriter) error
+}
+
+type TestLineEdi200JSONResponse EDIMessage
+
+func (response TestLineEdi200JSONResponse) VisitTestLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestLineEdidefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response TestLineEdidefaultJSONResponse) VisitTestLineEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEdiMessagesRequestObject struct {
+	Params ListEdiMessagesParams
+}
+
+type ListEdiMessagesResponseObject interface {
+	VisitListEdiMessagesResponse(w http.ResponseWriter) error
+}
+
+type ListEdiMessages200JSONResponse struct {
+	Messages []EDIMessage `json:"messages"`
+	Total    int          `json:"total"`
+}
+
+func (response ListEdiMessages200JSONResponse) VisitListEdiMessagesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEdiMessagesdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ListEdiMessagesdefaultJSONResponse) VisitListEdiMessagesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEdiMessageRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetEdiMessageResponseObject interface {
+	VisitGetEdiMessageResponse(w http.ResponseWriter) error
+}
+
+type GetEdiMessage200JSONResponse EDIMessage
+
+func (response GetEdiMessage200JSONResponse) VisitGetEdiMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEdiMessagedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetEdiMessagedefaultJSONResponse) VisitGetEdiMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProcessEdiMessageRequestObject struct {
+	Id   Id `json:"id"`
+	Body *ProcessEdiMessageJSONRequestBody
+}
+
+type ProcessEdiMessageResponseObject interface {
+	VisitProcessEdiMessageResponse(w http.ResponseWriter) error
+}
+
+type ProcessEdiMessage200JSONResponse EDIMessage
+
+func (response ProcessEdiMessage200JSONResponse) VisitProcessEdiMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProcessEdiMessagedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ProcessEdiMessagedefaultJSONResponse) VisitProcessEdiMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEdiMessageRawRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetEdiMessageRawResponseObject interface {
+	VisitGetEdiMessageRawResponse(w http.ResponseWriter) error
+}
+
+type GetEdiMessageRaw200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type GetEdiMessageRaw200ApplicationEDIFACTResponse struct {
+	Body          io.Reader
+	Headers       GetEdiMessageRaw200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetEdiMessageRaw200ApplicationEDIFACTResponse) VisitGetEdiMessageRawResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/EDIFACT")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetEdiMessageRawdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetEdiMessageRawdefaultJSONResponse) VisitGetEdiMessageRawResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResendEdiMessageRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type ResendEdiMessageResponseObject interface {
+	VisitResendEdiMessageResponse(w http.ResponseWriter) error
+}
+
+type ResendEdiMessage204Response struct {
+}
+
+func (response ResendEdiMessage204Response) VisitResendEdiMessageResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ResendEdiMessagedefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response ResendEdiMessagedefaultJSONResponse) VisitResendEdiMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEdiStatusRequestObject struct {
+}
+
+type GetEdiStatusResponseObject interface {
+	VisitGetEdiStatusResponse(w http.ResponseWriter) error
+}
+
+type GetEdiStatus200JSONResponse EDIStatusInfo
+
+func (response GetEdiStatus200JSONResponse) VisitGetEdiStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEdiStatusdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response GetEdiStatusdefaultJSONResponse) VisitGetEdiStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadEdiRequestObject struct {
+	Body *multipart.Reader
+}
+
+type UploadEdiResponseObject interface {
+	VisitUploadEdiResponse(w http.ResponseWriter) error
+}
+
+type UploadEdi200JSONResponse struct {
+	Messages []EDIMessage `json:"messages"`
+}
+
+func (response UploadEdi200JSONResponse) VisitUploadEdiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadEdidefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response UploadEdidefaultJSONResponse) VisitUploadEdiResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -6538,6 +7769,42 @@ type StrictServerInterface interface {
 	// (POST /api/depots)
 	CreateDepot(ctx context.Context, request CreateDepotRequestObject) (CreateDepotResponseObject, error)
 
+	// (PUT /api/depots/{id}/edi-location)
+	SetDepotEdiLocation(ctx context.Context, request SetDepotEdiLocationRequestObject) (SetDepotEdiLocationResponseObject, error)
+
+	// (PUT /api/edi/company)
+	SetEdiCompany(ctx context.Context, request SetEdiCompanyRequestObject) (SetEdiCompanyResponseObject, error)
+
+	// (GET /api/edi/lines)
+	ListLineEdi(ctx context.Context, request ListLineEdiRequestObject) (ListLineEdiResponseObject, error)
+
+	// (PUT /api/edi/lines/{lineId})
+	SetLineEdi(ctx context.Context, request SetLineEdiRequestObject) (SetLineEdiResponseObject, error)
+
+	// (POST /api/edi/lines/{lineId}/test)
+	TestLineEdi(ctx context.Context, request TestLineEdiRequestObject) (TestLineEdiResponseObject, error)
+
+	// (GET /api/edi/messages)
+	ListEdiMessages(ctx context.Context, request ListEdiMessagesRequestObject) (ListEdiMessagesResponseObject, error)
+
+	// (GET /api/edi/messages/{id})
+	GetEdiMessage(ctx context.Context, request GetEdiMessageRequestObject) (GetEdiMessageResponseObject, error)
+
+	// (POST /api/edi/messages/{id}/process)
+	ProcessEdiMessage(ctx context.Context, request ProcessEdiMessageRequestObject) (ProcessEdiMessageResponseObject, error)
+
+	// (GET /api/edi/messages/{id}/raw)
+	GetEdiMessageRaw(ctx context.Context, request GetEdiMessageRawRequestObject) (GetEdiMessageRawResponseObject, error)
+
+	// (POST /api/edi/messages/{id}/resend)
+	ResendEdiMessage(ctx context.Context, request ResendEdiMessageRequestObject) (ResendEdiMessageResponseObject, error)
+
+	// (GET /api/edi/status)
+	GetEdiStatus(ctx context.Context, request GetEdiStatusRequestObject) (GetEdiStatusResponseObject, error)
+
+	// (POST /api/edi/upload)
+	UploadEdi(ctx context.Context, request UploadEdiRequestObject) (UploadEdiResponseObject, error)
+
 	// (GET /api/gate-flags)
 	ListGateFlags(ctx context.Context, request ListGateFlagsRequestObject) (ListGateFlagsResponseObject, error)
 
@@ -7118,6 +8385,345 @@ func (sh *strictHandler) CreateDepot(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateDepotResponseObject); ok {
 		if err := validResponse.VisitCreateDepotResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetDepotEdiLocation operation middleware
+func (sh *strictHandler) SetDepotEdiLocation(w http.ResponseWriter, r *http.Request, id Id) {
+	var request SetDepotEdiLocationRequestObject
+
+	request.Id = id
+
+	var body SetDepotEdiLocationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetDepotEdiLocation(ctx, request.(SetDepotEdiLocationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetDepotEdiLocation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetDepotEdiLocationResponseObject); ok {
+		if err := validResponse.VisitSetDepotEdiLocationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetEdiCompany operation middleware
+func (sh *strictHandler) SetEdiCompany(w http.ResponseWriter, r *http.Request) {
+	var request SetEdiCompanyRequestObject
+
+	var body SetEdiCompanyJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetEdiCompany(ctx, request.(SetEdiCompanyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetEdiCompany")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetEdiCompanyResponseObject); ok {
+		if err := validResponse.VisitSetEdiCompanyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListLineEdi operation middleware
+func (sh *strictHandler) ListLineEdi(w http.ResponseWriter, r *http.Request) {
+	var request ListLineEdiRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListLineEdi(ctx, request.(ListLineEdiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListLineEdi")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListLineEdiResponseObject); ok {
+		if err := validResponse.VisitListLineEdiResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetLineEdi operation middleware
+func (sh *strictHandler) SetLineEdi(w http.ResponseWriter, r *http.Request, lineId string) {
+	var request SetLineEdiRequestObject
+
+	request.LineId = lineId
+
+	var body SetLineEdiJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetLineEdi(ctx, request.(SetLineEdiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetLineEdi")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetLineEdiResponseObject); ok {
+		if err := validResponse.VisitSetLineEdiResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TestLineEdi operation middleware
+func (sh *strictHandler) TestLineEdi(w http.ResponseWriter, r *http.Request, lineId string) {
+	var request TestLineEdiRequestObject
+
+	request.LineId = lineId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TestLineEdi(ctx, request.(TestLineEdiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TestLineEdi")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TestLineEdiResponseObject); ok {
+		if err := validResponse.VisitTestLineEdiResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListEdiMessages operation middleware
+func (sh *strictHandler) ListEdiMessages(w http.ResponseWriter, r *http.Request, params ListEdiMessagesParams) {
+	var request ListEdiMessagesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEdiMessages(ctx, request.(ListEdiMessagesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEdiMessages")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListEdiMessagesResponseObject); ok {
+		if err := validResponse.VisitListEdiMessagesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEdiMessage operation middleware
+func (sh *strictHandler) GetEdiMessage(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetEdiMessageRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEdiMessage(ctx, request.(GetEdiMessageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEdiMessage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEdiMessageResponseObject); ok {
+		if err := validResponse.VisitGetEdiMessageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ProcessEdiMessage operation middleware
+func (sh *strictHandler) ProcessEdiMessage(w http.ResponseWriter, r *http.Request, id Id) {
+	var request ProcessEdiMessageRequestObject
+
+	request.Id = id
+
+	var body ProcessEdiMessageJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ProcessEdiMessage(ctx, request.(ProcessEdiMessageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ProcessEdiMessage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ProcessEdiMessageResponseObject); ok {
+		if err := validResponse.VisitProcessEdiMessageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEdiMessageRaw operation middleware
+func (sh *strictHandler) GetEdiMessageRaw(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetEdiMessageRawRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEdiMessageRaw(ctx, request.(GetEdiMessageRawRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEdiMessageRaw")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEdiMessageRawResponseObject); ok {
+		if err := validResponse.VisitGetEdiMessageRawResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResendEdiMessage operation middleware
+func (sh *strictHandler) ResendEdiMessage(w http.ResponseWriter, r *http.Request, id Id) {
+	var request ResendEdiMessageRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResendEdiMessage(ctx, request.(ResendEdiMessageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResendEdiMessage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResendEdiMessageResponseObject); ok {
+		if err := validResponse.VisitResendEdiMessageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEdiStatus operation middleware
+func (sh *strictHandler) GetEdiStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetEdiStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEdiStatus(ctx, request.(GetEdiStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEdiStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEdiStatusResponseObject); ok {
+		if err := validResponse.VisitGetEdiStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadEdi operation middleware
+func (sh *strictHandler) UploadEdi(w http.ResponseWriter, r *http.Request) {
+	var request UploadEdiRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadEdi(ctx, request.(UploadEdiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadEdi")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadEdiResponseObject); ok {
+		if err := validResponse.VisitUploadEdiResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

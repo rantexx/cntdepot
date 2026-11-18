@@ -274,8 +274,8 @@ func (s *Service) SendTest(ctx context.Context, lineID, actor string) (Message, 
 		return Message{}, err
 	}
 	i := slices.IndexFunc(ls, func(l LineEDI) bool { return l.LineID == lineID })
-	if i < 0 {
-		return Message{}, ErrNotFound
+	if i < 0 || ls[i].Mode != "edi" {
+		return Message{}, ErrNotOnEDI
 	}
 	l, id := ls[i], newID()
 	g, err := gateMove(edidb.CodecoMoveRow{ID: id, Direction: "in", Number: testNumber, TypeCode: "22G1", FullEmpty: "E",

@@ -11,6 +11,45 @@ import (
 	"time"
 )
 
+const allLines = `-- name: AllLines :many
+SELECT s.id AS line_id, s.code, COALESCE(l.mode, 'off')::text AS mode, COALESCE(l.profile, '{}')::jsonb AS profile
+FROM shipping_lines s LEFT JOIN line_edi l ON l.company_id = s.company_id AND l.line_id = s.id
+WHERE s.company_id = $1 ORDER BY s.code, s.id
+`
+
+type AllLinesRow struct {
+	LineID  string
+	Code    string
+	Mode    string
+	Profile json.RawMessage
+}
+
+// Every line of the company with its EDI row; a line without one is "off".
+func (q *Queries) AllLines(ctx context.Context, companyID string) ([]AllLinesRow, error) {
+	rows, err := q.db.Query(ctx, allLines, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllLinesRow
+	for rows.Next() {
+		var i AllLinesRow
+		if err := rows.Scan(
+			&i.LineID,
+			&i.Code,
+			&i.Mode,
+			&i.Profile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimDue = `-- name: ClaimDue :one
 SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at, m.report_day,
     COALESCE(d.name, '')::text AS depot_name,
@@ -129,6 +168,59 @@ func (q *Queries) CodecoMove(ctx context.Context, arg CodecoMoveParams) (CodecoM
 		&i.EdiLocation,
 	)
 	return i, err
+}
+
+const countMessages = `-- name: CountMessages :one
+SELECT count(*) FROM edi_messages
+WHERE company_id = $1
+  AND ($2::text IS NULL OR direction = $2)
+  AND ($3::text IS NULL OR kind = $3)
+  AND ($4::text IS NULL OR status = $4)
+  AND ($5::text IS NULL OR line_id = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+`
+
+type CountMessagesParams struct {
+	CompanyID string
+	Direction *string
+	Kind      *string
+	Status    *string
+	LineID    *string
+	Since     *time.Time
+	Until     *time.Time
+}
+
+func (q *Queries) CountMessages(ctx context.Context, arg CountMessagesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessages,
+		arg.CompanyID,
+		arg.Direction,
+		arg.Kind,
+		arg.Status,
+		arg.LineID,
+		arg.Since,
+		arg.Until,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProblems = `-- name: CountProblems :one
+SELECT count(*) FROM edi_messages
+WHERE company_id = $1 AND status IN ('failed', 'rejected', 'unmatched', 'error') AND created_at >= $2
+`
+
+type CountProblemsParams struct {
+	CompanyID string
+	Since     time.Time
+}
+
+func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countProblems, arg.CompanyID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const depotLocations = `-- name: DepotLocations :many
@@ -538,6 +630,90 @@ func (q *Queries) ListLineEDI(ctx context.Context, companyID string) ([]ListLine
 	return items, nil
 }
 
+const listMessages = `-- name: ListMessages :many
+SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, tries, next_attempt_at, report_day, created_at, sent_at, first_try_at FROM edi_messages
+WHERE company_id = $1
+  AND ($2::text IS NULL OR direction = $2)
+  AND ($3::text IS NULL OR kind = $3)
+  AND ($4::text IS NULL OR status = $4)
+  AND ($5::text IS NULL OR line_id = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+ORDER BY created_at DESC, id DESC
+LIMIT $9 OFFSET $8
+`
+
+type ListMessagesParams struct {
+	CompanyID string
+	Direction *string
+	Kind      *string
+	Status    *string
+	LineID    *string
+	Since     *time.Time
+	Until     *time.Time
+	Off       int32
+	Lim       int32
+}
+
+// The API's message list, newest first; a NULL filter matches every row.
+func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]EdiMessage, error) {
+	rows, err := q.db.Query(ctx, listMessages,
+		arg.CompanyID,
+		arg.Direction,
+		arg.Kind,
+		arg.Status,
+		arg.LineID,
+		arg.Since,
+		arg.Until,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EdiMessage
+	for rows.Next() {
+		var i EdiMessage
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.ID,
+			&i.Direction,
+			&i.Kind,
+			&i.Status,
+			&i.LineID,
+			&i.DepotID,
+			&i.MoveID,
+			&i.OrderID,
+			&i.EventID,
+			&i.AnswerOf,
+			&i.Function,
+			&i.ControlRef,
+			&i.MessageRef,
+			&i.ContentHash,
+			&i.BlobDigest,
+			&i.FileName,
+			&i.Sender,
+			&i.Via,
+			&i.Trusted,
+			&i.Problems,
+			&i.Tries,
+			&i.NextAttemptAt,
+			&i.ReportDay,
+			&i.CreatedAt,
+			&i.SentAt,
+			&i.FirstTryAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAnswered = `-- name: MarkAnswered :many
 UPDATE edi_messages SET status = $1, problems = $2
 WHERE company_id = $3 AND direction = 'out' AND line_id = $4
@@ -696,6 +872,24 @@ func (q *Queries) Resend(ctx context.Context, arg ResendParams) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const setDepotLocation = `-- name: SetDepotLocation :execrows
+UPDATE depots SET edi_location = $1 WHERE company_id = $2 AND id = $3
+`
+
+type SetDepotLocationParams struct {
+	EdiLocation string
+	CompanyID   string
+	ID          string
+}
+
+func (q *Queries) SetDepotLocation(ctx context.Context, arg SetDepotLocationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDepotLocation, arg.EdiLocation, arg.CompanyID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setEventsScanned = `-- name: SetEventsScanned :exec
 UPDATE company_edi SET events_scanned_at = $1 WHERE company_id = $2
 `
@@ -745,6 +939,23 @@ func (q *Queries) SetInResult(ctx context.Context, arg SetInResultParams) (int64
 		arg.CompanyID,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPartyID = `-- name: SetPartyID :execrows
+UPDATE company_edi SET party_id = $1 WHERE company_id = $2
+`
+
+type SetPartyIDParams struct {
+	PartyID   string
+	CompanyID string
+}
+
+func (q *Queries) SetPartyID(ctx context.Context, arg SetPartyIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPartyID, arg.PartyID, arg.CompanyID)
 	if err != nil {
 		return 0, err
 	}
@@ -836,4 +1047,26 @@ func (q *Queries) TakeNextRef(ctx context.Context, companyID string) (int64, err
 	var ref int64
 	err := row.Scan(&ref)
 	return ref, err
+}
+
+const upsertLineEDI = `-- name: UpsertLineEDI :exec
+INSERT INTO line_edi (company_id, line_id, mode, profile) VALUES ($1, $2, $3, $4)
+ON CONFLICT (company_id, line_id) DO UPDATE SET mode = EXCLUDED.mode, profile = EXCLUDED.profile, updated_at = now()
+`
+
+type UpsertLineEDIParams struct {
+	CompanyID string
+	LineID    string
+	Mode      string
+	Profile   json.RawMessage
+}
+
+func (q *Queries) UpsertLineEDI(ctx context.Context, arg UpsertLineEDIParams) error {
+	_, err := q.db.Exec(ctx, upsertLineEDI,
+		arg.CompanyID,
+		arg.LineID,
+		arg.Mode,
+		arg.Profile,
+	)
+	return err
 }

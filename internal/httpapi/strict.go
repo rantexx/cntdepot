@@ -74,6 +74,12 @@ var operationAccess = map[string]auth.Perm{
 
 	"ReportDashboard": auth.PermOffice, "ReportAgeing": auth.PermOffice, "GateLog": auth.PermOffice,
 	"ImportStock": auth.PermOffice, "ImportOrders": auth.PermOffice, "ImportTemplate": auth.PermOffice,
+
+	// Shipping-line EDI.
+	"ListEdiMessages": auth.PermManage, "GetEdiMessage": auth.PermManage, "GetEdiMessageRaw": auth.PermManage,
+	"ResendEdiMessage": auth.PermManage, "ProcessEdiMessage": auth.PermManage, "UploadEdi": auth.PermManage,
+	"ListLineEdi": auth.PermManage, "SetLineEdi": auth.PermManage, "TestLineEdi": auth.PermManage,
+	"GetEdiStatus": auth.PermManage, "SetEdiCompany": auth.PermManage, "SetDepotEdiLocation": auth.PermManage,
 }
 
 type requestKey struct{}

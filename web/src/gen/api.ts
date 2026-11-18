@@ -915,6 +915,179 @@ export interface GateSnapshot {
   settings: YardSettings;
 }
 
+export type EDIDirection = typeof EDIDirection[keyof typeof EDIDirection];
+
+
+export const EDIDirection = {
+  in: 'in',
+  out: 'out',
+} as const;
+
+export type EDIKind = typeof EDIKind[keyof typeof EDIKind];
+
+
+export const EDIKind = {
+  coparn: 'coparn',
+  codeco: 'codeco',
+  aperak: 'aperak',
+  report: 'report',
+  test: 'test',
+  unknown: 'unknown',
+} as const;
+
+export type EDIStatus = typeof EDIStatus[keyof typeof EDIStatus];
+
+
+export const EDIStatus = {
+  received: 'received',
+  pending: 'pending',
+  sent: 'sent',
+  accepted: 'accepted',
+  rejected: 'rejected',
+  failed: 'failed',
+  unmatched: 'unmatched',
+  error: 'error',
+  done: 'done',
+  ignored: 'ignored',
+} as const;
+
+export interface EDIProblem {
+  /** E... is an error, W... a warning */
+  code: string;
+  text: string;
+}
+
+/**
+ * inbound only
+ */
+export type EDIMessageVia = typeof EDIMessageVia[keyof typeof EDIMessageVia];
+
+
+export const EDIMessageVia = {
+  mail: 'mail',
+  upload: 'upload',
+} as const;
+
+export interface EDIMessage {
+  id: string;
+  direction: EDIDirection;
+  kind: EDIKind;
+  status: EDIStatus;
+  /** @nullable */
+  lineId: string | null;
+  /** @nullable */
+  depotId: string | null;
+  /** @nullable */
+  moveId: string | null;
+  /** @nullable */
+  orderId: string | null;
+  /**
+     * the inbound message an APERAK answers
+     * @nullable
+     */
+  answerOf: string | null;
+  /** the message function code (9 original, 5 replacement, 1 cancellation) */
+  function: string;
+  /** the UNB interchange reference */
+  controlRef: string;
+  /** the UNH message reference */
+  messageRef: string;
+  fileName: string;
+  /** in: the mail sender or the uploader */
+  sender: string;
+  /** inbound only */
+  via?: EDIMessageVia;
+  /** inbound mail only: SPF or DKIM passed */
+  trusted?: boolean;
+  problems: EDIProblem[];
+  tries: number;
+  createdAt: string;
+  /** @nullable */
+  sentAt: string | null;
+}
+
+export interface TypePair {
+  ours: string;
+  theirs: string;
+}
+
+export interface LineEDIProfile {
+  /** the line's UNB id on the files it sends us */
+  senderId: string;
+  senderQual: string;
+  /** the line's UNB id on the files we send it */
+  recipientId: string;
+  recipientQual: string;
+  /** the line's code in messages; empty is the line's own code */
+  lineCode: string;
+  /** where CODECO and APERAK go */
+  sendTo: string[];
+  /** who may mail us files */
+  allowedFrom: string[];
+  emptiesOnly: boolean;
+  sendAperak: boolean;
+  /** the UNB test flag */
+  test: boolean;
+  typeMap: TypePair[];
+  /** the daily report's recipients (mode report) */
+  reportTo: string[];
+  /** HH:MM depot-local; empty is 06:00 */
+  reportTime: string;
+}
+
+export type LineEDISettingsMode = typeof LineEDISettingsMode[keyof typeof LineEDISettingsMode];
+
+
+export const LineEDISettingsMode = {
+  edi: 'edi',
+  report: 'report',
+  off: 'off',
+} as const;
+
+export interface LineEDISettings {
+  mode: LineEDISettingsMode;
+  profile: LineEDIProfile;
+}
+
+export type LineEDIMode = typeof LineEDIMode[keyof typeof LineEDIMode];
+
+
+export const LineEDIMode = {
+  edi: 'edi',
+  report: 'report',
+  off: 'off',
+} as const;
+
+export interface LineEDI {
+  lineId: string;
+  /** the line's own code */
+  code: string;
+  mode: LineEDIMode;
+  profile: LineEDIProfile;
+}
+
+/**
+ * file means mail is saved, not sent
+ */
+export type EDIStatusInfoMail = typeof EDIStatusInfoMail[keyof typeof EDIStatusInfoMail];
+
+
+export const EDIStatusInfoMail = {
+  file: 'file',
+  postmark: 'postmark',
+} as const;
+
+export interface EDIStatusInfo {
+  /** file means mail is saved, not sent */
+  mail: EDIStatusInfoMail;
+  /** edi-<token>@<domain>, or empty with no inbound domain */
+  inboundAddress: string;
+  /** our EDI party id; empty until set */
+  partyId: string;
+  /** failed, rejected, unmatched or error messages of the last 30 days */
+  problems: number;
+}
+
 export type QParameter = string;
 
 export type PageParameter = number;
@@ -1109,6 +1282,48 @@ export type ImportStockBody = {
 
 export type ImportOrdersBody = {
   file: Blob | File;
+};
+
+export type SetDepotEdiLocationBody = {
+  location: string;
+};
+
+export type ListEdiMessagesParams = {
+  direction?: EDIDirection;
+  kind?: EDIKind;
+  status?: EDIStatus;
+  lineId?: string;
+  from?: string;
+  to?: string;
+  /**
+   * default 50, at most 500
+   * @minimum 1
+   */
+  limit?: number;
+  /** @minimum 0 */
+  offset?: number;
+};
+
+export type ListEdiMessages200 = {
+  messages: EDIMessage[];
+  total: number;
+};
+
+export type ProcessEdiMessageBody = {
+  lineId?: string;
+  depotId?: string;
+};
+
+export type UploadEdiBody = {
+  file: (Blob | File)[];
+};
+
+export type UploadEdi200 = {
+  messages: EDIMessage[];
+};
+
+export type SetEdiCompanyBody = {
+  partyId: string;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -4202,5 +4417,528 @@ export const importTemplate = async (name: 'stock.csv' | 'orders.csv', options?:
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type setDepotEdiLocationResponse204 = {
+  data: void
+  status: 204
+}
+
+export type setDepotEdiLocationResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type setDepotEdiLocationResponseSuccess = (setDepotEdiLocationResponse204) & {
+  headers: Headers;
+};
+export type setDepotEdiLocationResponseError = (setDepotEdiLocationResponseDefault) & {
+  headers: Headers;
+};
+
+export type setDepotEdiLocationResponse = (setDepotEdiLocationResponseSuccess | setDepotEdiLocationResponseError)
+
+export const getSetDepotEdiLocationUrl = (id: string,) => {
+
+
+
+
+  return `/api/depots/${id}/edi-location`
+}
+
+/**
+ * Managers. The depot's EDI location code (for example a UN/LOCODE), matched against a COPARN's location. Empty clears it. Upper-cased; at most 25 characters of A-Z 0-9 space . , - ( ) / =.
+ */
+export const setDepotEdiLocation = async (id: string,
+    setDepotEdiLocationBody: SetDepotEdiLocationBody, options?: Parameters<typeof http>[1]): Promise<setDepotEdiLocationResponse> => {
+
+  return http<setDepotEdiLocationResponse>(getSetDepotEdiLocationUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(setDepotEdiLocationBody)
+  }
+);}
+
+
+
+export type listEdiMessagesResponse200 = {
+  data: ListEdiMessages200
+  status: 200
+}
+
+export type listEdiMessagesResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listEdiMessagesResponseSuccess = (listEdiMessagesResponse200) & {
+  headers: Headers;
+};
+export type listEdiMessagesResponseError = (listEdiMessagesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listEdiMessagesResponse = (listEdiMessagesResponseSuccess | listEdiMessagesResponseError)
+
+export const getListEdiMessagesUrl = (params?: ListEdiMessagesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/edi/messages?${stringifiedParams}` : `/api/edi/messages`
+}
+
+/**
+ * Managers. The company's EDI messages in and out, newest first. from and to bound createdAt (from inclusive, to exclusive).
+ */
+export const listEdiMessages = async (params?: ListEdiMessagesParams, options?: Parameters<typeof http>[1]): Promise<listEdiMessagesResponse> => {
+
+  return http<listEdiMessagesResponse>(getListEdiMessagesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type getEdiMessageResponse200 = {
+  data: EDIMessage
+  status: 200
+}
+
+export type getEdiMessageResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getEdiMessageResponseSuccess = (getEdiMessageResponse200) & {
+  headers: Headers;
+};
+export type getEdiMessageResponseError = (getEdiMessageResponseDefault) & {
+  headers: Headers;
+};
+
+export type getEdiMessageResponse = (getEdiMessageResponseSuccess | getEdiMessageResponseError)
+
+export const getGetEdiMessageUrl = (id: string,) => {
+
+
+
+
+  return `/api/edi/messages/${id}`
+}
+
+export const getEdiMessage = async (id: string, options?: Parameters<typeof http>[1]): Promise<getEdiMessageResponse> => {
+
+  return http<getEdiMessageResponse>(getGetEdiMessageUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type getEdiMessageRawResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type getEdiMessageRawResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getEdiMessageRawResponseSuccess = (getEdiMessageRawResponse200) & {
+  headers: Headers;
+};
+export type getEdiMessageRawResponseError = (getEdiMessageRawResponseDefault) & {
+  headers: Headers;
+};
+
+export type getEdiMessageRawResponse = (getEdiMessageRawResponseSuccess | getEdiMessageRawResponseError)
+
+export const getGetEdiMessageRawUrl = (id: string,) => {
+
+
+
+
+  return `/api/edi/messages/${id}/raw`
+}
+
+/**
+ * The stored file as it was received or sent (a daily report is CSV).
+ */
+export const getEdiMessageRaw = async (id: string, options?: Parameters<typeof http>[1]): Promise<getEdiMessageRawResponse> => {
+
+  return http<getEdiMessageRawResponse>(getGetEdiMessageRawUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type resendEdiMessageResponse204 = {
+  data: void
+  status: 204
+}
+
+export type resendEdiMessageResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type resendEdiMessageResponseSuccess = (resendEdiMessageResponse204) & {
+  headers: Headers;
+};
+export type resendEdiMessageResponseError = (resendEdiMessageResponseDefault) & {
+  headers: Headers;
+};
+
+export type resendEdiMessageResponse = (resendEdiMessageResponseSuccess | resendEdiMessageResponseError)
+
+export const getResendEdiMessageUrl = (id: string,) => {
+
+
+
+
+  return `/api/edi/messages/${id}/resend`
+}
+
+/**
+ * An outbound message with a file becomes pending again with no tries. 409 E4098 for any other message.
+ */
+export const resendEdiMessage = async (id: string, options?: Parameters<typeof http>[1]): Promise<resendEdiMessageResponse> => {
+
+  return http<resendEdiMessageResponse>(getResendEdiMessageUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export type processEdiMessageResponse200 = {
+  data: EDIMessage
+  status: 200
+}
+
+export type processEdiMessageResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type processEdiMessageResponseSuccess = (processEdiMessageResponse200) & {
+  headers: Headers;
+};
+export type processEdiMessageResponseError = (processEdiMessageResponseDefault) & {
+  headers: Headers;
+};
+
+export type processEdiMessageResponse = (processEdiMessageResponseSuccess | processEdiMessageResponseError)
+
+export const getProcessEdiMessageUrl = (id: string,) => {
+
+
+
+
+  return `/api/edi/messages/${id}/process`
+}
+
+/**
+ * An unmatched or error inbound message is processed again with the line and depot chosen (omitted, they are found as when it arrived). 409 E4098 for any other message.
+ */
+export const processEdiMessage = async (id: string,
+    processEdiMessageBody: ProcessEdiMessageBody, options?: Parameters<typeof http>[1]): Promise<processEdiMessageResponse> => {
+
+  return http<processEdiMessageResponse>(getProcessEdiMessageUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(processEdiMessageBody)
+  }
+);}
+
+
+
+export type uploadEdiResponse200 = {
+  data: UploadEdi200
+  status: 200
+}
+
+export type uploadEdiResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type uploadEdiResponseSuccess = (uploadEdiResponse200) & {
+  headers: Headers;
+};
+export type uploadEdiResponseError = (uploadEdiResponseDefault) & {
+  headers: Headers;
+};
+
+export type uploadEdiResponse = (uploadEdiResponseSuccess | uploadEdiResponseError)
+
+export const getUploadEdiUrl = () => {
+
+
+
+
+  return `/api/edi/upload`
+}
+
+/**
+ * One or more EDI files (the file part repeated), each at most 2 MiB, handled like inbound mail.
+ */
+export const uploadEdi = async (uploadEdiBody: UploadEdiBody, options?: Parameters<typeof http>[1]): Promise<uploadEdiResponse> => {
+    const formData = new FormData();
+uploadEdiBody.file.forEach(value => formData.append(`file`, value));
+
+  return http<uploadEdiResponse>(getUploadEdiUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+export type listLineEdiResponse200 = {
+  data: LineEDI[]
+  status: 200
+}
+
+export type listLineEdiResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listLineEdiResponseSuccess = (listLineEdiResponse200) & {
+  headers: Headers;
+};
+export type listLineEdiResponseError = (listLineEdiResponseDefault) & {
+  headers: Headers;
+};
+
+export type listLineEdiResponse = (listLineEdiResponseSuccess | listLineEdiResponseError)
+
+export const getListLineEdiUrl = () => {
+
+
+
+
+  return `/api/edi/lines`
+}
+
+/**
+ * Every line of the company with its EDI settings; mode off when it has none.
+ */
+export const listLineEdi = async ( options?: Parameters<typeof http>[1]): Promise<listLineEdiResponse> => {
+
+  return http<listLineEdiResponse>(getListLineEdiUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type setLineEdiResponse200 = {
+  data: LineEDI
+  status: 200
+}
+
+export type setLineEdiResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setLineEdiResponseSuccess = (setLineEdiResponse200) & {
+  headers: Headers;
+};
+export type setLineEdiResponseError = (setLineEdiResponseDefault) & {
+  headers: Headers;
+};
+
+export type setLineEdiResponse = (setLineEdiResponseSuccess | setLineEdiResponseError)
+
+export const getSetLineEdiUrl = (lineId: string,) => {
+
+
+
+
+  return `/api/edi/lines/${lineId}`
+}
+
+/**
+ * 400 E4000 for an address that is not a bare e-mail address, a reportTime not HH:MM, mode edi without
+ * recipientId or before the company's party id is set, or a senderId another line on EDI already uses.
+ */
+export const setLineEdi = async (lineId: string,
+    lineEDISettings: LineEDISettings, options?: Parameters<typeof http>[1]): Promise<setLineEdiResponse> => {
+
+  return http<setLineEdiResponse>(getSetLineEdiUrl(lineId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(lineEDISettings)
+  }
+);}
+
+
+
+export type testLineEdiResponse200 = {
+  data: EDIMessage
+  status: 200
+}
+
+export type testLineEdiResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type testLineEdiResponseSuccess = (testLineEdiResponse200) & {
+  headers: Headers;
+};
+export type testLineEdiResponseError = (testLineEdiResponseDefault) & {
+  headers: Headers;
+};
+
+export type testLineEdiResponse = (testLineEdiResponseSuccess | testLineEdiResponseError)
+
+export const getTestLineEdiUrl = (lineId: string,) => {
+
+
+
+
+  return `/api/edi/lines/${lineId}/test`
+}
+
+/**
+ * Queues a test CODECO (a made-up gate-in with the UNB test flag) to a line on EDI. 409 E4098 when the line is not on EDI.
+ */
+export const testLineEdi = async (lineId: string, options?: Parameters<typeof http>[1]): Promise<testLineEdiResponse> => {
+
+  return http<testLineEdiResponse>(getTestLineEdiUrl(lineId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export type getEdiStatusResponse200 = {
+  data: EDIStatusInfo
+  status: 200
+}
+
+export type getEdiStatusResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getEdiStatusResponseSuccess = (getEdiStatusResponse200) & {
+  headers: Headers;
+};
+export type getEdiStatusResponseError = (getEdiStatusResponseDefault) & {
+  headers: Headers;
+};
+
+export type getEdiStatusResponse = (getEdiStatusResponseSuccess | getEdiStatusResponseError)
+
+export const getGetEdiStatusUrl = () => {
+
+
+
+
+  return `/api/edi/status`
+}
+
+export const getEdiStatus = async ( options?: Parameters<typeof http>[1]): Promise<getEdiStatusResponse> => {
+
+  return http<getEdiStatusResponse>(getGetEdiStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type setEdiCompanyResponse204 = {
+  data: void
+  status: 204
+}
+
+export type setEdiCompanyResponseDefault = {
+  data: ErrorResponse
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type setEdiCompanyResponseSuccess = (setEdiCompanyResponse204) & {
+  headers: Headers;
+};
+export type setEdiCompanyResponseError = (setEdiCompanyResponseDefault) & {
+  headers: Headers;
+};
+
+export type setEdiCompanyResponse = (setEdiCompanyResponseSuccess | setEdiCompanyResponseError)
+
+export const getSetEdiCompanyUrl = () => {
+
+
+
+
+  return `/api/edi/company`
+}
+
+/**
+ * Our EDI party id (the UNB sender of what we send). At most 35 characters of A-Z 0-9 space . , - ( ) / =.
+ */
+export const setEdiCompany = async (setEdiCompanyBody: SetEdiCompanyBody, options?: Parameters<typeof http>[1]): Promise<setEdiCompanyResponse> => {
+
+  return http<setEdiCompanyResponse>(getSetEdiCompanyUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }, options?.headers),
+    body: JSON.stringify(setEdiCompanyBody)
   }
 );}

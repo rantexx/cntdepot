@@ -755,6 +755,163 @@ paths:
           content:
             text/csv: {schema: {type: string, format: binary}}
         default: {$ref: "#/components/responses/Error"}
+  /api/depots/{id}/edi-location:
+    put:
+      operationId: setDepotEdiLocation
+      description: Managers. The depot's EDI location code (for example a UN/LOCODE), matched against a COPARN's location. Empty clears it. Upper-cased; at most 25 characters of A-Z 0-9 space . , - ( ) / =.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [location]
+              properties: {location: {type: string}}
+      responses:
+        "204": {description: saved}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/messages:
+    get:
+      operationId: listEdiMessages
+      description: Managers. The company's EDI messages in and out, newest first. from and to bound createdAt (from inclusive, to exclusive).
+      parameters:
+        - {name: direction, in: query, schema: {$ref: "#/components/schemas/EDIDirection"}}
+        - {name: kind, in: query, schema: {$ref: "#/components/schemas/EDIKind"}}
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/EDIStatus"}}
+        - {name: lineId, in: query, schema: {type: string}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: limit, in: query, description: "default 50, at most 500", schema: {type: integer, minimum: 1}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, total]
+                properties:
+                  messages: {type: array, items: {$ref: "#/components/schemas/EDIMessage"}}
+                  total: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/messages/{id}:
+    get:
+      operationId: getEdiMessage
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/EDIMessage"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/messages/{id}/raw:
+    get:
+      operationId: getEdiMessageRaw
+      description: The stored file as it was received or sent (a daily report is CSV).
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "200":
+          description: ok
+          headers:
+            Content-Disposition: {schema: {type: string}}
+          content:
+            application/EDIFACT: {schema: {type: string, format: binary}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/messages/{id}/resend:
+    post:
+      operationId: resendEdiMessage
+      description: An outbound message with a file becomes pending again with no tries. 409 E4098 for any other message.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      responses:
+        "204": {description: queued}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/messages/{id}/process:
+    post:
+      operationId: processEdiMessage
+      description: An unmatched or error inbound message is processed again with the line and depot chosen (omitted, they are found as when it arrived). 409 E4098 for any other message.
+      parameters: [{$ref: "#/components/parameters/Id"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {lineId: {type: string}, depotId: {type: string}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/EDIMessage"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/upload:
+    post:
+      operationId: uploadEdi
+      description: One or more EDI files (the file part repeated), each at most 2 MiB, handled like inbound mail.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: array, items: {type: string, format: binary}}
+      responses:
+        "200":
+          description: stored and processed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages: {type: array, items: {$ref: "#/components/schemas/EDIMessage"}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/lines:
+    get:
+      operationId: listLineEdi
+      description: Every line of the company with its EDI settings; mode off when it has none.
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/LineEDI"}}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/lines/{lineId}:
+    put:
+      operationId: setLineEdi
+      description: |
+        400 E4000 for an address that is not a bare e-mail address, a reportTime not HH:MM, mode edi without
+        recipientId or before the company's party id is set, or a senderId another line on EDI already uses.
+      parameters: [{name: lineId, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/LineEDISettings"}}}
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/LineEDI"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/lines/{lineId}/test:
+    post:
+      operationId: testLineEdi
+      description: Queues a test CODECO (a made-up gate-in with the UNB test flag) to a line on EDI. 409 E4098 when the line is not on EDI.
+      parameters: [{name: lineId, in: path, required: true, schema: {type: string}}]
+      responses:
+        "200": {description: queued, content: {application/json: {schema: {$ref: "#/components/schemas/EDIMessage"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/status:
+    get:
+      operationId: getEdiStatus
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/EDIStatusInfo"}}}}
+        default: {$ref: "#/components/responses/Error"}
+  /api/edi/company:
+    put:
+      operationId: setEdiCompany
+      description: Our EDI party id (the UNB sender of what we send). At most 35 characters of A-Z 0-9 space . , - ( ) / =.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [partyId]
+              properties: {partyId: {type: string}}
+      responses:
+        "204": {description: saved}
+        default: {$ref: "#/components/responses/Error"}
 components:
   parameters:
     Id: {name: id, in: path, required: true, schema: {type: string}}
@@ -1445,3 +1602,79 @@ components:
               description: {type: string}
               photoIds: {type: array, items: {type: string}}
         flags: {type: array, items: {$ref: "#/components/schemas/GateFlag"}}
+    EDIDirection: {type: string, enum: [in, out]}
+    EDIKind: {type: string, enum: [coparn, codeco, aperak, report, test, unknown]}
+    EDIStatus: {type: string, enum: [received, pending, sent, accepted, rejected, failed, unmatched, error, done, ignored]}
+    EDIProblem:
+      type: object
+      required: [code, text]
+      properties:
+        code: {type: string, description: "E... is an error, W... a warning"}
+        text: {type: string}
+    EDIMessage:
+      type: object
+      required: [id, direction, kind, status, lineId, depotId, moveId, orderId, answerOf, function, controlRef, messageRef, fileName, sender, problems, tries, createdAt, sentAt]
+      properties:
+        id: {type: string}
+        direction: {$ref: "#/components/schemas/EDIDirection"}
+        kind: {$ref: "#/components/schemas/EDIKind"}
+        status: {$ref: "#/components/schemas/EDIStatus"}
+        lineId: {type: string, nullable: true}
+        depotId: {type: string, nullable: true}
+        moveId: {type: string, nullable: true}
+        orderId: {type: string, nullable: true}
+        answerOf: {type: string, nullable: true, description: the inbound message an APERAK answers}
+        function: {type: string, description: "the message function code (9 original, 5 replacement, 1 cancellation)"}
+        controlRef: {type: string, description: the UNB interchange reference}
+        messageRef: {type: string, description: the UNH message reference}
+        fileName: {type: string}
+        sender: {type: string, description: "in: the mail sender or the uploader"}
+        via: {type: string, enum: [mail, upload], description: inbound only}
+        trusted: {type: boolean, description: "inbound mail only: SPF or DKIM passed"}
+        problems: {type: array, items: {$ref: "#/components/schemas/EDIProblem"}}
+        tries: {type: integer}
+        createdAt: {type: string, format: date-time}
+        sentAt: {type: string, format: date-time, nullable: true}
+    TypePair:
+      type: object
+      required: [ours, theirs]
+      properties: {ours: {type: string}, theirs: {type: string}}
+    LineEDIProfile:
+      type: object
+      required: [senderId, senderQual, recipientId, recipientQual, lineCode, sendTo, allowedFrom, emptiesOnly, sendAperak, test, typeMap, reportTo, reportTime]
+      properties:
+        senderId: {type: string, description: the line's UNB id on the files it sends us}
+        senderQual: {type: string}
+        recipientId: {type: string, description: the line's UNB id on the files we send it}
+        recipientQual: {type: string}
+        lineCode: {type: string, description: the line's code in messages; empty is the line's own code}
+        sendTo: {type: array, items: {type: string}, description: where CODECO and APERAK go}
+        allowedFrom: {type: array, items: {type: string}, description: who may mail us files}
+        emptiesOnly: {type: boolean}
+        sendAperak: {type: boolean}
+        test: {type: boolean, description: the UNB test flag}
+        typeMap: {type: array, items: {$ref: "#/components/schemas/TypePair"}}
+        reportTo: {type: array, items: {type: string}, description: the daily report's recipients (mode report)}
+        reportTime: {type: string, description: "HH:MM depot-local; empty is 06:00"}
+    LineEDISettings:
+      type: object
+      required: [mode, profile]
+      properties:
+        mode: {type: string, enum: [edi, report, "off"]}
+        profile: {$ref: "#/components/schemas/LineEDIProfile"}
+    LineEDI:
+      type: object
+      required: [lineId, code, mode, profile]
+      properties:
+        lineId: {type: string}
+        code: {type: string, description: the line's own code}
+        mode: {type: string, enum: [edi, report, "off"]}
+        profile: {$ref: "#/components/schemas/LineEDIProfile"}
+    EDIStatusInfo:
+      type: object
+      required: [mail, inboundAddress, partyId, problems]
+      properties:
+        mail: {type: string, enum: [file, postmark], description: "file means mail is saved, not sent"}
+        inboundAddress: {type: string, description: "edi-<token>@<domain>, or empty with no inbound domain"}
+        partyId: {type: string, description: our EDI party id; empty until set}
+        problems: {type: integer, description: "failed, rejected, unmatched or error messages of the last 30 days"}
