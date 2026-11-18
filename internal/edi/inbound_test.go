@@ -135,15 +135,34 @@ func (x *fx) order(id, depot string) (yard.Order, []yard.OrderItem) {
 // answer reads the APERAK of an out row.
 func (x *fx) answer(m Message) edifact.Answer {
 	x.t.Helper()
+	as := x.answers(m)
+	if len(as) != 1 {
+		x.t.Fatalf("%d APERAK messages", len(as))
+	}
+	return as[0]
+}
+
+// answers reads every APERAK message in an out row's interchange.
+func (x *fx) answers(m Message) []edifact.Answer {
+	x.t.Helper()
+	ic, err := edifact.Parse(x.raw(m))
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	var out []edifact.Answer
+	for _, msg := range ic.Messages {
+		out = append(out, edifact.ReadAPERAK(msg))
+	}
+	return out
+}
+
+func (x *fx) raw(m Message) []byte {
+	x.t.Helper()
 	data, err := x.bl.Get(m.BlobDigest)
 	if err != nil {
 		x.t.Fatal(err)
 	}
-	ic, err := edifact.Parse(data)
-	if err != nil || len(ic.Messages) != 1 {
-		x.t.Fatalf("APERAK %s: %v", data, err)
-	}
-	return edifact.ReadAPERAK(ic.Messages[0])
+	return data
 }
 
 func codes(ps []edifact.Problem) []string {
@@ -284,6 +303,44 @@ func TestReplaceKeepsGatedItems(t *testing.T) {
 	if a := x.answer(out[1]); !a.Accepted {
 		t.Fatalf("APERAK = %+v", a)
 	}
+	if raw := string(x.raw(out[1])); !strings.Contains(raw, "W-KEPT MSCU1234566 ALREADY GATED") {
+		t.Fatalf("APERAK lacks the kept warning: %s", raw)
+	}
+}
+
+const twoMessages = `UNA:+.? '
+UNB+UNOA:2+MSC:ZZZ+DEPOTX:ZZZ+261118:1400+20020'
+UNH+1+COPARN:D:00B:UN:SMDG21'
+BGM+108+RLS4471+9+AB'
+RFF+ATY:RLS4471'
+EQD+CN+MSCU1234566+22G1:102:5+2++4'
+UNT+5+1'
+UNH+2+COPARN:D:00B:UN:SMDG21'
+BGM+108+RLS9999+1+AB'
+RFF+ATY:RLS9999'
+UNT+4+2'
+UNZ+2+20020'
+`
+
+// Each COPARN message gets its own APERAK answer.
+func TestOneAnswerPerMessage(t *testing.T) {
+	x := newFx(t)
+	m := x.upload([]byte(twoMessages))
+	if m.Status != "error" || !slices.Equal(codes(m.Problems), []string{"E-NOORD"}) || !strings.HasPrefix(m.Problems[0].Text, "message 2: ") {
+		t.Fatalf("message = %+v", m)
+	}
+	if o, _ := x.order(m.OrderID, "d1"); o.Reference != "RLS4471" || o.Status != "open" {
+		t.Fatalf("order = %+v", o)
+	}
+	out := x.messages("out")
+	if len(out) != 1 {
+		t.Fatalf("out = %+v", out)
+	}
+	as := x.answers(out[0])
+	if len(as) != 2 || !as[0].Accepted || !slices.Equal(as[0].RefersTo, []string{"1"}) ||
+		as[1].Accepted || !slices.Equal(as[1].RefersTo, []string{"2"}) || !slices.Equal(codes(as[1].Problems), []string{"E-NOORD"}) {
+		t.Fatalf("APERAKs = %+v", as)
+	}
 }
 
 func TestCancelCancelsOrder(t *testing.T) {
@@ -349,6 +406,43 @@ func TestMultiDepotWithoutLocationIsError(t *testing.T) {
 	}
 }
 
+// A file left "received" (the worker's case) is processed with the trust it
+// arrived with.
+func TestStoredMailKeepsItsTrust(t *testing.T) {
+	x := newFx(t)
+	data := file(t, "coparn_release.edi")
+	ctx := tenancy.With(context.Background(), tenancy.Scope{CompanyID: "A", UserID: mailActor})
+	untrusted, err := x.s.store(ctx, "f.edi", data, lineFrom, "mail", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := x.s.processStored(ctx, untrusted.ID); err != nil || m.Status != "unmatched" || m.Via != "mail" || m.Trusted {
+		t.Fatalf("untrusted = %+v, %v", m, err)
+	}
+	trusted, err := x.s.store(ctx, "f.edi", data, lineFrom, "mail", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := x.s.processStored(ctx, trusted.ID); err != nil || m.Status != "done" || !m.Trusted {
+		t.Fatalf("trusted = %+v, %v", m, err)
+	}
+}
+
+// A location code must match when the company has set depot locations; a
+// one-depot company without locations takes every file.
+func TestLocationMustMatchSetLocations(t *testing.T) {
+	x := newFx(t)
+	x.exec(`UPDATE depots SET edi_location = 'TRIST' WHERE id = 'd1'`)
+	m := x.upload(file(t, "coparn_release.edi")) // names TRMER
+	if m.Status != "error" || !slices.Equal(codes(m.Problems), []string{"E-DEPOT"}) {
+		t.Fatalf("message = %+v", m)
+	}
+	x.exec(`UPDATE depots SET edi_location = '' WHERE id = 'd1'`)
+	if m, err := x.s.Process(ctxOf("A"), m.ID, "", "", "u1"); err != nil || m.Status != "done" || m.DepotID != "d1" {
+		t.Fatalf("Process = %+v, %v", m, err)
+	}
+}
+
 func TestLocationPicksDepot(t *testing.T) {
 	x := newFx(t)
 	x.exec(`INSERT INTO depots (company_id, id, name, edi_location) VALUES ('A', 'd2', 'D2', 'trmer')`)
@@ -389,6 +483,25 @@ func TestAPERAKInMarksOutRejected(t *testing.T) {
 	out := x.messages("out")
 	if len(out) != 1 || out[0].Status != "rejected" || len(out[0].Problems) != 2 || out[0].Problems[0].Text != "EQUIPMENT NUMBER UNKNOWN" {
 		t.Fatalf("out = %+v", out)
+	}
+	// An answer by move id (the CODECO document number) leaves a later CODECO
+	// of that move, still queued, alone.
+	mv, err := x.moves.CreateMove(ctxOf("A"), "1", false, "clerk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.exec(`INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, move_id, message_ref, control_ref)
+		VALUES ('A', 'c2', 'out', 'codeco', 'sent', 'lA', $1, '30002', '30002'),
+		       ('A', 'c3', 'out', 'codeco', 'pending', 'lA', $1, '30003', '30003')`, mv.ID)
+	byMove := strings.Replace(string(file(t, "aperak_reject.edi")), "RFF+ACW:30001", "RFF+ACW:"+mv.ID, 1)
+	byMove = strings.ReplaceAll(byMove, "88123", "88124") // another interchange
+	if m := x.upload([]byte(byMove)); m.Status != "done" {
+		t.Fatalf("message = %+v", m)
+	}
+	for id, want := range map[string]string{"c2": "rejected", "c3": "pending"} {
+		if got, err := x.s.Message(ctxOf("A"), id); err != nil || got.Status != want {
+			t.Fatalf("%s = %+v, %v; want %s", id, got, err, want)
+		}
 	}
 	// An answer to nothing of ours is unmatched.
 	x.exec(`DELETE FROM edi_messages`)

@@ -105,6 +105,8 @@ type EdiMessage struct {
 	BlobDigest    string
 	FileName      string
 	Sender        string
+	Via           string
+	Trusted       bool
 	Problems      json.RawMessage
 	Tries         int64
 	NextAttemptAt *time.Time

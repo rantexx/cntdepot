@@ -83,7 +83,7 @@ func (q *Queries) GetCompanyEDI(ctx context.Context, companyID string) (CompanyE
 }
 
 const getMessage = `-- name: GetMessage :one
-SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, problems, tries, next_attempt_at, report_day, created_at, sent_at FROM edi_messages WHERE company_id = $1 AND id = $2
+SELECT company_id, id, direction, kind, status, line_id, depot_id, move_id, order_id, event_id, answer_of, function, control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, tries, next_attempt_at, report_day, created_at, sent_at FROM edi_messages WHERE company_id = $1 AND id = $2
 `
 
 type GetMessageParams struct {
@@ -113,6 +113,8 @@ func (q *Queries) GetMessage(ctx context.Context, arg GetMessageParams) (EdiMess
 		&i.BlobDigest,
 		&i.FileName,
 		&i.Sender,
+		&i.Via,
+		&i.Trusted,
 		&i.Problems,
 		&i.Tries,
 		&i.NextAttemptAt,
@@ -154,9 +156,9 @@ func (q *Queries) InsertCompanyEDI(ctx context.Context, arg InsertCompanyEDIPara
 
 const insertMessage = `-- name: InsertMessage :exec
 INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, answer_of, function,
-    control_ref, message_ref, content_hash, blob_digest, file_name, sender, problems, next_attempt_at)
+    control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, next_attempt_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-    $10, $11, $12, $13, $14, $15, $16, $17)
+    $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 `
 
 type InsertMessageParams struct {
@@ -175,6 +177,8 @@ type InsertMessageParams struct {
 	BlobDigest    string
 	FileName      string
 	Sender        string
+	Via           string
+	Trusted       bool
 	Problems      json.RawMessage
 	NextAttemptAt *time.Time
 }
@@ -196,6 +200,8 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 		arg.BlobDigest,
 		arg.FileName,
 		arg.Sender,
+		arg.Via,
+		arg.Trusted,
 		arg.Problems,
 		arg.NextAttemptAt,
 	)
@@ -235,6 +241,7 @@ func (q *Queries) ListLineEDI(ctx context.Context, companyID string) ([]LineEdi,
 const markAnswered = `-- name: MarkAnswered :many
 UPDATE edi_messages SET status = $1, problems = $2
 WHERE company_id = $3 AND direction = 'out' AND line_id = $4
+  AND kind IN ('codeco', 'test') AND status IN ('sent', 'accepted', 'rejected')
   AND (message_ref = ANY($5::text[]) OR control_ref = ANY($5::text[]) OR move_id = ANY($5::text[]))
 RETURNING id
 `
@@ -248,7 +255,8 @@ type MarkAnsweredParams struct {
 }
 
 // An APERAK from a line answers our messages to it by message or interchange
-// reference, or by the CODECO document number (the move id).
+// reference, or by the CODECO document number (the move id). Only messages
+// already sent: a later CODECO of the same move still queued is not answered.
 func (q *Queries) MarkAnswered(ctx context.Context, arg MarkAnsweredParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, markAnswered,
 		arg.Status,

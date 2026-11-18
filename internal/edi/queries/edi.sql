@@ -17,9 +17,9 @@ SELECT edi_companies()::text AS company_id;
 
 -- name: InsertMessage :exec
 INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, answer_of, function,
-    control_ref, message_ref, content_hash, blob_digest, file_name, sender, problems, next_attempt_at)
+    control_ref, message_ref, content_hash, blob_digest, file_name, sender, via, trusted, problems, next_attempt_at)
 VALUES (@company_id, @id, @direction, @kind, @status, @line_id, @depot_id, @answer_of, @function,
-    @control_ref, @message_ref, @content_hash, @blob_digest, @file_name, @sender, @problems, @next_attempt_at);
+    @control_ref, @message_ref, @content_hash, @blob_digest, @file_name, @sender, @via, @trusted, @problems, @next_attempt_at);
 
 -- name: GetMessage :one
 SELECT * FROM edi_messages WHERE company_id = @company_id AND id = @id;
@@ -46,9 +46,11 @@ SELECT * FROM line_edi WHERE company_id = @company_id ORDER BY line_id;
 SELECT id, name, edi_location FROM depots WHERE company_id = @company_id ORDER BY id;
 
 -- An APERAK from a line answers our messages to it by message or interchange
--- reference, or by the CODECO document number (the move id).
+-- reference, or by the CODECO document number (the move id). Only messages
+-- already sent: a later CODECO of the same move still queued is not answered.
 -- name: MarkAnswered :many
 UPDATE edi_messages SET status = @status, problems = @problems
 WHERE company_id = @company_id AND direction = 'out' AND line_id = @line_id
+  AND kind IN ('codeco', 'test') AND status IN ('sent', 'accepted', 'rejected')
   AND (message_ref = ANY(@refs::text[]) OR control_ref = ANY(@refs::text[]) OR move_id = ANY(@refs::text[]))
 RETURNING id;

@@ -44,7 +44,8 @@ type Message struct {
 	ID, Direction, Kind, Status                string
 	LineID, DepotID, MoveID, OrderID, AnswerOf string
 	Function, ControlRef, MessageRef           string
-	BlobDigest, FileName, Sender               string
+	BlobDigest, FileName, Sender, Via          string
+	Trusted                                    bool
 	Problems                                   []edifact.Problem
 	Tries                                      int64
 	CreatedAt                                  time.Time
@@ -63,7 +64,7 @@ func messageOf(r edidb.EdiMessage) (Message, error) {
 		ID: r.ID, Direction: r.Direction, Kind: r.Kind, Status: r.Status,
 		LineID: str(r.LineID), DepotID: str(r.DepotID), MoveID: str(r.MoveID), OrderID: str(r.OrderID), AnswerOf: str(r.AnswerOf),
 		Function: r.Function, ControlRef: r.ControlRef, MessageRef: r.MessageRef,
-		BlobDigest: r.BlobDigest, FileName: r.FileName, Sender: r.Sender,
+		BlobDigest: r.BlobDigest, FileName: r.FileName, Sender: r.Sender, Via: r.Via, Trusted: r.Trusted,
 		Tries: r.Tries, CreatedAt: r.CreatedAt, SentAt: r.SentAt,
 	}
 	return m, json.Unmarshal(r.Problems, &m.Problems)

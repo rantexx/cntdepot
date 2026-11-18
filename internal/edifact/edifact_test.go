@@ -199,6 +199,20 @@ func TestReadCOPARNWithoutBGM(t *testing.T) {
 	}
 }
 
+func TestReadCOPARNTypeCodes(t *testing.T) {
+	for code, ok := range map[string]bool{"22G1": true, "45R1": true, "L5G1": true, "M2G1": true, "22g1": false, "20DV": true,
+		"A2G1": false, "22G": false, "22G10": false, "22_1": false} {
+		m := Message{Type: "COPARN:D:00B:UN:SMDG21", Segments: []Segment{
+			{Tag: "BGM", Elements: [][]string{{"108"}, {"R1"}, {"9"}}},
+			{Tag: "EQD", Elements: [][]string{{"CN"}, nil, {code, "102", "5"}, nil, nil, {"4"}}},
+		}}
+		_, problems := ReadCOPARN(m)
+		if got := len(problems) == 0; got != ok || (!ok && (len(problems) != 1 || problems[0].Code != "E-TYPE")) {
+			t.Errorf("type %q: problems = %+v", code, problems)
+		}
+	}
+}
+
 func goldenMove() GateMove {
 	return GateMove{
 		Function: "9", Direction: "in", DocNumber: "MV20261118001", Number: "MSCU1234566", TypeCode: "22G1",

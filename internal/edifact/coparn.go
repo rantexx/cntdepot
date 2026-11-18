@@ -2,6 +2,7 @@ package edifact
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -102,6 +103,9 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 					item.Number = v.Normalized
 				}
 			}
+			if item.TypeCode != "" && !sizeType.MatchString(item.TypeCode) {
+				add(pos, s, "E-TYPE", "type %q is not an ISO 6346 size-type code", item.TypeCode)
+			}
 			fe := s.Get(5, 0)
 			if item.FullEmpty = fullEmptyCode[fe]; item.FullEmpty == "" {
 				add(pos, s, "E-FE", "full or empty indicator %q is not 4 or 5", fe)
@@ -154,6 +158,10 @@ func ReadCOPARN(m Message) (Order, []Problem) {
 	}
 	return o, problems
 }
+
+// sizeType is an ISO 6346 size-type code: length (a digit, or L M N P for
+// longer boxes), then height and type.
+var sizeType = regexp.MustCompile(`^[0-9LMNP][0-9A-Z]{3}$`)
 
 // readDate reads a DTM value in format 102 (CCYYMMDD, taken as 23:59 that
 // day) or 203 (CCYYMMDDHHMM).

@@ -29,6 +29,15 @@ type how struct {
 	from, actor     string
 }
 
+// howOf is how a stored file is handled as it arrived: a mailed file with the
+// trust it arrived with and actor "edi", an upload as its uploader.
+func howOf(m Message) how {
+	if m.Via == "mail" {
+		return how{mail: true, trusted: m.Trusted, from: m.Sender, actor: mailActor}
+	}
+	return how{actor: m.Sender}
+}
+
 // ReceiveMail stores and processes each attachment of a mail to a company's
 // edi-<token>@ address. It needs no scope. Mail to no known address is
 // dropped with a log line. It fails only when a file could not be stored;
@@ -46,12 +55,12 @@ func (s *Service) ReceiveMail(ctx context.Context, in mail.Inbound) error {
 		log.Printf("edi: mail from %s to company %s has no attachment, dropped", in.From, company)
 	}
 	for _, a := range in.Attachments {
-		id, digest, err := s.store(ctx, a.Name, a.Data, in.From)
+		m, err := s.store(ctx, a.Name, a.Data, in.From, "mail", in.Trusted)
 		if err != nil {
 			return err
 		}
-		if _, err := s.process(ctx, id, digest, a.Data, how{mail: true, trusted: in.Trusted, from: in.From, actor: mailActor}); err != nil {
-			log.Printf("edi: company %s message %s left received: %v", company, id, err)
+		if _, err := s.process(ctx, m, a.Data, howOf(m)); err != nil {
+			log.Printf("edi: company %s message %s left received: %v", company, m.ID, err)
 		}
 	}
 	return nil
@@ -75,45 +84,67 @@ func (s *Service) inboundCompany(ctx context.Context, to []string) (string, erro
 
 // Upload stores and processes a file a signed-in manager uploaded (scoped).
 func (s *Service) Upload(ctx context.Context, name string, data []byte, actor string) ([]Message, error) {
-	id, digest, err := s.store(ctx, name, data, actor)
+	m, err := s.store(ctx, name, data, actor, "upload", false)
 	if err != nil {
 		return nil, err
 	}
-	m, err := s.process(ctx, id, digest, data, how{actor: actor})
-	if err != nil {
+	if m, err = s.process(ctx, m, data, howOf(m)); err != nil {
 		return nil, err
 	}
 	return []Message{m}, nil
 }
 
 // Process handles an unmatched or error message again with the line and
-// depot the office chose ("" to find them as for an upload).
+// depot the office chose ("" to find them as when it arrived).
 func (s *Service) Process(ctx context.Context, id, lineID, depotID, actor string) (Message, error) {
-	m, err := s.Message(ctx, id)
+	m, data, err := s.load(ctx, id)
 	if err != nil {
 		return Message{}, err
 	}
 	if m.Direction != "in" || (m.Status != "unmatched" && m.Status != "error") {
 		return Message{}, ErrNotProcessable
 	}
-	data, err := s.blob.Get(m.BlobDigest)
+	h := howOf(m)
+	h.lineID, h.depotID, h.actor = lineID, depotID, actor
+	return s.process(ctx, m, data, h)
+}
+
+// processStored processes a stored inbound file as it arrived: the worker's
+// path for files left "received".
+func (s *Service) processStored(ctx context.Context, id string) (Message, error) {
+	m, data, err := s.load(ctx, id)
 	if err != nil {
 		return Message{}, err
 	}
-	return s.process(ctx, id, m.BlobDigest, data, how{lineID: lineID, depotID: depotID, actor: actor})
+	if m.Direction != "in" {
+		return Message{}, ErrNotProcessable
+	}
+	return s.process(ctx, m, data, howOf(m))
+}
+
+func (s *Service) load(ctx context.Context, id string) (Message, []byte, error) {
+	m, err := s.Message(ctx, id)
+	if err != nil {
+		return Message{}, nil, err
+	}
+	data, err := s.blob.Get(m.BlobDigest)
+	return m, data, err
 }
 
 // store keeps the raw file and commits its "received" row before anything
 // reads it, so no file is ever lost. The blob digest is the content hash.
-func (s *Service) store(ctx context.Context, name string, data []byte, sender string) (id, digest string, err error) {
-	if digest, err = s.blob.Put(data); err != nil {
-		return "", "", err
+// via is "mail" or "upload"; trusted is the mail's authentication.
+func (s *Service) store(ctx context.Context, name string, data []byte, sender, via string, trusted bool) (Message, error) {
+	digest, err := s.blob.Put(data)
+	if err != nil {
+		return Message{}, err
 	}
-	id = newID()
-	return id, digest, s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
+	m := Message{ID: newID(), Direction: "in", Kind: "unknown", Status: "received", BlobDigest: digest,
+		FileName: name, Sender: sender, Via: via, Trusted: trusted}
+	return m, s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		return q.InsertMessage(ctx, edidb.InsertMessageParams{
-			CompanyID: sc.CompanyID, ID: id, Direction: "in", Kind: "unknown", Status: "received",
-			ContentHash: digest, BlobDigest: digest, FileName: name, Sender: sender, Problems: problemsJSON(nil),
+			CompanyID: sc.CompanyID, ID: m.ID, Direction: m.Direction, Kind: m.Kind, Status: m.Status,
+			ContentHash: digest, BlobDigest: digest, FileName: name, Sender: sender, Via: via, Trusted: trusted, Problems: problemsJSON(nil),
 		})
 	})
 }
@@ -135,11 +166,11 @@ func kindOf(ic edifact.Interchange) string {
 	return cmp.Or(kind, "unknown")
 }
 
-// process reads stored file id and applies it: the steps of the inbound
-// algorithm (parse, line, repeat, orders or answers, APERAK). It returns an
-// error only when it could not finish; the row then stays as it was.
-func (s *Service) process(ctx context.Context, id, digest string, data []byte, h how) (Message, error) {
-	r := edidb.SetInResultParams{ID: id, Kind: "unknown", Status: "error"}
+// process reads stored file m (data) and applies it: the steps of the
+// inbound algorithm (parse, line, repeat, orders or answers, APERAK). It
+// returns an error only when it could not finish; the row then stays as it was.
+func (s *Service) process(ctx context.Context, m Message, data []byte, h how) (Message, error) {
+	r := edidb.SetInResultParams{ID: m.ID, Kind: "unknown", Status: "error"}
 	var problems []edifact.Problem
 	ic, err := edifact.Parse(data)
 	if err != nil {
@@ -164,7 +195,7 @@ func (s *Service) process(ctx context.Context, id, digest string, data []byte, h
 	if ic.ControlRef != "" {
 		var rep edidb.RepeatsOfRow
 		if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) (err error) {
-			rep, err = q.RepeatsOf(ctx, edidb.RepeatsOfParams{CompanyID: sc.CompanyID, ID: id, LineID: r.LineID, ControlRef: ic.ControlRef, ContentHash: digest})
+			rep, err = q.RepeatsOf(ctx, edidb.RepeatsOfParams{CompanyID: sc.CompanyID, ID: m.ID, LineID: r.LineID, ControlRef: ic.ControlRef, ContentHash: m.BlobDigest})
 			return err
 		}); err != nil {
 			return Message{}, err
@@ -188,15 +219,20 @@ func (s *Service) process(ctx context.Context, id, digest string, data []byte, h
 		}
 		return s.finish(ctx, r, problems, ic, nil, line.Profile)
 	}
-	var refs []string
-	for _, m := range ic.Messages {
-		a, err := s.order(ctx, id, line, m, h)
+	var answers []edifact.Answer
+	for i, msg := range ic.Messages {
+		a, err := s.order(ctx, m.ID, line, msg, h)
 		if err != nil {
 			return Message{}, err
 		}
+		mine := a.problems
+		if i == 0 {
+			mine = append(slices.Clip(problems), mine...) // the file's own warnings go with the first answer
+		}
+		answers = append(answers, edifact.Answer{Accepted: !hasError(mine), RefersTo: []string{msg.Ref}, Problems: mine})
 		for _, p := range a.problems {
 			if len(ic.Messages) > 1 {
-				p.Text = "message " + m.Ref + ": " + p.Text
+				p.Text = "message " + msg.Ref + ": " + p.Text
 			}
 			problems = append(problems, p)
 		}
@@ -204,43 +240,48 @@ func (s *Service) process(ctx context.Context, id, digest string, data []byte, h
 			r.OrderID, r.DepotID = &a.orderID, &a.depotID
 		}
 		r.Function = a.function
-		refs = append(refs, m.Ref)
 	}
 	if !hasError(problems) {
 		r.Status = "done"
 	}
-	var answer *edifact.Answer
-	if line.Profile.SendAPERAK {
-		answer = &edifact.Answer{Accepted: !hasError(problems), RefersTo: refs, Problems: problems}
+	if !line.Profile.SendAPERAK {
+		answers = nil
 	}
-	return s.finish(ctx, r, problems, ic, answer, line.Profile)
+	return s.finish(ctx, r, problems, ic, answers, line.Profile)
 }
 
-// finish writes the row's result and, with an answer, queues our APERAK in
-// the same transaction. The APERAK goes back to the party that sent the
-// file, from the id it was addressed to.
-func (s *Service) finish(ctx context.Context, r edidb.SetInResultParams, problems []edifact.Problem, ic edifact.Interchange, answer *edifact.Answer, p Profile) (Message, error) {
+// finish writes the row's result and, with answers, queues our APERAK in the
+// same transaction: one interchange with one APERAK per answered message.
+func (s *Service) finish(ctx context.Context, r edidb.SetInResultParams, problems []edifact.Problem, ic edifact.Interchange, answers []edifact.Answer, p Profile) (Message, error) {
 	r.Problems = problemsJSON(problems)
-	if answer != nil {
+	if len(answers) > 0 {
 		if _, err := s.st.CompanyEDI(ctx); err != nil { // NextRef needs the company's row
 			return Message{}, err
 		}
 	}
 	err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		r.CompanyID = sc.CompanyID
-		if err := one(q.SetInResult(ctx, r)); err != nil || answer == nil {
+		if err := one(q.SetInResult(ctx, r)); err != nil || len(answers) == 0 {
 			return err
 		}
 		ref, err := s.st.NextRef(ctx, q)
 		if err != nil {
 			return err
 		}
+		var msgs []edifact.Message
+		for i, a := range answers {
+			mref := ref // unique within the interchange: ref, ref-2, ref-3...
+			if i > 0 {
+				mref = fmt.Sprintf("%s-%d", ref, i+1)
+			}
+			msgs = append(msgs, edifact.APERAK(mref, a))
+		}
 		now := time.Now().UTC()
 		data := edifact.Interchange{
 			// The answer mirrors the interchange it answers (usual EDI practice), not party_id/RecipientID.
 			Sender: edifact.Text(ic.Recipient), SenderQual: edifact.Text(ic.RecipientQual),
 			Recipient: edifact.Text(ic.Sender), RecipientQual: edifact.Text(ic.SenderQual),
-			ControlRef: ref, Prepared: now, Test: p.Test, Messages: []edifact.Message{edifact.APERAK(ref, *answer)},
+			ControlRef: ref, Prepared: now, Test: p.Test, Messages: msgs,
 		}.Encode()
 		digest, err := s.blob.Put(data)
 		if err != nil {
@@ -248,7 +289,7 @@ func (s *Service) finish(ctx context.Context, r edidb.SetInResultParams, problem
 		}
 		return q.InsertMessage(ctx, edidb.InsertMessageParams{
 			CompanyID: sc.CompanyID, ID: newID(), Direction: "out", Kind: "aperak", Status: "pending",
-			LineID: r.LineID, DepotID: r.DepotID, AnswerOf: &r.ID, ControlRef: ref, MessageRef: ref,
+			LineID: r.LineID, DepotID: r.DepotID, AnswerOf: &r.ID, ControlRef: ref, MessageRef: ref, Via: "upload", // the column default: via means nothing out
 			ContentHash: digest, BlobDigest: digest, FileName: "aperak-" + ref + ".edi", Problems: problemsJSON(nil), NextAttemptAt: &now,
 		})
 	})
@@ -393,15 +434,18 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 		return a, err
 	}
 	// A new order's depot: the office's choice, else the depot at the
-	// order's location, else the company's only depot.
+	// order's location, else the company's only depot. A location that names
+	// none of the depots the company gave locations to is an error.
 	depot := h.depotID
 	switch {
 	case depot != "":
 	case at >= 0:
 		depot = ds[at].ID
+	case o.Location != "" && slices.ContainsFunc(ds, func(d edidb.DepotLocationsRow) bool { return d.EdiLocation != "" }):
 	case len(ds) == 1:
 		depot = ds[0].ID
-	default:
+	}
+	if depot == "" {
 		add("E-DEPOT", "no depot for location %q: set the depot's EDI location, or pick the depot and process again", o.Location)
 		return a, nil
 	}

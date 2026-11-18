@@ -47,6 +47,8 @@ CREATE TABLE edi_messages (
     blob_digest     TEXT NOT NULL DEFAULT '',
     file_name       TEXT NOT NULL DEFAULT '',
     sender          TEXT NOT NULL DEFAULT '',
+    via             TEXT NOT NULL DEFAULT 'upload' CHECK (via IN ('mail', 'upload')),
+    trusted         BOOLEAN NOT NULL DEFAULT false, -- mail only: the sender was authenticated (spec 5.8 rule 5)
     problems        JSONB NOT NULL DEFAULT '[]',
     tries           INT NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ,
