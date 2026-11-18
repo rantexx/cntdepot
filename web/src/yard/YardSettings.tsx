@@ -1,8 +1,51 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { errText } from "../components";
-import { getYardSettings, setYardSettings, YardSettingsRefusalMode, type YardSettings as Settings } from "../gen/api";
+import { useSession } from "../session";
+import { getYardSettings, setDepotEdiLocation, setYardSettings, YardSettingsRefusalMode, type YardSettings as Settings } from "../gen/api";
 import { ok } from "../hubApi";
 import { useT, type Key } from "../i18n";
+
+// The depot's EDI location code. The depot record does not return it, so the field starts empty and a save replaces it.
+function EdiLocation() {
+  const { t } = useT();
+  const { current } = useSession();
+  const [loc, setLoc] = useState("");
+  const [msg, setMsg] = useState("");
+  const [saved, setSaved] = useState(false);
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setMsg("");
+    setSaved(false);
+    try {
+      await ok(setDepotEdiLocation(current?.depotId ?? "", { location: loc.trim() }));
+      setSaved(true);
+    } catch (err) {
+      setMsg(errText(err, t("networkError")));
+    }
+  }
+  return (
+    <form className="card" onSubmit={(e) => void save(e)}>
+      <label>
+        {t("ediLocation")}
+        <input value={loc} maxLength={25} onChange={(e) => setLoc(e.target.value)} />
+      </label>
+      <p className="muted small">{t("ediLocationHint")}</p>
+      <button type="submit" className="primary">
+        {t("save")}
+      </button>
+      {saved && (
+        <p className="ok-text" role="status">
+          {t("saved")}
+        </p>
+      )}
+      {msg && (
+        <p className="error" role="alert">
+          {msg}
+        </p>
+      )}
+    </form>
+  );
+}
 
 // The owner's yard rules: what the gate does with a refused truck, walk-ins and how long an EIR link lives.
 export function YardSettings() {
@@ -72,6 +115,7 @@ export function YardSettings() {
           </p>
         )}
       </form>
+      <EdiLocation />
     </div>
   );
 }

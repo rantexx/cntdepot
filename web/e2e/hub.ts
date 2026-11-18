@@ -22,10 +22,11 @@ export default async function setup() {
   if (await up()) throw new Error(`something already listens on ${BASE}; stop it first`);
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "depot-e2e-"));
   const goBin = process.platform === "win32" ? "C:\\Program Files\\Go\\bin" : "";
+  process.env.EDI_E2E_MAIL = path.join(data, "mail-out"); // the specs read the .eml files here
   const log = fs.openSync(path.join(data, "hub.log"), "w");
   const hub = spawn("go", ["run", "./cmd/depotd", "hub", "-data", data, "-addr", "127.0.0.1:18093", "-engine", "fake"], {
     cwd: REPO,
-    env: { ...process.env, PATH: [process.env.PATH, goBin].filter(Boolean).join(path.delimiter) },
+    env: { ...process.env, EDI_TICK: "1s", MAIL_DIR: path.join(data, "mail-out"), PATH: [process.env.PATH, goBin].filter(Boolean).join(path.delimiter) },
     stdio: ["ignore", log, log],
     detached: process.platform !== "win32", // its own process group, so the group can be stopped
   });

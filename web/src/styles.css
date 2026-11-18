@@ -144,6 +144,8 @@ label.check { display: flex; align-items: center; gap: 10px; text-transform: non
 input, select, textarea { font: inherit; font-weight: 500; font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; min-height: 44px; padding: 8px 12px; }
 input:focus { border-color: var(--act); }
 input[type="checkbox"] { min-height: 0; width: 20px; height: 20px; accent-color: var(--act); }
+input[type="radio"] { min-height: 0; width: 20px; height: 20px; flex: none; accent-color: var(--act); }
+.admin-form label.check { min-width: 0; margin: 0 8px 10px 0; }
 .big-input { font-size: 30px; font-weight: 700; letter-spacing: 0.04em; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .tabs { display: flex; gap: 0; margin: 16px 0; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 4px; width: fit-content; overflow: hidden; background: var(--panel); }
