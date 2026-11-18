@@ -179,6 +179,7 @@ WHERE company_id = $1
   AND ($5::text IS NULL OR line_id = $5)
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at < $7)
+  AND ($8::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY($8::text[]))
 `
 
 type CountMessagesParams struct {
@@ -189,6 +190,7 @@ type CountMessagesParams struct {
 	LineID    *string
 	Since     *time.Time
 	Until     *time.Time
+	Depots    []string
 }
 
 func (q *Queries) CountMessages(ctx context.Context, arg CountMessagesParams) (int64, error) {
@@ -200,6 +202,7 @@ func (q *Queries) CountMessages(ctx context.Context, arg CountMessagesParams) (i
 		arg.LineID,
 		arg.Since,
 		arg.Until,
+		arg.Depots,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -639,8 +642,9 @@ WHERE company_id = $1
   AND ($5::text IS NULL OR line_id = $5)
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at < $7)
+  AND ($8::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY($8::text[]))
 ORDER BY created_at DESC, id DESC
-LIMIT $9 OFFSET $8
+LIMIT $10 OFFSET $9
 `
 
 type ListMessagesParams struct {
@@ -651,11 +655,13 @@ type ListMessagesParams struct {
 	LineID    *string
 	Since     *time.Time
 	Until     *time.Time
+	Depots    []string
 	Off       int32
 	Lim       int32
 }
 
 // The API's message list, newest first; a NULL filter matches every row.
+// depots limits it to those depots' rows and rows of no depot.
 func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]EdiMessage, error) {
 	rows, err := q.db.Query(ctx, listMessages,
 		arg.CompanyID,
@@ -665,6 +671,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]E
 		arg.LineID,
 		arg.Since,
 		arg.Until,
+		arg.Depots,
 		arg.Off,
 		arg.Lim,
 	)

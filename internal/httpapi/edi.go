@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"mime"
 	"net/http"
 
@@ -93,15 +94,26 @@ func (s *Server) ListEdiMessages(ctx context.Context, req api.ListEdiMessagesReq
 	}
 	ms, total, err := s.opts.EDI.ListMessages(ctx, edi.Filter{
 		Direction: string(val(p.Direction)), Kind: string(val(p.Kind)), Status: string(val(p.Status)), LineID: val(p.LineId), From: p.From, To: p.To,
-	}, min(limit, maxEDIPage), max(val(p.Offset), 0))
+		Depots: allowedDepots(ctx),
+	}, min(limit, maxEDIPage), min(max(val(p.Offset), 0), math.MaxInt32)) // the query takes 32-bit numbers
 	if err != nil {
 		return nil, err
 	}
 	return api.ListEdiMessages200JSONResponse{Messages: apiMessages(ms), Total: total}, nil
 }
 
+// visible returns a message the member may see: one of no depot or of a
+// depot of their membership. Any other is not found, as in another company.
+func (s *Server) visible(ctx context.Context, id string) (edi.Message, error) {
+	m, err := s.opts.EDI.Message(ctx, id)
+	if err == nil && m.DepotID != "" && !depotAllowed(ctx, m.DepotID) {
+		return edi.Message{}, edi.ErrNotFound
+	}
+	return m, err
+}
+
 func (s *Server) GetEdiMessage(ctx context.Context, req api.GetEdiMessageRequestObject) (api.GetEdiMessageResponseObject, error) {
-	m, err := s.opts.EDI.Message(ctx, req.Id)
+	m, err := s.visible(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +121,9 @@ func (s *Server) GetEdiMessage(ctx context.Context, req api.GetEdiMessageRequest
 }
 
 func (s *Server) GetEdiMessageRaw(ctx context.Context, req api.GetEdiMessageRawRequestObject) (api.GetEdiMessageRawResponseObject, error) {
+	if _, err := s.visible(ctx, req.Id); err != nil {
+		return nil, err
+	}
 	m, data, err := s.opts.EDI.Raw(ctx, req.Id)
 	if err != nil {
 		return nil, err
@@ -123,6 +138,9 @@ func (s *Server) GetEdiMessageRaw(ctx context.Context, req api.GetEdiMessageRawR
 }
 
 func (s *Server) ResendEdiMessage(ctx context.Context, req api.ResendEdiMessageRequestObject) (api.ResendEdiMessageResponseObject, error) {
+	if _, err := s.visible(ctx, req.Id); err != nil {
+		return nil, err
+	}
 	return api.ResendEdiMessage204Response{}, s.opts.EDI.Resend(ctx, req.Id, actor(ctx))
 }
 
@@ -130,6 +148,12 @@ func (s *Server) ProcessEdiMessage(ctx context.Context, req api.ProcessEdiMessag
 	var lineID, depotID string
 	if b := req.Body; b != nil {
 		lineID, depotID = val(b.LineId), val(b.DepotId)
+	}
+	if _, err := s.visible(ctx, req.Id); err != nil {
+		return nil, err
+	}
+	if depotID != "" && !depotAllowed(ctx, depotID) {
+		return nil, edi.ErrNotFound
 	}
 	m, err := s.opts.EDI.Process(ctx, req.Id, lineID, depotID, actor(ctx))
 	if err != nil {
@@ -226,6 +250,9 @@ func (s *Server) SetEdiCompany(ctx context.Context, req api.SetEdiCompanyRequest
 }
 
 func (s *Server) SetDepotEdiLocation(ctx context.Context, req api.SetDepotEdiLocationRequestObject) (api.SetDepotEdiLocationResponseObject, error) {
+	if !depotAllowed(ctx, req.Id) {
+		return nil, edi.ErrNotFound
+	}
 	return api.SetDepotEdiLocation204Response{}, s.opts.EDI.SetDepotLocation(ctx, req.Id, req.Body.Location)
 }
 

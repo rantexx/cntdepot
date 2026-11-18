@@ -104,6 +104,9 @@ func (s *Service) Process(ctx context.Context, id, lineID, depotID, actor string
 	if m.Direction != "in" || (m.Status != "unmatched" && m.Status != "error") {
 		return Message{}, ErrNotProcessable
 	}
+	if err := s.checkChoice(ctx, lineID, depotID); err != nil {
+		return Message{}, err
+	}
 	h := howOf(m)
 	h.lineID, h.depotID, h.actor = lineID, depotID, actor
 	return s.process(ctx, m, data, h)

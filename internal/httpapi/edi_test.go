@@ -59,6 +59,8 @@ type ediMsg struct {
 	Kind      string  `json:"kind"`
 	Status    string  `json:"status"`
 	LineID    *string `json:"lineId"`
+	DepotID   *string `json:"depotId"`
+	OrderID   *string `json:"orderId"`
 	Via       *string `json:"via"`
 	Trusted   *bool   `json:"trusted"`
 }
@@ -306,5 +308,93 @@ func TestWebhookNotMountedWithoutSecret(t *testing.T) {
 	e := newEDIEnv(t, "")
 	if got := postmark(t, e, "postmark", "", []byte(`{}`)); got != 404 {
 		t.Fatalf("webhook without a secret = %d; want 404", got)
+	}
+}
+
+// limitedManager adds depot d2 to company A and signs in a manager limited to it.
+func limitedManager(t *testing.T, e *env) *user {
+	t.Helper()
+	e.exec(t, "A", `INSERT INTO depots (company_id, id, name) VALUES ('A', 'd2', 'Depot 2')`)
+	e.exec(t, "A", `INSERT INTO invitations (company_id, id, email, role, depot_ids, created_by) VALUES ('A', 'lim', 'lim@a.test', 'manager', ARRAY['d2'], 'test')`)
+	lim := &user{t: t, e: e, cookie: e.signIn(t, "lim@a.test")}
+	if err := e.sessions.SetScope(bg, lim.cookie, "A", "d2"); err != nil {
+		t.Fatal(err)
+	}
+	return lim
+}
+
+func uploaded(t *testing.T, u *user, name string, data []byte) ediMsg {
+	t.Helper()
+	status, body := u.uploadEDI(map[string][]byte{name: data})
+	up := decode[struct{ Messages []ediMsg }](t, body)
+	if status != 200 || len(up.Messages) != 1 {
+		t.Fatalf("upload %s = %d %s", name, status, body)
+	}
+	return up.Messages[0]
+}
+
+func TestDepotLimitedManagerSeesOwnDepotsOnly(t *testing.T) {
+	e := newEDIEnv(t, "")
+	m := e.as(t, "A", "manager")
+	onEDI(m)
+	lim := limitedManager(t, e)
+	e.exec(t, "A", `UPDATE depots SET edi_location = 'TRMER' WHERE id = 'd1'`)
+	atD1 := uploaded(t, m, "rls.edi", ediFile(t, "coparn_release.edi"))
+	junk := uploaded(t, m, "junk.edi", []byte("not edifact"))
+	if atD1.Status != "done" || atD1.DepotID == nil || *atD1.DepotID != "d1" || junk.Status != "error" || junk.DepotID != nil {
+		t.Fatalf("uploads = %+v %+v", atD1, junk)
+	}
+
+	got := string(lim.must(200, "GET", "/api/edi/messages", ""))
+	if strings.Contains(got, atD1.ID) || !strings.Contains(got, junk.ID) {
+		t.Fatalf("limited list = %s", got)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/edi/messages/" + atD1.ID, ""},
+		{"GET", "/api/edi/messages/" + atD1.ID + "/raw", ""},
+		{"POST", "/api/edi/messages/" + atD1.ID + "/resend", ""},
+		{"POST", "/api/edi/messages/" + junk.ID + "/process", `{"depotId":"d1"}`},
+		{"PUT", "/api/depots/d1/edi-location", `{"location":"TRIST"}`},
+	} {
+		if status, body := lim.call(c.method, c.path, c.body); status != 404 || errorCode(body) != "E4043" {
+			t.Errorf("limited %s %s = %d %s; want 404 E4043", c.method, c.path, status, body)
+		}
+	}
+	lim.must(200, "GET", "/api/edi/messages/"+junk.ID, "")
+	lim.must(204, "PUT", "/api/depots/d2/edi-location", `{"location":"TRIST"}`)
+	if ds := decode[[]struct{ ID string }](t, lim.must(200, "GET", "/api/depots", "")); len(ds) != 1 || ds[0].ID != "d2" {
+		t.Errorf("limited depots = %+v", ds)
+	}
+	// The full manager sees both; a huge offset is an empty page, not an error.
+	if l := decode[ediList](t, m.must(200, "GET", "/api/edi/messages?direction=in", "")); l.Total != 2 {
+		t.Errorf("manager in = %+v", l)
+	}
+	if l := decode[ediList](t, m.must(200, "GET", "/api/edi/messages?offset=99999999999&limit=99999999999", "")); len(l.Messages) != 0 || l.Total == 0 {
+		t.Errorf("huge offset = %+v", l)
+	}
+}
+
+func TestProcessChosenLineAndDepot(t *testing.T) {
+	e := newEDIEnv(t, "")
+	m := e.as(t, "A", "manager")
+	lim := limitedManager(t, e)
+	// No line is on EDI: the file is held unmatched.
+	held := uploaded(t, m, "rls.edi", ediFile(t, "coparn_release.edi"))
+	if held.Status != "unmatched" {
+		t.Fatalf("held = %+v", held)
+	}
+	if status, body := m.call("POST", "/api/edi/messages/"+held.ID+"/process", `{"lineId":"nope","depotId":"d2"}`); status != 400 || errorCode(body) != "E4000" {
+		t.Errorf("unknown line = %d %s; want 400 E4000", status, body)
+	}
+	if status, body := m.call("POST", "/api/edi/messages/"+held.ID+"/process", `{"lineId":"lA","depotId":"nope"}`); status != 404 || errorCode(body) != "E4043" {
+		t.Errorf("unknown depot = %d %s; want 404 E4043", status, body)
+	}
+	done := decode[ediMsg](t, lim.must(200, "POST", "/api/edi/messages/"+held.ID+"/process", `{"lineId":"lA","depotId":"d2"}`))
+	if done.Status != "done" || done.LineID == nil || *done.LineID != "lA" || done.DepotID == nil || *done.DepotID != "d2" || done.OrderID == nil {
+		t.Fatalf("processed = %+v", done)
+	}
+	o := decode[struct{ DepotID, Reference, Kind string }](t, lim.must(200, "GET", "/api/orders/"+*done.OrderID, ""))
+	if o.DepotID != "d2" || o.Reference != "RLS4471" || o.Kind != "release" {
+		t.Fatalf("order = %+v", o)
 	}
 }

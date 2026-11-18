@@ -36,6 +36,7 @@ var (
 type Filter struct {
 	Direction, Kind, Status, LineID string
 	From, To                        *time.Time // From inclusive, To exclusive
+	Depots                          []string   // non-nil: only these depots' messages and those of no depot
 }
 
 func opt(s string) *string {
@@ -49,9 +50,9 @@ func opt(s string) *string {
 func (s *Service) ListMessages(ctx context.Context, f Filter, limit, offset int) (out []Message, total int, err error) {
 	err = s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		p := edidb.ListMessagesParams{CompanyID: sc.CompanyID, Direction: opt(f.Direction), Kind: opt(f.Kind), Status: opt(f.Status),
-			LineID: opt(f.LineID), Since: f.From, Until: f.To, Lim: int32(limit), Off: int32(offset)}
+			LineID: opt(f.LineID), Since: f.From, Until: f.To, Depots: f.Depots, Lim: int32(limit), Off: int32(offset)}
 		n, err := q.CountMessages(ctx, edidb.CountMessagesParams{CompanyID: p.CompanyID, Direction: p.Direction, Kind: p.Kind,
-			Status: p.Status, LineID: p.LineID, Since: p.Since, Until: p.Until})
+			Status: p.Status, LineID: p.LineID, Since: p.Since, Until: p.Until, Depots: p.Depots})
 		if err != nil {
 			return err
 		}
@@ -179,6 +180,31 @@ func (s *Service) SetLine(ctx context.Context, l LineEDI) (LineEDI, error) {
 		return q.UpsertLineEDI(ctx, edidb.UpsertLineEDIParams{CompanyID: sc.CompanyID, LineID: l.LineID, Mode: l.Mode, Profile: profile})
 	})
 	return l, err
+}
+
+// checkChoice refuses a line ("" allowed) that is not the company's
+// (Invalid) and a depot ("" allowed) that is not the company's (ErrNotFound),
+// so the office's choice never reaches the yard as a broken link.
+func (s *Service) checkChoice(ctx context.Context, lineID, depotID string) error {
+	if lineID != "" {
+		ls, err := s.Lines(ctx)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(ls, func(l LineEDI) bool { return l.LineID == lineID }) {
+			return Invalid("lineId: unknown line")
+		}
+	}
+	if depotID != "" {
+		ds, err := s.depots(ctx)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(ds, func(d edidb.DepotLocationsRow) bool { return d.ID == depotID }) {
+			return ErrNotFound
+		}
+	}
+	return nil
 }
 
 // Status is the EDI screen's header.

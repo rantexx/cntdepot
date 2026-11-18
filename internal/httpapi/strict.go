@@ -131,6 +131,23 @@ func scopeOf(ctx context.Context) tenancy.Scope {
 	return sc
 }
 
+// allowedDepots are the depots the signed-in member may use in the scope's
+// company; nil means all of them.
+func allowedDepots(ctx context.Context) []string {
+	for _, m := range current(ctx).Memberships {
+		if m.CompanyID == scopeOf(ctx).CompanyID {
+			return m.DepotIDs
+		}
+	}
+	return nil
+}
+
+// depotAllowed reports whether the member may use depot.
+func depotAllowed(ctx context.Context, depot string) bool {
+	a := allowedDepots(ctx)
+	return a == nil || slices.Contains(a, depot)
+}
+
 // actor names the signed-in user in the event log.
 func actor(ctx context.Context) string { return current(ctx).User.Email }
 
@@ -507,13 +524,7 @@ func (s *Server) SetModules(ctx context.Context, req api.SetModulesRequestObject
 }
 
 func (s *Server) ListDepots(ctx context.Context, _ api.ListDepotsRequestObject) (api.ListDepotsResponseObject, error) {
-	// A member limited to some depots sees only those.
-	var allowed []string
-	for _, m := range current(ctx).Memberships {
-		if m.CompanyID == scopeOf(ctx).CompanyID {
-			allowed = m.DepotIDs
-		}
-	}
+	allowed := allowedDepots(ctx)
 	out := api.ListDepots200JSONResponse{}
 	err := s.inCompany(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, "SELECT id, name, country, timezone FROM depots ORDER BY name, id")

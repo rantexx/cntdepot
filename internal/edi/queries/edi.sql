@@ -152,6 +152,7 @@ ON CONFLICT DO NOTHING;
 
 
 -- The API's message list, newest first; a NULL filter matches every row.
+-- depots limits it to those depots' rows and rows of no depot.
 -- name: ListMessages :many
 SELECT * FROM edi_messages
 WHERE company_id = @company_id
@@ -161,6 +162,7 @@ WHERE company_id = @company_id
   AND (sqlc.narg('line_id')::text IS NULL OR line_id = sqlc.narg('line_id'))
   AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
   AND (sqlc.narg('until')::timestamptz IS NULL OR created_at < sqlc.narg('until'))
+  AND (sqlc.narg('depots')::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY(sqlc.narg('depots')::text[]))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
 
@@ -172,7 +174,8 @@ WHERE company_id = @company_id
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
   AND (sqlc.narg('line_id')::text IS NULL OR line_id = sqlc.narg('line_id'))
   AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
-  AND (sqlc.narg('until')::timestamptz IS NULL OR created_at < sqlc.narg('until'));
+  AND (sqlc.narg('until')::timestamptz IS NULL OR created_at < sqlc.narg('until'))
+  AND (sqlc.narg('depots')::text[] IS NULL OR depot_id IS NULL OR depot_id = ANY(sqlc.narg('depots')::text[]));
 
 -- name: CountProblems :one
 SELECT count(*) FROM edi_messages
