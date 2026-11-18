@@ -12,7 +12,7 @@ import (
 )
 
 const claimDue = `-- name: ClaimDue :one
-SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at,
+SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at, m.report_day,
     COALESCE(d.name, '')::text AS depot_name,
     COALESCE(NULLIF(g.number, ''), o.reference, m.control_ref)::text AS ref
 FROM edi_messages m
@@ -20,7 +20,7 @@ LEFT JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
 LEFT JOIN gate_moves g ON g.company_id = m.company_id AND g.id = m.move_id
 LEFT JOIN edi_messages a ON a.company_id = m.company_id AND a.id = m.answer_of
 LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.order_id, a.order_id)
-WHERE m.company_id = $1 AND m.direction = 'out' AND m.status = 'pending' AND m.kind <> 'report'
+WHERE m.company_id = $1 AND m.direction = 'out' AND m.status = 'pending'
   AND m.next_attempt_at <= $2
   AND NOT EXISTS (SELECT 1 FROM edi_messages e WHERE e.company_id = m.company_id AND e.move_id = m.move_id
       AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
@@ -42,13 +42,14 @@ type ClaimDueRow struct {
 	FileName   string
 	Tries      int64
 	FirstTryAt *time.Time
+	ReportDay  *time.Time
 	DepotName  string
 	Ref        string
 }
 
 // The oldest due message to send, never ahead of an earlier unsent message
-// of the same move (spec 5.4: the order per container is kept). Reports are
-// sent by their own job. ref is the subject's container number or reference.
+// of the same move (spec 5.4: the order per container is kept). A report is
+// sent like the rest, to the line's ReportTo. ref is the subject's container number or reference.
 func (q *Queries) ClaimDue(ctx context.Context, arg ClaimDueParams) (ClaimDueRow, error) {
 	row := q.db.QueryRow(ctx, claimDue, arg.CompanyID, arg.Now)
 	var i ClaimDueRow
@@ -60,6 +61,7 @@ func (q *Queries) ClaimDue(ctx context.Context, arg ClaimDueParams) (ClaimDueRow
 		&i.FileName,
 		&i.Tries,
 		&i.FirstTryAt,
+		&i.ReportDay,
 		&i.DepotName,
 		&i.Ref,
 	)
@@ -437,20 +439,21 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 }
 
 const insertReport = `-- name: InsertReport :execrows
-INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems)
-VALUES ($1, $2, 'out', 'report', $3, $4, $5, $6, $7, $8, $7, '[]')
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems, next_attempt_at)
+VALUES ($1, $2, 'out', 'report', $3, $4, $5, $6, $7, $8, $7, '[]', $9)
 ON CONFLICT DO NOTHING
 `
 
 type InsertReportParams struct {
-	CompanyID  string
-	ID         string
-	Status     string
-	LineID     *string
-	DepotID    *string
-	ReportDay  *time.Time
-	BlobDigest string
-	FileName   string
+	CompanyID     string
+	ID            string
+	Status        string
+	LineID        *string
+	DepotID       *string
+	ReportDay     *time.Time
+	BlobDigest    string
+	FileName      string
+	NextAttemptAt *time.Time
 }
 
 // A daily report row: a second instance or a re-run inserts nothing.
@@ -464,6 +467,7 @@ func (q *Queries) InsertReport(ctx context.Context, arg InsertReportParams) (int
 		arg.ReportDay,
 		arg.BlobDigest,
 		arg.FileName,
+		arg.NextAttemptAt,
 	)
 	if err != nil {
 		return 0, err
@@ -745,30 +749,6 @@ func (q *Queries) SetInResult(ctx context.Context, arg SetInResultParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const setReportResult = `-- name: SetReportResult :exec
-UPDATE edi_messages SET status = $1, sent_at = $2, problems = $3, tries = tries + 1
-WHERE company_id = $4 AND id = $5
-`
-
-type SetReportResultParams struct {
-	Status    string
-	SentAt    *time.Time
-	Problems  json.RawMessage
-	CompanyID string
-	ID        string
-}
-
-func (q *Queries) SetReportResult(ctx context.Context, arg SetReportResultParams) error {
-	_, err := q.db.Exec(ctx, setReportResult,
-		arg.Status,
-		arg.SentAt,
-		arg.Problems,
-		arg.CompanyID,
-		arg.ID,
-	)
-	return err
 }
 
 const setSent = `-- name: SetSent :exec

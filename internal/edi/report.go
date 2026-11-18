@@ -11,8 +11,6 @@ import (
 	"time"
 
 	edidb "depot/internal/edi/db"
-	"depot/internal/edifact"
-	"depot/internal/mail"
 	"depot/internal/tenancy"
 )
 
@@ -90,7 +88,6 @@ func (s *Service) reportOne(ctx context.Context, l LineEDI, d edidb.DepotZonesRo
 	}
 	date := day.Format("2006-01-02")
 	row := edidb.InsertReportParams{ID: newID(), Status: "ignored", LineID: &l.LineID, DepotID: &d.ID, ReportDay: &day}
-	var data []byte
 	if len(moves) > 0 {
 		var b bytes.Buffer
 		b.WriteString(bom)
@@ -98,37 +95,16 @@ func (s *Service) reportOne(ctx context.Context, l LineEDI, d edidb.DepotZonesRo
 		w.Comma, w.UseCRLF = ';', true
 		_ = w.Write([]string{"Time", "Direction", "Container", "Type", "Full/Empty", "Truck", "Haulier", "Seal", "Condition"})
 		_ = w.WriteAll(moves)
-		data = b.Bytes()
+		data := b.Bytes()
 		if row.BlobDigest, err = s.blob.Put(data); err != nil {
 			return err
 		}
-		row.Status, row.FileName = "pending", fmt.Sprintf("gate-moves-%s-%s-%s.csv", code, d.ID, date)
+		row.Status, row.FileName = "pending", fmt.Sprintf("%s-%s-%s.csv", code, d.ID, date)
 	}
-	var first bool
-	if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
-		row.CompanyID = sc.CompanyID
-		n, err := q.InsertReport(ctx, row)
-		first = n == 1
+	// A pending row is sent, retried and resent by the common sender.
+	return s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
+		row.CompanyID, row.NextAttemptAt = sc.CompanyID, ptr(s.now())
+		_, err := q.InsertReport(ctx, row)
 		return err
-	}); err != nil || !first || len(moves) == 0 {
-		return err
-	}
-	subject := fmt.Sprintf("%s gate moves %s %s", code, d.Name, date)
-	sendErr := s.mail.Send(ctx, mail.Outgoing{To: l.Profile.ReportTo, Subject: subject, Text: subject,
-		Attachments: []mail.Attachment{{Name: row.FileName, ContentType: "text/csv; charset=utf-8", Data: data}}})
-	res := edidb.SetReportResultParams{ID: row.ID, Status: "sent", SentAt: ptr(s.now()), Problems: problemsJSON(nil)}
-	if sendErr != nil {
-		res.Status, res.SentAt = "failed", nil
-		res.Problems = problemsJSON([]edifact.Problem{{Code: "E-SEND", Text: sendErr.Error()}})
-	}
-	if err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
-		res.CompanyID = sc.CompanyID
-		return q.SetReportResult(ctx, res)
-	}); err != nil {
-		return err
-	}
-	if sendErr != nil {
-		log.Printf("edi: report %s not sent: %v", row.ID, sendErr) // recorded as failed; not retried
-	}
-	return nil
+	})
 }

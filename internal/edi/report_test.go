@@ -81,13 +81,23 @@ func TestNoMovesNoMail(t *testing.T) {
 	}
 }
 
-func TestReportSendFailureIsRecorded(t *testing.T) {
+func TestReportSendFailureIsRetried(t *testing.T) {
 	o := reportFx(t, "UTC")
 	o.moveAt(cn("MSCU123457"), "2026-11-17T10:00:00Z")
 	o.at = time.Date(2026, 11, 18, 6, 1, 0, 0, time.UTC)
 	o.mail.fail = true
 	o.tick()
-	if o.reports("failed") != 1 || len(o.sent()) != 0 {
-		t.Fatalf("failed rows %d", o.reports("failed"))
+	if o.reports("pending") != 1 || len(o.sent()) != 0 {
+		t.Fatalf("pending rows %d", o.reports("pending"))
+	}
+	o.mail.fail = false
+	o.tick() // not due yet: the backoff is a minute
+	if len(o.sent()) != 0 {
+		t.Fatal("retried before it was due")
+	}
+	o.at = o.at.Add(2 * time.Minute)
+	o.tick()
+	if len(o.sent()) != 1 || o.reports("sent") != 1 || o.sent()[0].Attachments[0].Name != "MSC-d1-2026-11-17.csv" {
+		t.Fatalf("sent = %+v", o.sent())
 	}
 }

@@ -67,7 +67,7 @@ func (s *Service) company(ctx context.Context) (err error) {
 		}
 	}()
 	sc, _ := tenancy.From(ctx)
-	return errors.Join(s.retryStuck(ctx), s.queueGateEvents(ctx), s.sendDue(ctx), s.reports(ctx, sc))
+	return errors.Join(s.retryStuck(ctx), s.queueGateEvents(ctx), s.reports(ctx, sc), s.sendDue(ctx))
 }
 
 // retryStuck processes inbound files left "received" for over a minute,
@@ -118,7 +118,7 @@ func (s *Service) sendDue(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			return s.sendOne(ctx, q, sc.CompanyID, r, lines[str(r.LineID)].Profile)
+			return s.sendOne(ctx, q, sc.CompanyID, r, lines[str(r.LineID)])
 		})
 		if err != nil || done {
 			return err
@@ -142,14 +142,18 @@ func retryAfter(n int64) time.Duration {
 // sendOne mails one claimed message to the line. A failed try is retried
 // later; a day after the first try, with no address or with its file lost,
 // the message fails.
-func (s *Service) sendOne(ctx context.Context, q *edidb.Queries, company string, r edidb.ClaimDueRow, p Profile) error {
+func (s *Service) sendOne(ctx context.Context, q *edidb.Queries, company string, r edidb.ClaimDueRow, l LineEDI) error {
+	p, to := l.Profile, l.Profile.SendTo
+	if r.Kind == "report" {
+		to = p.ReportTo
+	}
 	now := s.now()
 	first := now
 	if r.FirstTryAt != nil {
 		first = *r.FirstTryAt
 	}
 	tried := edidb.SetTriedParams{CompanyID: company, ID: r.ID, Status: "pending", FirstTryAt: &first, NextAttemptAt: ptr(now.Add(retryAfter(0)))}
-	if len(p.SendTo) == 0 {
+	if len(to) == 0 {
 		tried.Status, tried.Problems = "failed", problemsJSON([]edifact.Problem{{Code: "E-NOADDR", Text: "the line has no address to send to"}})
 		return q.SetTried(ctx, tried)
 	}
@@ -158,9 +162,12 @@ func (s *Service) sendOne(ctx context.Context, q *edidb.Queries, company string,
 		tried.Status, tried.Problems = "failed", problemsJSON([]edifact.Problem{{Code: "E-SEND", Text: "file missing: " + err.Error()}})
 		return q.SetTried(ctx, tried)
 	}
-	subject := strings.Join(strings.Fields(strings.ToUpper(r.Kind)+" "+r.DepotName+" "+r.Ref), " ")
-	err = s.mail.Send(ctx, mail.Outgoing{To: p.SendTo, Subject: subject, Text: subject,
-		Attachments: []mail.Attachment{{Name: r.FileName, ContentType: "application/EDIFACT", Data: data}}})
+	subject, ctype := strings.Join(strings.Fields(strings.ToUpper(r.Kind)+" "+r.DepotName+" "+r.Ref), " "), "application/EDIFACT"
+	if r.Kind == "report" {
+		subject, ctype = fmt.Sprintf("%s gate moves %s %s", strings.ToUpper(strings.TrimSpace(l.Code)), r.DepotName, r.ReportDay.Format("2006-01-02")), "text/csv; charset=utf-8"
+	}
+	err = s.mail.Send(ctx, mail.Outgoing{To: to, Subject: subject, Text: subject,
+		Attachments: []mail.Attachment{{Name: r.FileName, ContentType: ctype, Data: data}}})
 	if err == nil {
 		return q.SetSent(ctx, edidb.SetSentParams{CompanyID: company, ID: r.ID, SentAt: &now})
 	}

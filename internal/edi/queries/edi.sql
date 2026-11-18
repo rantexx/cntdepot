@@ -95,10 +95,10 @@ WHERE m.company_id = @company_id AND m.id = @id;
 SELECT location, description FROM damages WHERE company_id = @company_id AND move_id = @move_id ORDER BY id;
 
 -- The oldest due message to send, never ahead of an earlier unsent message
--- of the same move (spec 5.4: the order per container is kept). Reports are
--- sent by their own job. ref is the subject's container number or reference.
+-- of the same move (spec 5.4: the order per container is kept). A report is
+-- sent like the rest, to the line's ReportTo. ref is the subject's container number or reference.
 -- name: ClaimDue :one
-SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at,
+SELECT m.id, m.kind, m.line_id, m.blob_digest, m.file_name, m.tries, m.first_try_at, m.report_day,
     COALESCE(d.name, '')::text AS depot_name,
     COALESCE(NULLIF(g.number, ''), o.reference, m.control_ref)::text AS ref
 FROM edi_messages m
@@ -106,7 +106,7 @@ LEFT JOIN depots d ON d.company_id = m.company_id AND d.id = m.depot_id
 LEFT JOIN gate_moves g ON g.company_id = m.company_id AND g.id = m.move_id
 LEFT JOIN edi_messages a ON a.company_id = m.company_id AND a.id = m.answer_of
 LEFT JOIN release_orders o ON o.company_id = m.company_id AND o.id = COALESCE(m.order_id, a.order_id)
-WHERE m.company_id = @company_id AND m.direction = 'out' AND m.status = 'pending' AND m.kind <> 'report'
+WHERE m.company_id = @company_id AND m.direction = 'out' AND m.status = 'pending'
   AND m.next_attempt_at <= @now
   AND NOT EXISTS (SELECT 1 FROM edi_messages e WHERE e.company_id = m.company_id AND e.move_id = m.move_id
       AND e.direction = 'out' AND e.status IN ('pending', 'failed') AND (e.created_at, e.id) < (m.created_at, m.id))
@@ -146,10 +146,7 @@ SELECT EXISTS (SELECT 1 FROM edi_messages WHERE company_id = @company_id AND kin
 
 -- A daily report row: a second instance or a re-run inserts nothing.
 -- name: InsertReport :execrows
-INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems)
-VALUES (@company_id, @id, 'out', 'report', @status, @line_id, @depot_id, @report_day, @blob_digest, @file_name, @blob_digest, '[]')
+INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, depot_id, report_day, blob_digest, file_name, content_hash, problems, next_attempt_at)
+VALUES (@company_id, @id, 'out', 'report', @status, @line_id, @depot_id, @report_day, @blob_digest, @file_name, @blob_digest, '[]', @next_attempt_at)
 ON CONFLICT DO NOTHING;
 
--- name: SetReportResult :exec
-UPDATE edi_messages SET status = @status, sent_at = @sent_at, problems = @problems, tries = tries + 1
-WHERE company_id = @company_id AND id = @id;
