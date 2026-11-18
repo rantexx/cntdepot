@@ -237,6 +237,7 @@ func (s *Service) finish(ctx context.Context, r edidb.SetInResultParams, problem
 		}
 		now := time.Now().UTC()
 		data := edifact.Interchange{
+			// The answer mirrors the interchange it answers (usual EDI practice), not party_id/RecipientID.
 			Sender: edifact.Text(ic.Recipient), SenderQual: edifact.Text(ic.RecipientQual),
 			Recipient: edifact.Text(ic.Sender), RecipientQual: edifact.Text(ic.SenderQual),
 			ControlRef: ref, Prepared: now, Test: p.Test, Messages: []edifact.Message{edifact.APERAK(ref, *answer)},
@@ -356,6 +357,18 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 	default:
 		a.orderID, a.depotID = cur.ID, cur.DepotID
 	}
+	ds, err := s.depots(ctx)
+	if err != nil {
+		return a, err
+	}
+	at := slices.IndexFunc(ds, func(d edidb.DepotLocationsRow) bool {
+		return o.Location != "" && strings.EqualFold(d.EdiLocation, o.Location)
+	})
+	if cur.ID != "" && at >= 0 && ds[at].ID != cur.DepotID { // spec 5.8.1: equipment for another depot
+		was := slices.IndexFunc(ds, func(d edidb.DepotLocationsRow) bool { return d.ID == cur.DepotID })
+		add("E-DEPOT", "order %s is at depot %s, this file names %s", o.Reference, ds[was].Name, ds[at].Name)
+		return a, nil
+	}
 
 	if o.Function == "1" {
 		switch {
@@ -379,12 +392,18 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 		}
 		return a, err
 	}
-	depot, err := s.depotFor(ctx, o.Location, h.depotID)
-	if err != nil || depot == "" {
-		if err == nil {
-			add("E-DEPOT", "no depot for location %q: set the depot's EDI location, or pick the depot and process again", o.Location)
-		}
-		return a, err
+	// A new order's depot: the office's choice, else the depot at the
+	// order's location, else the company's only depot.
+	depot := h.depotID
+	switch {
+	case depot != "":
+	case at >= 0:
+		depot = ds[at].ID
+	case len(ds) == 1:
+		depot = ds[0].ID
+	default:
+		add("E-DEPOT", "no depot for location %q: set the depot's EDI location, or pick the depot and process again", o.Location)
+		return a, nil
 	}
 	a.depotID = depot
 	a.orderID, err = s.yard.CreateOrder(in(depot), yard.Order{
@@ -393,27 +412,11 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 	return a, err
 }
 
-// depotFor picks an order's depot: the office's choice, else the depot whose
-// EDI location is the order's, else the company's only depot, else "".
-func (s *Service) depotFor(ctx context.Context, location, chosen string) (string, error) {
-	if chosen != "" {
-		return chosen, nil
-	}
-	var ds []edidb.DepotLocationsRow
-	err := s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) (err error) {
+// depots returns the company's depots with their EDI locations.
+func (s *Service) depots(ctx context.Context) (ds []edidb.DepotLocationsRow, err error) {
+	err = s.st.run(ctx, func(q *edidb.Queries, sc tenancy.Scope) error {
 		ds, err = q.DepotLocations(ctx, sc.CompanyID)
 		return err
 	})
-	if err != nil {
-		return "", err
-	}
-	for _, d := range ds {
-		if location != "" && strings.EqualFold(d.EdiLocation, location) {
-			return d.ID, nil
-		}
-	}
-	if len(ds) == 1 {
-		return ds[0].ID, nil
-	}
-	return "", nil
+	return ds, err
 }

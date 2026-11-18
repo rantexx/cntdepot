@@ -43,7 +43,7 @@ WHERE company_id = @company_id AND direction = 'in' AND line_id = @line_id AND c
 SELECT * FROM line_edi WHERE company_id = @company_id ORDER BY line_id;
 
 -- name: DepotLocations :many
-SELECT id, edi_location FROM depots WHERE company_id = @company_id ORDER BY id;
+SELECT id, name, edi_location FROM depots WHERE company_id = @company_id ORDER BY id;
 
 -- An APERAK from a line answers our messages to it by message or interchange
 -- reference, or by the CODECO document number (the move id).

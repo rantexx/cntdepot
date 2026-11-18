@@ -12,11 +12,12 @@ import (
 )
 
 const depotLocations = `-- name: DepotLocations :many
-SELECT id, edi_location FROM depots WHERE company_id = $1 ORDER BY id
+SELECT id, name, edi_location FROM depots WHERE company_id = $1 ORDER BY id
 `
 
 type DepotLocationsRow struct {
 	ID          string
+	Name        string
 	EdiLocation string
 }
 
@@ -29,7 +30,7 @@ func (q *Queries) DepotLocations(ctx context.Context, companyID string) ([]Depot
 	var items []DepotLocationsRow
 	for rows.Next() {
 		var i DepotLocationsRow
-		if err := rows.Scan(&i.ID, &i.EdiLocation); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.EdiLocation); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

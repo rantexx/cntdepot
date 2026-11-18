@@ -357,6 +357,27 @@ func TestLocationPicksDepot(t *testing.T) {
 	}
 }
 
+// Spec 5.8.1: equipment for another depot is an error for the message.
+func TestReplacementForOtherDepotIsError(t *testing.T) {
+	x := newFx(t)
+	x.exec(`UPDATE depots SET edi_location = 'TRMER' WHERE id = 'd1'`)
+	x.exec(`INSERT INTO depots (company_id, id, name, edi_location) VALUES ('A', 'd2', 'D2', 'TRIST')`)
+	first := x.upload(file(t, "coparn_release.edi"))
+	if first.Status != "done" || first.DepotID != "d1" {
+		t.Fatalf("original = %+v", first)
+	}
+	repl := strings.Replace(replacement, "EQN+1'\n", "EQN+1'\nLOC+98+TRIST:139:6'\n", 1)
+	m := x.upload([]byte(repl))
+	if m.Status != "error" || !slices.Equal(codes(m.Problems), []string{"E-DEPOT"}) ||
+		!strings.Contains(m.Problems[0].Text, "at depot D1, this file names D2") {
+		t.Fatalf("message = %+v", m)
+	}
+	o, items := x.order(first.OrderID, "d1")
+	if o.DepotID != "d1" || len(items) != 1 || deref(items[0].Number) != "MSCU1234566" {
+		t.Fatalf("order = %+v, items %+v", o, items)
+	}
+}
+
 func TestAPERAKInMarksOutRejected(t *testing.T) {
 	x := newFx(t)
 	x.exec(`INSERT INTO edi_messages (company_id, id, direction, kind, status, line_id, message_ref, control_ref)
