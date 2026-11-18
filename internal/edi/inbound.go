@@ -22,11 +22,12 @@ const mailActor = "edi"
 
 // how is how a file is handled: the office's line and depot (or "" to find
 // them), whether it came by mail (and from whom, authenticated or not), and
-// who acts.
+// who acts, limited to which depots (nil: all; a depot-limited member).
 type how struct {
 	lineID, depotID string
 	mail, trusted   bool
 	from, actor     string
+	depots          []string
 }
 
 // howOf is how a stored file is handled as it arrived: a mailed file with the
@@ -83,20 +84,24 @@ func (s *Service) inboundCompany(ctx context.Context, to []string) (string, erro
 }
 
 // Upload stores and processes a file a signed-in manager uploaded (scoped).
-func (s *Service) Upload(ctx context.Context, name string, data []byte, actor string) ([]Message, error) {
+// depots are the member's depots (nil: all): nothing is applied outside them.
+func (s *Service) Upload(ctx context.Context, name string, data []byte, actor string, depots []string) ([]Message, error) {
 	m, err := s.store(ctx, name, data, actor, "upload", false)
 	if err != nil {
 		return nil, err
 	}
-	if m, err = s.process(ctx, m, data, howOf(m)); err != nil {
+	h := howOf(m)
+	h.depots = depots
+	if m, err = s.process(ctx, m, data, h); err != nil {
 		return nil, err
 	}
 	return []Message{m}, nil
 }
 
 // Process handles an unmatched or error message again with the line and
-// depot the office chose ("" to find them as when it arrived).
-func (s *Service) Process(ctx context.Context, id, lineID, depotID, actor string) (Message, error) {
+// depot the office chose ("" to find them as when it arrived), applying
+// nothing outside depots (nil: all).
+func (s *Service) Process(ctx context.Context, id, lineID, depotID, actor string, depots []string) (Message, error) {
 	m, data, err := s.load(ctx, id)
 	if err != nil {
 		return Message{}, err
@@ -108,7 +113,7 @@ func (s *Service) Process(ctx context.Context, id, lineID, depotID, actor string
 		return Message{}, err
 	}
 	h := howOf(m)
-	h.lineID, h.depotID, h.actor = lineID, depotID, actor
+	h.lineID, h.depotID, h.actor, h.depots = lineID, depotID, actor, depots
 	return s.process(ctx, m, data, h)
 }
 
@@ -413,6 +418,23 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 		add("E-DEPOT", "order %s is at depot %s, this file names %s", o.Reference, ds[was].Name, ds[at].Name)
 		return a, nil
 	}
+	// refused: a depot-limited member applies nothing outside their depots; the
+	// message is an error that a manager of every depot can process again.
+	refused := func(depot string) bool {
+		if h.depots == nil || slices.Contains(h.depots, depot) {
+			return false
+		}
+		name := depot
+		if i := slices.IndexFunc(ds, func(d edidb.DepotLocationsRow) bool { return d.ID == depot }); i >= 0 {
+			name = ds[i].Name
+		}
+		a.orderID, a.depotID = "", ""
+		add("E-DEPOT", "depot %s is outside your depots", name)
+		return true
+	}
+	if cur.ID != "" && refused(cur.DepotID) { // a replacement or cancel of an order there
+		return a, nil
+	}
 
 	if o.Function == "1" {
 		switch {
@@ -450,6 +472,9 @@ func (s *Service) order(ctx context.Context, msgID string, line LineEDI, m edifa
 	}
 	if depot == "" {
 		add("E-DEPOT", "no depot for location %q: set the depot's EDI location, or pick the depot and process again", o.Location)
+		return a, nil
+	}
+	if refused(depot) {
 		return a, nil
 	}
 	a.depotID = depot

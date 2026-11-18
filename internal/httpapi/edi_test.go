@@ -398,3 +398,26 @@ func TestProcessChosenLineAndDepot(t *testing.T) {
 		t.Fatalf("order = %+v", o)
 	}
 }
+
+func TestLimitedUploadOutsideItsDepotsIsHeld(t *testing.T) {
+	e := newEDIEnv(t, "")
+	m := e.as(t, "A", "manager")
+	onEDI(m)
+	lim := limitedManager(t, e)
+	e.exec(t, "A", `UPDATE depots SET edi_location = 'TRMER' WHERE id = 'd1'`)
+	status, body := lim.uploadEDI(map[string][]byte{"rls.edi": ediFile(t, "coparn_release.edi")})
+	up := decode[struct{ Messages []ediMsg }](t, body)
+	if status != 200 || len(up.Messages) != 1 || up.Messages[0].Status != "error" || up.Messages[0].OrderID != nil ||
+		!strings.Contains(string(body), "E-DEPOT") || !strings.Contains(string(body), "outside your depots") {
+		t.Fatalf("limited upload = %d %s", status, body)
+	}
+	held := up.Messages[0]
+	lim.must(200, "GET", "/api/edi/messages/"+held.ID, "") // the uploader still sees it
+	if status, body := lim.call("POST", "/api/edi/messages/"+held.ID+"/process", `{}`); status != 200 || !strings.Contains(string(body), `"status":"error"`) {
+		t.Errorf("limited process again = %d %s; want it still held", status, body)
+	}
+	done := decode[ediMsg](t, e.as(t, "A", "owner").must(200, "POST", "/api/edi/messages/"+held.ID+"/process", `{}`))
+	if done.Status != "done" || done.DepotID == nil || *done.DepotID != "d1" || done.OrderID == nil {
+		t.Fatalf("owner process = %+v", done)
+	}
+}

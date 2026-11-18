@@ -80,7 +80,7 @@ func file(t *testing.T, name string) []byte {
 
 func (x *fx) upload(data []byte) Message {
 	x.t.Helper()
-	ms, err := x.s.Upload(ctxOf("A"), "f.edi", data, "u1")
+	ms, err := x.s.Upload(ctxOf("A"), "f.edi", data, "u1", nil)
 	if err != nil || len(ms) != 1 {
 		x.t.Fatalf("Upload = %+v, %v", ms, err)
 	}
@@ -381,7 +381,7 @@ func TestUntrustedSenderIsUnmatched(t *testing.T) {
 		t.Fatalf("%d orders", n)
 	}
 	// The office picks the line: processed.
-	m, err := x.s.Process(ctxOf("A"), in[0].ID, "lA", "", "u1")
+	m, err := x.s.Process(ctxOf("A"), in[0].ID, "lA", "", "u1", nil)
 	if err != nil || m.Status != "done" || m.OrderID == "" {
 		t.Fatalf("Process = %+v, %v", m, err)
 	}
@@ -394,14 +394,14 @@ func TestMultiDepotWithoutLocationIsError(t *testing.T) {
 	if m.Status != "error" || !slices.Equal(codes(m.Problems), []string{"E-DEPOT"}) {
 		t.Fatalf("message = %+v", m)
 	}
-	m, err := x.s.Process(ctxOf("A"), m.ID, "", "d2", "u1")
+	m, err := x.s.Process(ctxOf("A"), m.ID, "", "d2", "u1", nil)
 	if err != nil || m.Status != "done" || m.DepotID != "d2" || len(m.Problems) != 0 {
 		t.Fatalf("Process = %+v, %v", m, err)
 	}
 	if o, _ := x.order(m.OrderID, "d2"); o.DepotID != "d2" {
 		t.Fatalf("order = %+v", o)
 	}
-	if _, err := x.s.Process(ctxOf("A"), m.ID, "", "d2", "u1"); err == nil {
+	if _, err := x.s.Process(ctxOf("A"), m.ID, "", "d2", "u1", nil); err == nil {
 		t.Fatal("a done message processed again")
 	}
 }
@@ -438,7 +438,7 @@ func TestLocationMustMatchSetLocations(t *testing.T) {
 		t.Fatalf("message = %+v", m)
 	}
 	x.exec(`UPDATE depots SET edi_location = '' WHERE id = 'd1'`)
-	if m, err := x.s.Process(ctxOf("A"), m.ID, "", "", "u1"); err != nil || m.Status != "done" || m.DepotID != "d1" {
+	if m, err := x.s.Process(ctxOf("A"), m.ID, "", "", "u1", nil); err != nil || m.Status != "done" || m.DepotID != "d1" {
 		t.Fatalf("Process = %+v, %v", m, err)
 	}
 }
@@ -535,5 +535,32 @@ func TestUnknownTokenIsDropped(t *testing.T) {
 		if n := count(t, ctxOf(c), x.pool, `SELECT count(*) FROM edi_messages`); n != 0 {
 			t.Fatalf("company %s has %d messages", c, n)
 		}
+	}
+}
+
+// A member limited to d2 cancels nothing at d1 (and creates nothing there by
+// the only-depot fallback); the message is an error a full manager can process.
+func TestLimitedMemberAppliesNothingOutsideItsDepots(t *testing.T) {
+	x := newFx(t)
+	first := x.upload(file(t, "coparn_release.edi"))
+	ms, err := x.s.Upload(ctxOf("A"), "c.edi", file(t, "coparn_cancel.edi"), "u2", []string{"d2"})
+	if err != nil || len(ms) != 1 || ms[0].Status != "error" || ms[0].OrderID != "" || ms[0].DepotID != "" ||
+		!slices.Contains(codes(ms[0].Problems), "E-DEPOT") || !strings.Contains(ms[0].Problems[0].Text, "outside your depots") {
+		t.Fatalf("limited cancel = %+v, %v", ms, err)
+	}
+	if o, _ := x.order(first.OrderID, "d1"); o.Status != "open" {
+		t.Fatalf("order = %+v", o)
+	}
+	if m, err := x.s.Process(ctxOf("A"), ms[0].ID, "", "", "u1", nil); err != nil || m.Status != "done" {
+		t.Fatalf("full Process = %+v, %v", m, err)
+	}
+	if o, _ := x.order(first.OrderID, "d1"); o.Status != "cancelled" {
+		t.Fatalf("order = %+v", o)
+	}
+
+	y := newFx(t) // one depot, d1: the fallback names it
+	if ms, err := y.s.Upload(ctxOf("A"), "r.edi", file(t, "coparn_release.edi"), "u2", []string{"d2"}); err != nil ||
+		ms[0].Status != "error" || ms[0].OrderID != "" || !slices.Contains(codes(ms[0].Problems), "E-DEPOT") {
+		t.Fatalf("limited release = %+v, %v", ms, err)
 	}
 }

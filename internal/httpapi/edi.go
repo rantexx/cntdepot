@@ -155,7 +155,7 @@ func (s *Server) ProcessEdiMessage(ctx context.Context, req api.ProcessEdiMessag
 	if depotID != "" && !depotAllowed(ctx, depotID) {
 		return nil, edi.ErrNotFound
 	}
-	m, err := s.opts.EDI.Process(ctx, req.Id, lineID, depotID, actor(ctx))
+	m, err := s.opts.EDI.Process(ctx, req.Id, lineID, depotID, actor(ctx), allowedDepots(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func (s *Server) UploadEdi(ctx context.Context, req api.UploadEdiRequestObject) 
 		if err != nil {
 			return nil, err
 		}
-		ms, err := s.opts.EDI.Upload(ctx, fh.Filename, data, actor(ctx))
+		ms, err := s.opts.EDI.Upload(ctx, fh.Filename, data, actor(ctx), allowedDepots(ctx))
 		if err != nil {
 			return nil, err
 		}
